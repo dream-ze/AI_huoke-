@@ -1,0 +1,75 @@
+version: '3.8'
+
+# ============================================================
+# 智获客 - 生产部署 (服务器: 116.62.86.160)
+# 使用方法: docker compose -f docker-compose.prod.yml up -d --build
+# ============================================================
+
+services:
+
+  # ── PostgreSQL 数据库 ────────────────────────────────────
+  postgres:
+    image: postgres:15
+    container_name: zhihuokeke-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD not set}
+      POSTGRES_DB: zhihuokeke
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── FastAPI 后端 ─────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zhihuokeke-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - uploads_data:/app/uploads
+
+  # ── Ollama 本地 AI 模型 ──────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: zhihuokeke-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+
+  # ── Redis 限流/缓存 ─────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: zhihuokeke-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  uploads_data:
+  ollama_data:
+  redis_data:
+
+networks:
+  default:
+    name: zhihuokeke-network
