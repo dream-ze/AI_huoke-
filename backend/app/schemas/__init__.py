@@ -28,6 +28,15 @@ from app.schemas.schemas import (
     TopicPerformance,
     PluginContentCreate,
     PluginContentResponse,
+    InsightTopicCreate,
+    InsightTopicResponse,
+    InsightContentImport,
+    InsightBatchImport,
+    InsightContentResponse,
+    InsightAnalyzeResponse,
+    InsightAuthorResponse,
+    InsightRetrieveRequest,
+    InsightRetrieveResponse,
 )
 
 __all__ = [
@@ -59,4 +68,13 @@ __all__ = [
     "TopicPerformance",
     "PluginContentCreate",
     "PluginContentResponse",
+    "InsightTopicCreate",
+    "InsightTopicResponse",
+    "InsightContentImport",
+    "InsightBatchImport",
+    "InsightContentResponse",
+    "InsightAnalyzeResponse",
+    "InsightAuthorResponse",
+    "InsightRetrieveRequest",
+    "InsightRetrieveResponse",
 ]

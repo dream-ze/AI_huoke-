@@ -6,6 +6,8 @@ from app.api.endpoints.customer import router as customer_router
 from app.api.endpoints.publish import router as publish_router
 from app.api.endpoints.dashboard import router as dashboard_router
 from app.api.endpoints.ai import router as ai_router
+from app.api.endpoints.collect import router as collect_router
+from app.api.endpoints.insight import router as insight_router
 
 __all__ = [
     "auth_router",
@@ -15,4 +17,6 @@ __all__ = [
     "publish_router",
     "dashboard_router",
     "ai_router",
+    "collect_router",
+    "insight_router",
 ]

@@ -48,6 +48,54 @@ export type ContentAsset = {
   created_at: string;
 };
 
+// ── 素材中台 ──────────────────────────────────────────
+export type CollectItem = {
+  id: number;
+  platform: string;
+  source_url?: string;
+  content_type: string;
+  title: string;
+  content: string;
+  author?: string;
+  tags: string[];
+  heat_score: number;
+  is_viral: boolean;
+  source_type?: string;   // link | paste | import
+  category?: string;
+  manual_note?: string;
+  metrics: Record<string, number>;
+  created_at: string;
+};
+
+export type ParsedLinkMeta = {
+  platform: string;
+  platform_label: string;
+  source_url: string;
+  detected_title: string;
+  detected_content: string;
+  detected_author: string;
+  fetch_success: boolean;
+  message: string;
+};
+
+export type CollectAnalysis = {
+  content_id: number;
+  tags: string[];
+  category: string;
+  heat_score: number;
+  is_viral: boolean;
+  viral_reasons: string[];
+  key_selling_points: string[];
+  rewrite_hints: string;
+};
+
+export type CollectStats = {
+  total: number;
+  viral_count: number;
+  by_platform: Record<string, number>;
+  by_category: Record<string, number>;
+};
+
 export type Customer = {
   id: number;
   nickname: string;

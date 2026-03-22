@@ -4,6 +4,7 @@ import { NavLink } from "react-router-dom";
 const navItems = [
   { to: "/dashboard", label: "数据看板" },
   { to: "/content", label: "内容采集" },
+  { to: "/insight", label: "爆款洞察" },
   { to: "/ai", label: "AI改写" },
   { to: "/compliance", label: "合规审核" },
   { to: "/customers", label: "客户管理" },

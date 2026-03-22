@@ -12,6 +12,10 @@ from app.models.models import (
     RiskLevel,
     IntentionLevel,
     CustomerStatus,
+    InsightTopic,
+    InsightAuthorProfile,
+    InsightContentItem,
+    InsightCollectTask,
 )
 
 __all__ = [
@@ -27,4 +31,8 @@ __all__ = [
     "RiskLevel",
     "IntentionLevel",
     "CustomerStatus",
+    "InsightTopic",
+    "InsightAuthorProfile",
+    "InsightContentItem",
+    "InsightCollectTask",
 ]

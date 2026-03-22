@@ -13,6 +13,7 @@ from app.schemas import (
 )
 from app.services import AIService
 from app.models import BrowserPluginCollection
+from app.services.insight_service import InsightService
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 ark_vision_limiter = DistributedRateLimiter(
@@ -32,23 +33,37 @@ async def rewrite_xiaohongshu(
 ):
     """Rewrite content for Little Red Book"""
     ai_service = AIService(db=db)
-    
-    # Get original content
+
     from app.models import ContentAsset
     content = db.query(ContentAsset).filter(ContentAsset.id == request.content_id).first()
     if not content:
         raise Exception("Content not found")
-    
+
+    # 检索洞察库参考上下文
+    insight_ctx = None
+    if request.topic_name:
+        insight_ctx = InsightService.retrieve_for_generation(
+            db,
+            owner_id=current_user["user_id"],
+            platform="xiaohongshu",
+            topic_name=request.topic_name,
+            audience_tags=request.audience_tags or [],
+            limit=5,
+        )
+
     rewritten = await ai_service.rewrite_xiaohongshu(
         content.content,
         request.style or "casual",
         user_id=current_user["user_id"],
+        insight_ctx=insight_ctx,
     )
-    
+
     return {
         "original": content.content,
         "rewritten": rewritten,
-        "platform": "xiaohongshu"
+        "platform": "xiaohongshu",
+        "insight_used": insight_ctx is not None and (insight_ctx.get("reference_count", 0) > 0),
+        "insight_reference_count": insight_ctx.get("reference_count", 0) if insight_ctx else 0,
     }
 
 
@@ -60,18 +75,35 @@ async def rewrite_douyin(
 ):
     """Rewrite content for Douyin"""
     ai_service = AIService(db=db)
-    
+
     from app.models import ContentAsset
     content = db.query(ContentAsset).filter(ContentAsset.id == request.content_id).first()
     if not content:
         raise Exception("Content not found")
-    
-    rewritten = await ai_service.rewrite_douyin(content.content, user_id=current_user["user_id"])
-    
+
+    insight_ctx = None
+    if request.topic_name:
+        insight_ctx = InsightService.retrieve_for_generation(
+            db,
+            owner_id=current_user["user_id"],
+            platform="douyin",
+            topic_name=request.topic_name,
+            audience_tags=request.audience_tags or [],
+            limit=5,
+        )
+
+    rewritten = await ai_service.rewrite_douyin(
+        content.content,
+        user_id=current_user["user_id"],
+        insight_ctx=insight_ctx,
+    )
+
     return {
         "original": content.content,
         "rewritten": rewritten,
-        "platform": "douyin"
+        "platform": "douyin",
+        "insight_used": insight_ctx is not None and (insight_ctx.get("reference_count", 0) > 0),
+        "insight_reference_count": insight_ctx.get("reference_count", 0) if insight_ctx else 0,
     }
 
 
@@ -83,18 +115,35 @@ async def rewrite_zhihu(
 ):
     """Rewrite content for Zhihu"""
     ai_service = AIService(db=db)
-    
+
     from app.models import ContentAsset
     content = db.query(ContentAsset).filter(ContentAsset.id == request.content_id).first()
     if not content:
         raise Exception("Content not found")
-    
-    rewritten = await ai_service.rewrite_zhihu(content.content, user_id=current_user["user_id"])
-    
+
+    insight_ctx = None
+    if request.topic_name:
+        insight_ctx = InsightService.retrieve_for_generation(
+            db,
+            owner_id=current_user["user_id"],
+            platform="zhihu",
+            topic_name=request.topic_name,
+            audience_tags=request.audience_tags or [],
+            limit=5,
+        )
+
+    rewritten = await ai_service.rewrite_zhihu(
+        content.content,
+        user_id=current_user["user_id"],
+        insight_ctx=insight_ctx,
+    )
+
     return {
         "original": content.content,
         "rewritten": rewritten,
-        "platform": "zhihu"
+        "platform": "zhihu",
+        "insight_used": insight_ctx is not None and (insight_ctx.get("reference_count", 0) > 0),
+        "insight_reference_count": insight_ctx.get("reference_count", 0) if insight_ctx else 0,
     }
 
 

@@ -19,6 +19,8 @@ from app.api.endpoints import (
     publish_router,
     dashboard_router,
     ai_router,
+    collect_router,
+    insight_router,
 )
 
 # Create database tables
@@ -53,6 +55,8 @@ app.include_router(customer_router)
 app.include_router(publish_router)
 app.include_router(dashboard_router)
 app.include_router(ai_router)
+app.include_router(collect_router)
+app.include_router(insight_router)
 
 
 @app.get("/health")

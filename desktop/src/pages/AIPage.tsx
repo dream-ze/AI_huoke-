@@ -1,11 +1,14 @@
 import { FormEvent, useEffect, useState } from "react";
-import { analyzeArkVision, createContent, listContent, rewriteContent } from "../lib/api";
+import { analyzeArkVision, createContent, listContent, listInsightTopics, rewriteContent } from "../lib/api";
 import { ContentAsset } from "../types";
 
 export function AIPage() {
   const [contentList, setContentList] = useState<ContentAsset[]>([]);
   const [contentId, setContentId] = useState<number | "">("");
   const [targetPlatform, setTargetPlatform] = useState<"xiaohongshu" | "douyin" | "zhihu">("xiaohongshu");
+  const [topicName, setTopicName] = useState("");
+  const [insightTopics, setInsightTopics] = useState<{ id: number; name: string }[]>([]);
+  const [insightRefCount, setInsightRefCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
@@ -22,13 +25,14 @@ export function AIPage() {
 
   useEffect(() => {
     async function fetchData() {
-      const list = await listContent();
+      const [list, topics] = await Promise.all([
+        listContent().catch(() => []),
+        listInsightTopics().catch(() => []),
+      ]);
       setContentList(list || []);
-      if (list?.[0]?.id) {
-        setContentId(list[0].id);
-      }
+      if (list?.[0]?.id) setContentId(list[0].id);
+      setInsightTopics((topics as any[]) || []);
     }
-
     fetchData();
   }, []);
 
@@ -41,9 +45,11 @@ export function AIPage() {
     try {
       const data = await rewriteContent({
         content_id: Number(contentId),
-        target_platform: targetPlatform
+        target_platform: targetPlatform,
+        topic_name: topicName || undefined,
       });
       setResult(data?.rewritten || "未返回内容");
+      setInsightRefCount(data?.insight_reference_count ?? null);
     } catch (err: any) {
       setError(err?.response?.data?.detail || "改写失败，请检查模型服务是否可用");
     } finally {
@@ -98,9 +104,11 @@ export function AIPage() {
 
       const rewritten = await rewriteContent({
         content_id: Number(newContentId),
-        target_platform: targetPlatform
+        target_platform: targetPlatform,
+        topic_name: topicName || undefined,
       });
       setResult(rewritten?.rewritten || "未返回内容");
+      setInsightRefCount(rewritten?.insight_reference_count ?? null);
 
       const list = await listContent();
       setContentList(list || []);
@@ -149,6 +157,19 @@ export function AIPage() {
                 <option value="zhihu">知乎</option>
               </select>
             </div>
+
+            <div>
+              <label>洞察主题（可选）</label>
+              <select
+                value={topicName}
+                onChange={(e) => { setTopicName(e.target.value); setInsightRefCount(null); }}
+              >
+                <option value="">— 不接入洞察库</option>
+                {insightTopics.map((t) => (
+                  <option key={t.id} value={t.name}>{t.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div>
@@ -163,6 +184,13 @@ export function AIPage() {
 
       <section className="card">
         <h3>改写结果</h3>
+        {insightRefCount !== null && (
+          <p style={{ fontSize: 13, color: insightRefCount > 0 ? "var(--brand-2)" : "#888", marginBottom: 8 }}>
+            {insightRefCount > 0
+              ? `✅ 已接入洞察库，参考了 ${insightRefCount} 条爬取内容`
+              : `⚠️ 未检索到匹配参考，已按通用模式改写`}
+          </p>
+        )}
         <textarea value={result} readOnly placeholder="这里显示改写结果" />
       </section>
 

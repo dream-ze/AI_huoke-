@@ -302,49 +302,121 @@ class AIService:
             self.db.rollback()
             logger.exception("Failed to persist ark call log")
     
-    async def rewrite_xiaohongshu(self, content: str, style: str = "casual", user_id: int | None = None) -> str:
-        """Rewrite for Little Red Book style"""
-        system_prompt = """You are a content editor specialized in adapting content for Little Red Book (小红书) style.
-        
-Requirements:
-- Write in casual, personal sharing tone
-- Reduce marketing feel
-- Add appropriate emojis
-- Include engagement hooks
-- Keep under 1000 characters
-- Avoid absolute promises"""
-        
-        prompt = f"Please rewrite this content in Little Red Book style:\n\n{content}"
+    async def rewrite_xiaohongshu(
+        self,
+        content: str,
+        style: str = "casual",
+        user_id: int | None = None,
+        insight_ctx: dict | None = None,
+    ) -> str:
+        """Rewrite for Little Red Book style, optionally guided by insight context"""
+        system_prompt = "你是小红书专业运营创作者，擅长贷款/金融业务内容创作。用中文回复。"
+
+        ctx_block = ""
+        if insight_ctx and insight_ctx.get("reference_count", 0) > 0:
+            parts = []
+            if insight_ctx.get("title_examples"):
+                parts.append("《高互动标题参考》: " + " / ".join(insight_ctx["title_examples"][:3]))
+            if insight_ctx.get("structure_examples"):
+                parts.append("《常用结构》: " + "、".join(insight_ctx["structure_examples"][:3]))
+            if insight_ctx.get("hook_examples"):
+                parts.append("《开头钉子类型》: " + "、".join(insight_ctx["hook_examples"][:3]))
+            if insight_ctx.get("pain_point_examples"):
+                parts.append("《目标群体直击痛点》: " + "、".join(insight_ctx["pain_point_examples"][:5]))
+            if insight_ctx.get("style_summary"):
+                parts.append("《参考风格》: " + insight_ctx["style_summary"])
+            if insight_ctx.get("risk_reminder"):
+                parts.append("《风险提醒》: " + insight_ctx["risk_reminder"])
+            if parts:
+                ctx_block = "\n\n【洞察库参考特征（仅供学习风格，不要复制原文）】\n" + "\n".join(parts)
+
+        prompt = f"""请将以下内容改写为小红书风格笔记：
+
+【原始内容】
+{content}
+{ctx_block}
+
+【改写要求】
+- 口语化、个人分享调调
+- 适当加入 emoji 增加可读性
+- 开头必须吸引眼球，让人想继续看
+- 结尾带引导动作（评论/收藏/点赞）
+- 不超过 1000 字
+- 禁止使用【一定放款】【100%下款】等违规词语"""
         return await self.call_llm(prompt, system_prompt, user_id=user_id, scene="rewrite_xiaohongshu")
     
-    async def rewrite_douyin(self, content: str, user_id: int | None = None) -> str:
-        """Rewrite for Douyin (TikTok) script"""
-        system_prompt = """You are a professional short video script writer for Douyin.
-        
-Requirements:
-- Write as a speaking script (45-60 seconds)
-- Add a hook in the first 3 seconds
-- Use short, punchy sentences
-- Natural, conversational tone
-- Add relevant keywords
-- Include a clear call-to-action"""
-        
-        prompt = f"Create a speaking script based on this content:\n\n{content}"
+    async def rewrite_douyin(
+        self,
+        content: str,
+        user_id: int | None = None,
+        insight_ctx: dict | None = None,
+    ) -> str:
+        """Rewrite for Douyin short video script, optionally guided by insight context"""
+        system_prompt = "你是抗音短视频剧本専家，擅长金融获客类内容。用中文回复。"
+
+        ctx_block = ""
+        if insight_ctx and insight_ctx.get("reference_count", 0) > 0:
+            parts = []
+            if insight_ctx.get("hook_examples"):
+                parts.append("《开头钉子类型》: " + "、".join(insight_ctx["hook_examples"][:3]))
+            if insight_ctx.get("pain_point_examples"):
+                parts.append("《小音同类目标痛点》: " + "、".join(insight_ctx["pain_point_examples"][:5]))
+            if insight_ctx.get("structure_examples"):
+                parts.append("《内容结构参考》: " + "、".join(insight_ctx["structure_examples"][:3]))
+            if insight_ctx.get("risk_reminder"):
+                parts.append("《风险提醒》: " + insight_ctx["risk_reminder"])
+            if parts:
+                ctx_block = "\n\n【洞察库参考特征（仅供学习风格，不要复制原文）】\n" + "\n".join(parts)
+
+        prompt = f"""根据以下内容创作抗音口播剧本：
+
+【原始内容】
+{content}
+{ctx_block}
+
+【剧本要求】
+- 口播化，按不超过 60 秒的语速写
+- 准头 3 秒内必须有钉子，让观众继续看
+- 句子短冲，节奏感强
+- 结尾带明确引导动作
+- 不超过 300 字
+- 禁用违规承诺词语"""
         return await self.call_llm(prompt, system_prompt, user_id=user_id, scene="rewrite_douyin")
     
-    async def rewrite_zhihu(self, content: str, user_id: int | None = None) -> str:
-        """Rewrite for Zhihu answer style"""
-        system_prompt = """You are a professional answer writer for Zhihu.
-        
-Requirements:
-- Professional, logical tone
-- Well-structured with clear points
-- Include analysis and thinking process
-- Not just results, but methodology
-- Add rational reminders
-- Support with evidence where possible"""
-        
-        prompt = f"Rewrite as a Zhihu answer:\n\n{content}"
+    async def rewrite_zhihu(
+        self,
+        content: str,
+        user_id: int | None = None,
+        insight_ctx: dict | None = None,
+    ) -> str:
+        """Rewrite for Zhihu answer style, optionally guided by insight context"""
+        system_prompt = "你是知乎专业回答作者，擅长金融信贷误区遇坑、个人信贷策略类回答。用中文回复。"
+
+        ctx_block = ""
+        if insight_ctx and insight_ctx.get("reference_count", 0) > 0:
+            parts = []
+            if insight_ctx.get("pain_point_examples"):
+                parts.append("《目标群体痛点》: " + "、".join(insight_ctx["pain_point_examples"][:6]))
+            if insight_ctx.get("structure_examples"):
+                parts.append("《内容结构参考》: " + "、".join(insight_ctx["structure_examples"][:3]))
+            if insight_ctx.get("style_summary"):
+                parts.append("《同类内容风格》: " + insight_ctx["style_summary"])
+            if insight_ctx.get("risk_reminder"):
+                parts.append("《风险提醒》: " + insight_ctx["risk_reminder"])
+            if parts:
+                ctx_block = "\n\n【洞察库参考特征（仅供学习风格，不要复制原文）】\n" + "\n".join(parts)
+
+        prompt = f"""将以下内容改写为知乎专业回答：
+
+【原始内容】
+{content}
+{ctx_block}
+
+【回答要求】
+- 专业、逻辑清晰，结构化表达
+- 要有分析过程，不只给结论
+- 加入理性提醒和风险说明
+- 禁用担保、承诺类违规词语"""
         return await self.call_llm(prompt, system_prompt, user_id=user_id, scene="rewrite_zhihu")
     
     async def generate_comment_reply(self, original_content: str, comment: str) -> str:

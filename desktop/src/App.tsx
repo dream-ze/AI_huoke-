@@ -10,6 +10,7 @@ import { CompliancePage } from "./pages/CompliancePage";
 import { CustomersPage } from "./pages/CustomersPage";
 import { PublishPage } from "./pages/PublishPage";
 import { SetupPage } from "./pages/SetupPage";
+import { InsightPage } from "./pages/InsightPage";
 
 // 是否运行在 Electron 中
 const isElectron = typeof window !== "undefined" && !!(window as any).desktop?.isElectron;
@@ -104,6 +105,7 @@ export default function App() {
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/content" element={<ContentPage />} />
+                <Route path="/insight" element={<InsightPage />} />
                 <Route path="/ai" element={<AIPage />} />
                 <Route path="/compliance" element={<CompliancePage />} />
                 <Route path="/customers" element={<CustomersPage />} />
