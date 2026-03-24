@@ -1,5 +1,17 @@
 # 🎉 智获客项目完成总结
 
+## 🔧 架构重构状态（2026-03-23）
+
+项目已启动目录重构第一阶段，目标结构逐步对齐 `ai-leads-platform`：
+
+- 新增文档主目录：`docs/product`、`docs/architecture`、`docs/deploy`、`docs/operations`
+- 新增部署目录：`deploy/`
+- 新增多端骨架：`mobile-h5/`、`browser-extension/`、`shared/`
+- 新增数据库脚本目录：`sql/`
+- 后端新增目标落点：`backend/app/api/v1`、`backend/app/repositories`、`backend/app/ai`、`backend/app/rules`、`backend/app/tasks`
+
+重构方案与建议见：`docs/architecture/restructure-plan-2026-03-23.md`
+
 ## ✨ 恭喜！完整的后端系统已创建
 
 基于你提供的 ChatGPT PRD，我已经为你实现了整个**智获客 AI 内容获客运营系统**的完整后端。

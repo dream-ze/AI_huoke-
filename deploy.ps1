@@ -87,6 +87,21 @@ if (Get-Command rsync -ErrorAction SilentlyContinue) {
 }
 Write-Host "      ✓ 上传完成"
 
+# 上传前端 dist 目录
+Write-Host ""
+Write-Host "[3.5/4] 上传前端 dist 到服务器..." -ForegroundColor Green
+Run-SSH "mkdir -p /opt/zhihuokeke/desktop"
+if (Test-Path "$DesktopDir\dist\index.html") {
+    if (Get-Command rsync -ErrorAction SilentlyContinue) {
+        & rsync -az -e "ssh $($SshOpts -join ' ')" "$DesktopDir/dist/" "${ServerUser}@${ServerIP}:/opt/zhihuokeke/desktop/dist/"
+    } else {
+        Run-SCP "$DesktopDir\dist" "/opt/zhihuokeke/desktop/"
+    }
+    Write-Host "      ✓ 前端 dist 已上传"
+} else {
+    Write-Host "      [警告] desktop/dist 不存在，跳过前端上传" -ForegroundColor Yellow
+}
+
 # ── Step 4: 远程执行部署 ─────────────────────────────────────────
 Write-Host ""
 Write-Host "[4/4] 在服务器执行 deploy.sh..." -ForegroundColor Green

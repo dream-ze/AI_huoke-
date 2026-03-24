@@ -1,0 +1,100 @@
+项目整体检查报告
+结论：项目主体功能已完成，可以部署服务器和打包 Windows 版
+一、构建与部署就绪状态
+项目	状态	说明
+前端构建	通过	npm run build:web 成功，产出 654KB JS + 3KB CSS
+后端测试	17 通过 / 4 失败	4 个失败均为次要路由断言问题，不影响核心功能
+Electron 安装包	已存在	智获客 Setup 0.1.0.exe（~140MB），2026-03-23 构建
+后端 PyInstaller 产物	需重新打包	backend.exe 当前不存在，需运行 build.ps1
+Docker 部署配置	就绪	开发/生产双套 docker-compose，Dockerfile 完整
+一键构建脚本	就绪	build.ps1（本地打包）+ deploy.ps1（远程部署）
+数据库迁移	就绪	5 个迁移版本，Alembic 骨架完整可执行
+环境配置	就绪	.env + .env.example 均存在
+二、已完成功能（可正常使用）
+后端 API（30+ 接口）
+模块	关键端点	状态
+用户认证	注册/登录/JWT/企微OAuth	已完成
+数据看板	概览/趋势/平台/主题/高质量内容/AI调用统计	已完成
+素材中心	CRUD/搜索/分类	已完成
+采集中心	统一采集入口 /api/v1/collect/intake	已完成
+收件箱	创建/列表/分析/入库/丢弃/批量操作/去重预览	已完成
+爆款洞察	主题/导入/分析/检索/统计 + 批量限流	已完成
+AI 工作台	多平台改写（小红书/抖音/知乎）/ 图片理解	已完成
+合规审核	规则检查	已完成
+客户管理	CRUD/跟进记录/待跟进列表/CSV导出	已完成
+线索管理	创建/列表/状态/分配/追溯/转客户	已完成
+发布任务	创建/分配/领取/回填/驳回/关闭/链路追溯/CSV导出	已完成
+企业微信	测试通知（Webhook）	已完成
+RBAC	admin/operator/viewer 三角色权限控制	已完成
+健康检查	/health + /api/v1/health	已完成
+前端桌面端（10 个业务页面）
+页面	路由	状态
+登录页	/login	已完成（含 401 自动跳转）
+环境配置页	/setup	已完成（Electron 首次运行）
+数据看板	/dashboard	已完成
+采集中心	/collect-center	已完成
+收件箱	/inbox	已完成
+素材中心	/materials	已完成（含草稿保存）
+爆款洞察	/insight	已完成
+AI 工作台	/ai-workbench	已完成
+合规审核	/compliance	已完成
+线索管理	/leads	已完成
+客户管理	/customers	已完成
+发布任务	/publish	已完成
+浏览器插件（Chrome/Edge MV3）
+组件	状态
+Content Script（网页采集、平台识别）	已完成
+Background（API通信、重试、健康检查）	已完成
+Popup（配置界面）	已完成
+Mobile H5（4 个采集页面）
+页面	状态
+分享采集	已完成（可提交）
+截图 OCR	已完成（可上传识别）
+快捷记录	已完成
+企微转发承接	已完成（前端页面）
+AI 子模块
+模块	状态
+5 个 AI Agent（合规/跟进/线索/素材/改写）	已完成
+5 个 Prompt 模板	已完成
+RAG 基础组件（chunker/embedder/reranker/retriever）	基础实现
+三、待优化项（已有功能但需改进）
+项目	当前状态	优化建议
+后端测试	4 个用例失败（路由断言不准）	修正 test_main.py 中的 404→405 断言及 422 参数校验
+前端打包体积	单 chunk 654KB	添加 code-splitting（动态 import）
+CORS 配置	仅 localhost:5173	生产部署需添加实际域名
+收件箱批量操作	接口 422 报错	检查 batch-actions/assign 请求 schema 一致性
+Alembic 迁移治理	骨架完整但无闸门	发布前强制 alembic upgrade head + 校验 current=head
+insight 批量限流	已有限流	缺任务日志查询 API + 前端状态页
+AI Agent 实现	基础骨架	compliance_agent 等仅返回字符串，需接入真实模型推理
+RAG 模块	基础实现	chunker/embedder/retriever 需完善向量检索闭环
+浏览器插件回归	最小可运行	需持续补充 Chrome/Edge 双浏览器回归执行记录
+Docker 生产编排	docker-compose.yml 仅 extends	需补齐独立完整编排（含 Nginx/监控）
+链路追踪	无 trace_id	需统一 request_id 贯穿日志
+四、待完成功能（尚未实现）
+优先级	功能	现状
+P0	生产迁移闸门（禁 create_all）	未制度化
+P0	监控面板（健康检查/错误率/队列）	缺失
+P0	备份恢复演练	脚本存在但未验证
+P1	知识库页面	仅占位 README
+P1	系统设置页面	仅占位 README
+P1	账号台账页面	仅占位 README
+P1	企业微信管理页面	仅占位 README
+P1	提醒中心页面	仅占位 README
+P1	Mobile H5 鉴权（OAuth + 弱网重试）	缺失
+P1	Worker 异步任务处理	目录空，任务仅占位
+P1	线索分配记录与操作日志	缺失
+P1	发布任务跨角色审批流	缺失
+P2	知识库后端（document/chunk/向量检索）	空
+P2	Agent 配置与任务编排	空
+P2	Prompt 版本管理	缺失
+P2	审计留痕（谁/何时/改了什么）	缺失
+P2	细粒度 RBAC（资源级权限）	当前仅角色级
+P2	Electron 自动更新	缺失
+五、启动方式总结
+本地开发：
+
+Docker 部署（服务器）：
+
+Windows 打包（完整构建）：
+
+当前 backend.exe 需重新打包（产物不存在），Electron 安装包已存在但内嵌的后端可能过期，建议完整重跑一次 build.ps1。

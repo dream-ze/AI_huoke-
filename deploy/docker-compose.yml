@@ -1,0 +1,6 @@
+version: "3.9"
+services:
+  backend:
+    extends:
+      file: ../backend/docker-compose.yml
+      service: backend

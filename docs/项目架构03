@@ -1,0 +1,7914 @@
+一、项目整体定位
+
+这不是一个“发帖外挂”，而是一个：
+
+AI 贷款获客合规运营中台
+
+核心价值是：
+
+多入口采集素材
+沉淀素材与选题资产
+用 AI 做拆解、改写、审核
+给员工分发发布任务
+员工自己在手机端人工发布
+将咨询统一进入线索池
+统一跟进客户
+用数据看板复盘内容和转化
+
+一句话就是：
+
+系统做中台，人做发布和沟通。
+
+二、总体项目架构图
+
+先给你一个总图，你拿去讲给别人最方便。
+
+┌─────────────────────────────────────────────┐
+│                  用户使用层                  │
+├─────────────────────────────────────────────┤
+│  手机端员工   │   桌面端运营/主管   │   管理员  │
+│  浏览内容/发布 │   素材处理/审核     │ 权限/配置 │
+└─────────────────────────────────────────────┘
+
+                        │
+                        ▼
+
+┌─────────────────────────────────────────────┐
+│                  采集接入层                  │
+├─────────────────────────────────────────────┤
+│  手机分享采集  │ 截图OCR采集 │ 微信转发采集 │ PC插件采集 │ 手动录入 │
+└─────────────────────────────────────────────┘
+
+                        │
+                        ▼
+
+┌─────────────────────────────────────────────┐
+│                  业务中台层                  │
+├─────────────────────────────────────────────┤
+│ 素材收件箱 │ 素材库 │ 选题池 │ 反例库 │ AI工作台 │ 风险审核 │
+│ 发布任务   │ 账号台账 │ 线索池 │ 客户跟进 │ 看板中心 │ 企微协同 │
+└─────────────────────────────────────────────┘
+
+                        │
+                        ▼
+
+┌─────────────────────────────────────────────┐
+│                  能力服务层                  │
+├─────────────────────────────────────────────┤
+│ 鉴权服务 │ 素材服务 │ 标签服务 │ AI编排服务 │ 合规规则服务 │
+│ 发布任务服务 │ CRM服务 │ 企微机器人服务 │ 报表服务 │ 审计服务 │
+└─────────────────────────────────────────────┘
+
+                        │
+                        ▼
+
+┌─────────────────────────────────────────────┐
+│                 AI/知识能力层                │
+├─────────────────────────────────────────────┤
+│ 知识库检索 │ 素材拆解智能体 │ 改写智能体 │ 审核智能体 │
+│ 线索分诊智能体 │ 跟进助手智能体 │ Prompt管理 │ 模型网关 │
+└─────────────────────────────────────────────┘
+
+                        │
+                        ▼
+
+┌─────────────────────────────────────────────┐
+│                  数据存储层                  │
+├─────────────────────────────────────────────┤
+│ PostgreSQL │ Redis │ 对象存储(OSS/MinIO) │ pgvector │ 日志存储 │
+└─────────────────────────────────────────────┘
+三、业务架构
+
+你这套产品的业务主链路，建议固定成下面这条：
+
+素材采集
+   ↓
+素材收件箱
+   ↓
+AI初判 + 人工分拣
+   ↓
+素材库 / 反例库 / 选题池
+   ↓
+AI拆解 / AI改写 / 风险审核
+   ↓
+发布任务中心
+   ↓
+员工手机端手动发布
+   ↓
+结果回填
+   ↓
+线索池
+   ↓
+客户跟进
+   ↓
+成交/失败/放弃
+   ↓
+数据看板复盘
+   ↓
+反哺素材与选题策略
+
+这个闭环是整个项目的主骨架。
+
+四、系统架构
+
+从技术实现上，我建议你用：
+
+1. 客户端层
+桌面端
+
+建议：
+
+Tauri + React
+
+负责：
+
+主工作台
+收件箱处理
+素材库管理
+AI改写
+风险审核
+发布任务
+线索客户管理
+看板与配置
+手机侧
+
+不是完整重 App 起步，而是先做：
+
+H5 采集页
+分享接入页
+截图上传页
+后续再扩展为轻量 App
+
+负责：
+
+手机分享采集
+截图 OCR 采集
+手动速记采集
+PC 插件
+
+可选辅助：
+
+Chrome / Edge 插件
+用于 PC 端网页研究时一键采集
+2. 服务端层
+
+建议：
+
+FastAPI
+
+拆成这些服务模块：
+
+Auth 鉴权服务
+Collect 采集接入服务
+Material 素材服务
+Tag 标签服务
+AI Orchestrator AI 编排服务
+Compliance 合规审核服务
+Publish 发布任务服务
+CRM 线索客户服务
+Weccom 企业微信协同服务
+Dashboard 报表服务
+Audit 审计服务
+
+前期可以先做单体模块化架构，不要一开始微服务化。
+也就是：
+
+一个后端项目，内部按模块清晰拆分。
+
+这样最适合你现在。
+
+3. 存储层
+PostgreSQL
+
+主业务库，存：
+
+用户
+团队
+素材
+标签
+AI 结果
+发布任务
+线索
+客户
+日志
+配置
+Redis
+
+存：
+
+登录态
+缓存
+限流
+AI 任务状态
+消息队列轻任务
+验证码/临时状态
+对象存储
+
+建议：
+
+MinIO（本地/私有化）
+OSS/COS（云上）
+
+存：
+
+截图
+OCR 原图
+客户文件
+附件
+导出报表
+pgvector
+
+如果做知识库，很适合直接挂在 PostgreSQL 上。
+
+存：
+
+知识块 embedding
+检索元数据
+五、模块架构
+
+下面是你最该采用的模块划分。
+
+A. 采集接入模块
+
+负责：
+
+接收各种来源的素材
+统一转成标准结构
+放入素材收件箱
+
+输入来源：
+
+手机分享
+截图上传
+微信转发
+PC 插件
+手动录入
+
+统一输出字段：
+
+来源平台
+采集方式
+原始文本
+链接
+图片/截图
+备注
+采集人
+采集时间
+关键原则
+
+入口多样，入库统一。
+
+B. 素材收件箱模块
+
+负责：
+
+新素材分拣
+去重
+OCR 修正
+AI 初判
+人工确认
+
+状态流转：
+
+待识别
+待去重
+待标签
+待AI拆解
+待审核
+待入库
+已入库
+已丢弃
+
+这是你的“垃圾分类站”，非常重要。
+
+C. 素材中心模块
+
+包含：
+
+素材库
+片段库
+高价值素材
+反例库
+选题池
+
+作用：
+
+沉淀团队内容资产
+为 AI 改写和知识库提供基础数据
+子能力
+标签体系
+搜索
+多维筛选
+价值评分
+一键转选题
+一键发起改写
+D. AI 工作台模块
+
+这是产品核心卖点之一。
+
+包含 4 个子能力：
+
+1. 内容理解
+摘要
+主题识别
+场景识别
+风格识别
+2. 内容拆解
+爆点分析
+标题结构
+开头钩子
+内容逻辑
+3. 内容生成
+小红书版本
+抖音口播版本
+知乎回答版本
+闲鱼描述版本
+评论回复
+私信开场
+4. 风险修正
+替换敏感词
+降低承诺表达
+输出更稳版本
+E. 合规审核模块
+
+负责：
+
+规则命中
+敏感词命中
+平台差异审核
+风险等级判定
+审核记录留痕
+
+审核机制建议：
+
+第一层：规则引擎
+敏感词
+固定句式
+高风险表达
+平台特定禁语
+第二层：AI 语义审核
+是否夸大
+是否误导
+是否过度承诺
+是否缺少必要提示
+
+这样更稳。
+
+F. 发布任务模块
+
+因为你不做自动代发，所以这个模块很关键。
+
+负责：
+
+生成发布任务
+分配给员工
+回填发布结果
+记录执行情况
+
+状态：
+
+待发布
+已领取
+已发布
+已回填
+已驳回
+已关闭
+关键原则
+
+系统管内容和流程，人管手机发布动作。
+
+G. 账号台账模块
+
+负责记录：
+
+账号归属人
+平台
+常发方向
+发布时间
+被删/限流记录
+风险备注
+
+注意：
+不是控号模块，是台账与复盘模块。
+
+H. CRM 模块
+
+包含：
+
+线索池
+客户池
+跟进记录
+阶段流转
+提醒机制
+固定客户主流程
+新线索
+已联系
+补资料中
+预审中
+已给方案
+已进件
+已成交
+已失败
+已放弃
+设计原则
+主流程标准化
+扩展字段 JSON 化
+跟进模板化
+I. 企业微信协同模块
+
+负责：
+
+新素材提醒
+高风险预警
+待跟进提醒
+日报推送
+微信消息轻采集
+
+这个模块建议纯配置化：
+
+哪个场景推哪个群
+用什么模板
+是否 @人
+推送失败是否重试
+J. 看板模块
+
+包含：
+
+内容看板
+各平台素材数
+高价值素材数
+高风险素材数
+选题表现
+发布看板
+每人发布任务数
+已发布数
+回填率
+驳回率
+线索看板
+新增线索
+有效率
+来源分布
+转化看板
+线索到客户率
+客户到进件率
+进件到成交率
+风险看板
+风险命中次数
+高风险内容排行
+账号风险趋势
+六、AI / 知识库 / 智能体架构
+
+这是你后面产品升级的重点。
+
+1. 知识库架构
+
+建议拆成 6 类知识库：
+
+产品知识库
+产品介绍
+准入规则
+材料要求
+常见拒绝原因
+话术知识库
+标题模板
+开头模板
+评论回复模板
+私信模板
+合规知识库
+敏感词
+风险规则
+替代表达
+风险案例
+素材知识库
+高价值素材
+金句片段
+高转化内容
+选题池
+反例知识库
+被删内容
+高风险内容
+不建议模仿案例
+客户问答知识库
+高频咨询问题
+异议处理
+预审问题口径
+2. 智能体架构
+
+不要做一个大而全智能体，要做多个小智能体：
+
+素材拆解智能体
+
+输出：
+
+主题
+结构
+爆点
+风险点
+是否建议入库
+选题生成智能体
+
+输出：
+
+选题方向
+标题候选
+内容角度
+改写智能体
+
+输出：
+
+各平台版本
+风格化文案
+评论/私信文案
+审核智能体
+
+输出：
+
+风险等级
+命中点
+替换建议
+线索分诊智能体
+
+输出：
+
+意向等级
+标签建议
+下一步动作建议
+跟进助手智能体
+
+输出：
+
+下次跟进话术
+待补信息
+提醒建议
+3. AI 技术架构
+
+建议采用：
+
+业务模块
+   ↓
+AI服务编排层
+   ├─ Prompt模板管理
+   ├─ 知识库检索
+   ├─ 工具调用
+   ├─ 结果结构化
+   └─ 审计记录
+   ↓
+模型网关层
+   ├─ 在线模型
+   └─ 本地模型(Ollama备用)
+模型网关层作用
+屏蔽具体模型差异
+支持切换模型
+支持降级
+支持成本控制
+Prompt 版本管理
+
+每类任务都记录：
+
+prompt_version
+model_name
+输入输出
+时间
+操作人
+
+后面非常方便调优。
+
+七、数据架构
+
+你这套系统的数据建议分 5 层。
+
+1. 主业务数据
+
+放 PostgreSQL：
+
+用户
+团队
+素材
+任务
+线索
+客户
+配置
+2. 非结构化文件
+
+放对象存储：
+
+截图
+OCR 图片
+客户上传文件
+导出报表
+3. AI 结果数据
+
+放 PostgreSQL：
+
+AI 摘要
+AI 拆解结果
+改写结果
+审核结果
+Agent 任务记录
+4. 向量数据
+
+放 pgvector：
+
+知识块 embedding
+知识检索元数据
+5. 日志数据
+
+放日志系统或数据库：
+
+操作日志
+错误日志
+审计日志
+推送日志
+AI 调用日志
+八、部署架构
+
+最适合你的部署方式是：
+
+起步版：单体部署
+
+适合 3-5 人内部先用。
+
+Windows桌面端
+   ↓ HTTPS
+FastAPI 单体服务
+   ├─ PostgreSQL
+   ├─ Redis
+   ├─ MinIO/OSS
+   └─ AI模型服务
+
+这时可以：
+
+一台云服务器
+或一台公司服务器
+商业版：私有化部署
+
+卖给别人时可以这样交付：
+
+客户内网/云服务器
+   ├─ Web/API 服务
+   ├─ PostgreSQL
+   ├─ Redis
+   ├─ MinIO
+   ├─ AI网关
+   └─ 可选本地模型
+
+用 Docker Compose 就能先交付。
+
+九、维护架构
+
+你前面说得很对，这个产品维护点很多，所以架构上必须提前做好维护设计。
+
+1. 模块化维护原则
+
+把系统分成：
+
+采集模块
+素材模块
+AI 模块
+审核模块
+发布模块
+CRM 模块
+企微模块
+系统模块
+
+以后出问题先定位模块，不是全系统乱查。
+
+2. 配置优先原则
+
+这些内容尽量后台配置，不写死代码：
+
+标签体系
+风险词库
+风险规则
+平台模板
+Prompt 版本
+企微推送规则
+看板指标
+跟进提醒规则
+3. 多入口兜底原则
+
+采集不要依赖单一路径：
+
+手机分享失效，还有截图 OCR
+插件采集失效，还有手动录入
+微信转发还能做轻兜底
+
+这样系统不会因为一个入口挂了就瘫掉。
+
+4. 日志与监控原则
+
+至少监控：
+
+接口错误率
+AI 调用失败率
+OCR 失败率
+企业微信推送失败率
+数据库磁盘占用
+对象存储占用
+十、推荐技术栈
+
+我给你一版最适合的技术栈组合。
+
+客户端
+桌面端：Tauri + React
+手机采集：H5 / 后续 App
+插件：Plasmo / WXT
+后端
+FastAPI
+SQLAlchemy
+Pydantic
+Alembic
+Celery / RQ（异步任务）
+数据层
+PostgreSQL
+Redis
+MinIO / OSS
+pgvector
+AI 层
+在线模型主用
+Ollama 本地模型备用
+自建 Prompt 管理
+RAG 检索增强
+运维
+Docker Compose 起步
+Nginx 反向代理
+Sentry/日志平台
+定时备份
+十一、MVP 架构版本
+
+如果你现在就要落地，我建议先做这个最小可用版：
+
+MVP 必做模块
+登录与团队
+多入口采集接入
+素材收件箱
+素材库
+AI 摘要/拆解
+AI 改写
+风险审核
+发布任务中心
+线索池
+客户跟进
+企业微信通知
+基础看板
+MVP 可以先不做
+手机完整 App
+复杂 Agent 编排
+深度知识库运营后台
+多租户 SaaS 高级计费
+自动化复杂工作流
+十二、最终建议：你这套项目最适合的架构形态
+
+我给你一句最终版总结：
+
+多入口采集 + 桌面端运营中台 + AI 编排服务 + 知识库增强 + 人工手机端发布 + CRM 跟进 + 企业微信协同 + 可私有化部署
+
+这是目前最适合你、也最容易卖出去的项目架构。
+
+如果你接下来要继续往下走，最实用的下一步是这三个里选一个：
+我可以直接继续给你出“系统目录结构”、“数据库 ER 清单”或者“开发排期 v1”
+
+
+系统目录结构
+
+我建议你用 单体应用 + 模块化分层，不要一开始就微服务。
+
+1）项目总目录
+ai-leads-platform/
+├─ README.md
+├─ docs/                         # 产品文档、接口文档、部署文档
+├─ deploy/                       # Docker、Nginx、脚本、环境配置
+├─ scripts/                      # 初始化、备份、迁移、运维脚本
+├─ backend/                      # FastAPI 后端
+├─ desktop/                      # Tauri + React 桌面端
+├─ mobile-h5/                    # 手机采集 H5
+├─ browser-extension/            # PC 浏览器插件
+├─ shared/                       # 前后端共享类型、常量、协议
+└─ sql/                          # 初始化 SQL、演示数据、索引脚本
+2）backend 目录结构
+backend/
+├─ app/
+│  ├─ main.py
+│  ├─ core/                      # 核心配置
+│  │  ├─ config.py
+│  │  ├─ security.py
+│  │  ├─ database.py
+│  │  ├─ redis.py
+│  │  ├─ logger.py
+│  │  └─ exceptions.py
+│  │
+│  ├─ api/                       # 路由层
+│  │  ├─ deps.py
+│  │  ├─ router.py
+│  │  └─ v1/
+│  │     ├─ auth.py
+│  │     ├─ users.py
+│  │     ├─ teams.py
+│  │     ├─ collect.py
+│  │     ├─ inbox.py
+│  │     ├─ materials.py
+│  │     ├─ tags.py
+│  │     ├─ ai.py
+│  │     ├─ compliance.py
+│  │     ├─ publish.py
+│  │     ├─ accounts.py
+│  │     ├─ leads.py
+│  │     ├─ customers.py
+│  │     ├─ dashboard.py
+│  │     ├─ wecom.py
+│  │     ├─ knowledge.py
+│  │     ├─ agents.py
+│  │     └─ audit.py
+│  │
+│  ├─ models/                    # SQLAlchemy 模型
+│  │  ├─ user.py
+│  │  ├─ team.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ compliance.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ audit.py
+│  │
+│  ├─ schemas/                   # Pydantic 请求/响应
+│  │  ├─ auth.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ common.py
+│  │
+│  ├─ services/                  # 业务服务层
+│  │  ├─ auth_service.py
+│  │  ├─ collect_service.py
+│  │  ├─ inbox_service.py
+│  │  ├─ material_service.py
+│  │  ├─ tag_service.py
+│  │  ├─ ai_service.py
+│  │  ├─ compliance_service.py
+│  │  ├─ publish_service.py
+│  │  ├─ account_service.py
+│  │  ├─ lead_service.py
+│  │  ├─ customer_service.py
+│  │  ├─ dashboard_service.py
+│  │  ├─ wecom_service.py
+│  │  ├─ knowledge_service.py
+│  │  ├─ agent_service.py
+│  │  └─ audit_service.py
+│  │
+│  ├─ repositories/              # 数据访问层
+│  │  ├─ base.py
+│  │  ├─ user_repo.py
+│  │  ├─ material_repo.py
+│  │  ├─ publish_repo.py
+│  │  ├─ crm_repo.py
+│  │  └─ ...
+│  │
+│  ├─ integrations/              # 第三方集成
+│  │  ├─ llm/
+│  │  │  ├─ gateway.py
+│  │  │  ├─ openai_like.py
+│  │  │  ├─ volcengine.py
+│  │  │  └─ ollama.py
+│  │  ├─ ocr/
+│  │  │  ├─ base.py
+│  │  │  └─ ocr_service.py
+│  │  ├─ storage/
+│  │  │  ├─ minio_client.py
+│  │  │  └─ oss_client.py
+│  │  └─ wecom/
+│  │     └─ robot_client.py
+│  │
+│  ├─ tasks/                     # 异步任务
+│  │  ├─ queue.py
+│  │  ├─ material_tasks.py
+│  │  ├─ ai_tasks.py
+│  │  ├─ dashboard_tasks.py
+│  │  └─ notify_tasks.py
+│  │
+│  ├─ rules/                     # 风险规则、模板、配置
+│  │  ├─ compliance/
+│  │  │  ├─ douyin_rules.yaml
+│  │  │  ├─ xiaohongshu_rules.yaml
+│  │  │  ├─ zhihu_rules.yaml
+│  │  │  └─ xianyu_rules.yaml
+│  │  ├─ prompts/
+│  │  │  ├─ material_analyze_v1.txt
+│  │  │  ├─ rewrite_xhs_v1.txt
+│  │  │  ├─ rewrite_douyin_v1.txt
+│  │  │  └─ compliance_review_v1.txt
+│  │  └─ tags/
+│  │     └─ default_tags.json
+│  │
+│  ├─ utils/
+│  │  ├─ time.py
+│  │  ├─ hash.py
+│  │  ├─ file.py
+│  │  ├─ text.py
+│  │  └─ validators.py
+│  │
+│  └─ tests/
+│     ├─ api/
+│     ├─ services/
+│     └─ integrations/
+│
+├─ alembic/
+├─ requirements.txt
+├─ Dockerfile
+└─ .env.example
+这个结构的好处
+以后维护时，能一眼分清是 API 层、服务层、规则层、集成层 的问题。
+规则、提示词、平台差异尽量放到 rules/，减少频繁改代码。
+AI、OCR、企业微信都单独隔离，后面换供应商时影响小。
+3）desktop 目录结构
+desktop/
+├─ src/
+│  ├─ main.tsx
+│  ├─ app/
+│  │  ├─ router.tsx
+│  │  ├─ store.ts
+│  │  └─ providers.tsx
+│  │
+│  ├─ api/                       # 前端请求封装
+│  │  ├─ client.ts
+│  │  ├─ auth.ts
+│  │  ├─ materials.ts
+│  │  ├─ ai.ts
+│  │  ├─ publish.ts
+│  │  ├─ crm.ts
+│  │  └─ dashboard.ts
+│  │
+│  ├─ components/                # 通用组件
+│  │  ├─ layout/
+│  │  ├─ table/
+│  │  ├─ form/
+│  │  ├─ charts/
+│  │  └─ common/
+│  │
+│  ├─ pages/
+│  │  ├─ login/
+│  │  ├─ dashboard/
+│  │  ├─ collect-center/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai-workbench/
+│  │  ├─ compliance/
+│  │  ├─ publish/
+│  │  ├─ social-accounts/
+│  │  ├─ leads/
+│  │  ├─ customers/
+│  │  ├─ knowledge/
+│  │  ├─ wecom/
+│  │  └─ settings/
+│  │
+│  ├─ features/                  # 按业务域拆
+│  │  ├─ auth/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai/
+│  │  ├─ publish/
+│  │  ├─ crm/
+│  │  ├─ dashboard/
+│  │  └─ knowledge/
+│  │
+│  ├─ hooks/
+│  ├─ constants/
+│  ├─ types/
+│  ├─ utils/
+│  └─ styles/
+│
+├─ src-tauri/
+│  ├─ src/
+│  ├─ tauri.conf.json
+│  └─ Cargo.toml
+│
+├─ package.json
+└─ vite.config.ts
+4）mobile-h5 目录结构
+mobile-h5/
+├─ src/
+│  ├─ pages/
+│  │  ├─ share-collect/
+│  │  ├─ screenshot-ocr/
+│  │  ├─ quick-note/
+│  │  └─ success/
+│  ├─ api/
+│  ├─ components/
+│  ├─ hooks/
+│  ├─ utils/
+│  └─ types/
+├─ package.json
+└─ vite.config.ts
+
+这个 H5 只做一件事：把手机端素材送进收件箱。
+
+5）browser-extension 目录结构
+browser-extension/
+├─ src/
+│  ├─ background/
+│  ├─ content/
+│  ├─ popup/
+│  ├─ options/
+│  ├─ parsers/
+│  │  ├─ xiaohongshu.ts
+│  │  ├─ douyin.ts
+│  │  ├─ zhihu.ts
+│  │  └─ xianyu.ts
+│  ├─ api/
+│  ├─ utils/
+│  └─ types/
+├─ manifest.json
+└─ package.json
+
+这里的重点是 parsers/，平台页面解析不要散落 everywhere。
+
+二、数据库 ER 清单
+
+下面这版我按 业务域 给你，已经接近你后面做 ER 图的骨架了。
+
+A. 组织与权限域
+1. users
+
+用户表
+
+核心字段：
+
+id
+username
+real_name
+mobile
+email
+password_hash
+status
+last_login_at
+created_at
+updated_at
+2. teams
+
+团队表
+
+核心字段：
+
+id
+team_name
+owner_user_id
+plan_type
+status
+created_at
+updated_at
+3. team_members
+
+团队成员表
+
+核心字段：
+
+id
+team_id
+user_id
+role_code
+status
+joined_at
+created_at
+updated_at
+关系
+users 1 --- n team_members
+teams 1 --- n team_members
+users 1 --- n teams(owner_user_id)
+B. 采集与收件箱域
+4. collect_records
+
+采集记录表
+
+核心字段：
+
+id
+team_id
+collect_source
+device_type
+source_app
+page_url
+raw_payload_json
+collect_type
+created_by
+created_at
+updated_at
+5. inbox_items
+
+收件箱表
+
+核心字段：
+
+id
+team_id
+source_record_id
+status
+assigned_to
+created_at
+updated_at
+关系
+teams 1 --- n collect_records
+collect_records 1 --- 1 inbox_items
+users 1 --- n collect_records(created_by)
+C. 素材中心域
+6. materials
+
+素材主表
+
+核心字段：
+
+id
+team_id
+platform
+source_url
+content_type
+author_name
+title
+body_text
+ocr_text
+metrics_json
+user_notes
+ai_summary
+compliance_score
+risk_level
+dedup_hash
+material_type
+status
+collected_by
+collected_at
+created_at
+updated_at
+7. material_assets
+
+素材附件表
+
+核心字段：
+
+id
+material_id
+asset_type
+file_url
+thumbnail_url
+sort_no
+created_at
+updated_at
+8. material_tags
+
+素材标签表
+
+核心字段：
+
+id
+material_id
+tag_type
+tag_name
+created_at
+9. material_fragments
+
+素材片段表
+
+核心字段：
+
+id
+material_id
+fragment_type
+content_text
+sequence_no
+created_at
+updated_at
+10. material_scores
+
+素材评分表
+
+核心字段：
+
+id
+material_id
+reusability_score
+compliance_score
+rewrite_score
+business_relevance_score
+final_score
+created_at
+updated_at
+11. material_purposes
+
+素材采集目的表
+
+核心字段：
+
+id
+material_id
+purpose_code
+created_by
+created_at
+12. negative_case_flags
+
+反例标记表
+
+核心字段：
+
+id
+material_id
+flag_type
+note
+created_by
+created_at
+13. topic_candidates
+
+选题候选表
+
+核心字段：
+
+id
+team_id
+source_material_id
+title
+topic_direction
+target_platform
+content_angle
+risk_level
+status
+created_by
+created_at
+updated_at
+关系
+materials 1 --- n material_assets
+materials 1 --- n material_tags
+materials 1 --- n material_fragments
+materials 1 --- 1 material_scores
+materials 1 --- n material_purposes
+materials 1 --- n negative_case_flags
+materials 1 --- n topic_candidates
+D. AI 与审核域
+14. material_ai_results
+
+AI 分析结果表
+
+核心字段：
+
+id
+material_id
+analysis_type
+result_json
+model_name
+prompt_version
+created_by
+created_at
+15. material_rewrites
+
+改写结果表
+
+核心字段：
+
+id
+material_id
+target_platform
+rewrite_title
+rewrite_body
+style_tags_json
+risk_level
+status
+created_by
+created_at
+updated_at
+16. material_review_records
+
+审核记录表
+
+核心字段：
+
+id
+material_id
+review_type
+risk_hits_json
+suggestions_json
+review_result
+reviewed_by
+reviewed_at
+created_at
+17. compliance_rules
+
+合规规则表
+
+核心字段：
+
+id
+rule_code
+rule_name
+platform
+risk_level
+match_type
+pattern_text
+suggestion_text
+status
+created_at
+updated_at
+18. sensitive_words
+
+敏感词表
+
+核心字段：
+
+id
+platform
+word_text
+risk_level
+replace_text
+status
+created_at
+updated_at
+19. compliance_check_logs
+
+审核检查日志表
+
+核心字段：
+
+id
+target_type
+target_id
+platform
+input_text
+hits_json
+score
+risk_level
+checked_by
+created_at
+关系
+materials 1 --- n material_ai_results
+materials 1 --- n material_rewrites
+materials 1 --- n material_review_records
+E. 发布与账号域
+20. social_accounts
+
+社交账号台账表
+
+核心字段：
+
+id
+team_id
+owner_user_id
+platform
+account_nickname
+account_uid
+status
+last_posted_at
+risk_note
+created_at
+updated_at
+21. publish_tasks
+
+发布任务表
+
+核心字段：
+
+id
+team_id
+material_id
+rewrite_id
+platform
+account_id
+assigned_to
+title
+content_text
+risk_level
+status
+scheduled_at
+posted_at
+post_url
+created_at
+updated_at
+22. publish_feedbacks
+
+发布反馈表
+
+核心字段：
+
+id
+publish_task_id
+result_type
+view_count
+like_count
+comment_count
+collect_count
+inquiry_count
+is_deleted
+is_limited
+feedback_note
+created_by
+created_at
+23. account_risk_logs
+
+账号风险日志表
+
+核心字段：
+
+id
+account_id
+platform
+event_type
+event_desc
+related_task_id
+created_at
+关系
+social_accounts 1 --- n publish_tasks
+publish_tasks n --- 1 materials
+publish_tasks n --- 1 material_rewrites
+publish_tasks 1 --- n publish_feedbacks
+social_accounts 1 --- n account_risk_logs
+F. 线索与客户域
+24. leads
+
+线索表
+
+核心字段：
+
+id
+team_id
+source_platform
+source_material_id
+source_publish_task_id
+lead_name
+mobile
+wechat
+intent_type
+basic_profile_json
+status
+owner_user_id
+created_at
+updated_at
+25. lead_assign_records
+
+线索分配记录表
+
+核心字段：
+
+id
+lead_id
+from_user_id
+to_user_id
+assigned_by
+assigned_at
+created_at
+26. customers
+
+客户表
+
+核心字段：
+
+id
+team_id
+lead_id
+customer_name
+level_code
+credit_summary
+material_status
+stage
+owner_user_id
+created_at
+updated_at
+27. customer_profiles
+
+客户扩展资料表
+
+核心字段：
+
+id
+customer_id
+has_house
+has_car
+has_fund
+has_business_license
+income_desc
+debt_desc
+credit_desc
+extra_json
+created_at
+updated_at
+28. customer_followups
+
+客户跟进记录表
+
+核心字段：
+
+id
+customer_id
+followup_type
+content
+next_followup_at
+created_by
+created_at
+updated_at
+29. customer_files
+
+客户文件表
+
+核心字段：
+
+id
+customer_id
+file_type
+file_name
+file_url
+ocr_text
+summary_text
+uploaded_by
+created_at
+updated_at
+30. customer_stage_logs
+
+客户阶段变更日志表
+
+核心字段：
+
+id
+customer_id
+from_stage
+to_stage
+changed_by
+changed_at
+created_at
+关系
+leads 1 --- 0..1 customers
+customers 1 --- 1 customer_profiles
+customers 1 --- n customer_followups
+customers 1 --- n customer_files
+customers 1 --- n customer_stage_logs
+publish_tasks 1 --- n leads（来源发布任务）
+materials 1 --- n leads（来源素材）
+G. 企业微信协同域
+31. wecom_bots
+
+机器人配置表
+
+32. wecom_bot_bindings
+
+机器人与群场景绑定表
+
+33. wecom_message_templates
+
+消息模板表
+
+34. wecom_push_logs
+
+推送日志表
+
+35. collected_inbox_messages
+
+微信采集消息表
+
+关系
+wecom_bots 1 --- n wecom_bot_bindings
+wecom_bots 1 --- n wecom_push_logs
+H. 知识库与智能体域
+36. knowledge_bases
+
+知识库表
+
+37. knowledge_documents
+
+知识文档表
+
+38. knowledge_chunks
+
+知识分块表
+
+39. agent_configs
+
+智能体配置表
+
+40. agent_tasks
+
+智能体任务表
+
+关系
+knowledge_bases 1 --- n knowledge_documents
+knowledge_documents 1 --- n knowledge_chunks
+teams 1 --- n agent_configs
+teams 1 --- n agent_tasks
+I. 报表与审计域
+41. dashboard_daily_stats
+
+日报统计表
+
+42. content_performance_stats
+
+内容表现统计表
+
+43. operation_logs
+
+操作日志表
+
+44. login_logs
+
+登录日志表
+
+ER 主关系总览
+
+你可以先按这个主干画 ER：
+
+users ──< team_members >── teams
+
+teams ──< collect_records ──1 inbox_items
+teams ──< materials ──< material_assets
+                    ├─< material_tags
+                    ├─< material_fragments
+                    ├─1 material_scores
+                    ├─< material_ai_results
+                    ├─< material_rewrites
+                    ├─< material_review_records
+                    └─< topic_candidates
+
+teams ──< social_accounts ──< publish_tasks ──< publish_feedbacks
+materials ──< publish_tasks
+material_rewrites ──< publish_tasks
+
+materials ──< leads ──0..1 customers
+publish_tasks ──< leads
+customers ──1 customer_profiles
+customers ──< customer_followups
+customers ──< customer_files
+customers ──< customer_stage_logs
+
+teams ──< wecom_bots ──< wecom_push_logs
+teams ──< knowledge_bases ──< knowledge_documents ──< knowledge_chunks
+teams ──< agent_tasks
+
+
+系统目录结构
+
+我建议你用 单体应用 + 模块化分层，不要一开始就微服务。
+
+1）项目总目录
+ai-leads-platform/
+├─ README.md
+├─ docs/                         # 产品文档、接口文档、部署文档
+├─ deploy/                       # Docker、Nginx、脚本、环境配置
+├─ scripts/                      # 初始化、备份、迁移、运维脚本
+├─ backend/                      # FastAPI 后端
+├─ desktop/                      # Tauri + React 桌面端
+├─ mobile-h5/                    # 手机采集 H5
+├─ browser-extension/            # PC 浏览器插件
+├─ shared/                       # 前后端共享类型、常量、协议
+└─ sql/                          # 初始化 SQL、演示数据、索引脚本
+2）backend 目录结构
+backend/
+├─ app/
+│  ├─ main.py
+│  ├─ core/                      # 核心配置
+│  │  ├─ config.py
+│  │  ├─ security.py
+│  │  ├─ database.py
+│  │  ├─ redis.py
+│  │  ├─ logger.py
+│  │  └─ exceptions.py
+│  │
+│  ├─ api/                       # 路由层
+│  │  ├─ deps.py
+│  │  ├─ router.py
+│  │  └─ v1/
+│  │     ├─ auth.py
+│  │     ├─ users.py
+│  │     ├─ teams.py
+│  │     ├─ collect.py
+│  │     ├─ inbox.py
+│  │     ├─ materials.py
+│  │     ├─ tags.py
+│  │     ├─ ai.py
+│  │     ├─ compliance.py
+│  │     ├─ publish.py
+│  │     ├─ accounts.py
+│  │     ├─ leads.py
+│  │     ├─ customers.py
+│  │     ├─ dashboard.py
+│  │     ├─ wecom.py
+│  │     ├─ knowledge.py
+│  │     ├─ agents.py
+│  │     └─ audit.py
+│  │
+│  ├─ models/                    # SQLAlchemy 模型
+│  │  ├─ user.py
+│  │  ├─ team.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ compliance.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ audit.py
+│  │
+│  ├─ schemas/                   # Pydantic 请求/响应
+│  │  ├─ auth.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ common.py
+│  │
+│  ├─ services/                  # 业务服务层
+│  │  ├─ auth_service.py
+│  │  ├─ collect_service.py
+│  │  ├─ inbox_service.py
+│  │  ├─ material_service.py
+│  │  ├─ tag_service.py
+│  │  ├─ ai_service.py
+│  │  ├─ compliance_service.py
+│  │  ├─ publish_service.py
+│  │  ├─ account_service.py
+│  │  ├─ lead_service.py
+│  │  ├─ customer_service.py
+│  │  ├─ dashboard_service.py
+│  │  ├─ wecom_service.py
+│  │  ├─ knowledge_service.py
+│  │  ├─ agent_service.py
+│  │  └─ audit_service.py
+│  │
+│  ├─ repositories/              # 数据访问层
+│  │  ├─ base.py
+│  │  ├─ user_repo.py
+│  │  ├─ material_repo.py
+│  │  ├─ publish_repo.py
+│  │  ├─ crm_repo.py
+│  │  └─ ...
+│  │
+│  ├─ integrations/              # 第三方集成
+│  │  ├─ llm/
+│  │  │  ├─ gateway.py
+│  │  │  ├─ openai_like.py
+│  │  │  ├─ volcengine.py
+│  │  │  └─ ollama.py
+│  │  ├─ ocr/
+│  │  │  ├─ base.py
+│  │  │  └─ ocr_service.py
+│  │  ├─ storage/
+│  │  │  ├─ minio_client.py
+│  │  │  └─ oss_client.py
+│  │  └─ wecom/
+│  │     └─ robot_client.py
+│  │
+│  ├─ tasks/                     # 异步任务
+│  │  ├─ queue.py
+│  │  ├─ material_tasks.py
+│  │  ├─ ai_tasks.py
+│  │  ├─ dashboard_tasks.py
+│  │  └─ notify_tasks.py
+│  │
+│  ├─ rules/                     # 风险规则、模板、配置
+│  │  ├─ compliance/
+│  │  │  ├─ douyin_rules.yaml
+│  │  │  ├─ xiaohongshu_rules.yaml
+│  │  │  ├─ zhihu_rules.yaml
+│  │  │  └─ xianyu_rules.yaml
+│  │  ├─ prompts/
+│  │  │  ├─ material_analyze_v1.txt
+│  │  │  ├─ rewrite_xhs_v1.txt
+│  │  │  ├─ rewrite_douyin_v1.txt
+│  │  │  └─ compliance_review_v1.txt
+│  │  └─ tags/
+│  │     └─ default_tags.json
+│  │
+│  ├─ utils/
+│  │  ├─ time.py
+│  │  ├─ hash.py
+│  │  ├─ file.py
+│  │  ├─ text.py
+│  │  └─ validators.py
+│  │
+│  └─ tests/
+│     ├─ api/
+│     ├─ services/
+│     └─ integrations/
+│
+├─ alembic/
+├─ requirements.txt
+├─ Dockerfile
+└─ .env.example
+这个结构的好处
+以后维护时，能一眼分清是 API 层、服务层、规则层、集成层 的问题。
+规则、提示词、平台差异尽量放到 rules/，减少频繁改代码。
+AI、OCR、企业微信都单独隔离，后面换供应商时影响小。
+3）desktop 目录结构
+desktop/
+├─ src/
+│  ├─ main.tsx
+│  ├─ app/
+│  │  ├─ router.tsx
+│  │  ├─ store.ts
+│  │  └─ providers.tsx
+│  │
+│  ├─ api/                       # 前端请求封装
+│  │  ├─ client.ts
+│  │  ├─ auth.ts
+│  │  ├─ materials.ts
+│  │  ├─ ai.ts
+│  │  ├─ publish.ts
+│  │  ├─ crm.ts
+│  │  └─ dashboard.ts
+│  │
+│  ├─ components/                # 通用组件
+│  │  ├─ layout/
+│  │  ├─ table/
+│  │  ├─ form/
+│  │  ├─ charts/
+│  │  └─ common/
+│  │
+│  ├─ pages/
+│  │  ├─ login/
+│  │  ├─ dashboard/
+│  │  ├─ collect-center/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai-workbench/
+│  │  ├─ compliance/
+│  │  ├─ publish/
+│  │  ├─ social-accounts/
+│  │  ├─ leads/
+│  │  ├─ customers/
+│  │  ├─ knowledge/
+│  │  ├─ wecom/
+│  │  └─ settings/
+│  │
+│  ├─ features/                  # 按业务域拆
+│  │  ├─ auth/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai/
+│  │  ├─ publish/
+│  │  ├─ crm/
+│  │  ├─ dashboard/
+│  │  └─ knowledge/
+│  │
+│  ├─ hooks/
+│  ├─ constants/
+│  ├─ types/
+│  ├─ utils/
+│  └─ styles/
+│
+├─ src-tauri/
+│  ├─ src/
+│  ├─ tauri.conf.json
+│  └─ Cargo.toml
+│
+├─ package.json
+└─ vite.config.ts
+4）mobile-h5 目录结构
+mobile-h5/
+├─ src/
+│  ├─ pages/
+│  │  ├─ share-collect/
+│  │  ├─ screenshot-ocr/
+│  │  ├─ quick-note/
+│  │  └─ success/
+│  ├─ api/
+│  ├─ components/
+│  ├─ hooks/
+│  ├─ utils/
+│  └─ types/
+├─ package.json
+└─ vite.config.ts
+
+这个 H5 只做一件事：把手机端素材送进收件箱。
+
+5）browser-extension 目录结构
+browser-extension/
+├─ src/
+│  ├─ background/
+│  ├─ content/
+│  ├─ popup/
+│  ├─ options/
+│  ├─ parsers/
+│  │  ├─ xiaohongshu.ts
+│  │  ├─ douyin.ts
+│  │  ├─ zhihu.ts
+│  │  └─ xianyu.ts
+│  ├─ api/
+│  ├─ utils/
+│  └─ types/
+├─ manifest.json
+└─ package.json
+
+这里的重点是 parsers/，平台页面解析不要散落 everywhere。
+
+二、数据库 ER 清单
+
+下面这版我按 业务域 给你，已经接近你后面做 ER 图的骨架了。
+
+A. 组织与权限域
+1. users
+
+用户表
+
+核心字段：
+
+id
+username
+real_name
+mobile
+email
+password_hash
+status
+last_login_at
+created_at
+updated_at
+2. teams
+
+团队表
+
+核心字段：
+
+id
+team_name
+owner_user_id
+plan_type
+status
+created_at
+updated_at
+3. team_members
+
+团队成员表
+
+核心字段：
+
+id
+team_id
+user_id
+role_code
+status
+joined_at
+created_at
+updated_at
+关系
+users 1 --- n team_members
+teams 1 --- n team_members
+users 1 --- n teams(owner_user_id)
+B. 采集与收件箱域
+4. collect_records
+
+采集记录表
+
+核心字段：
+
+id
+team_id
+collect_source
+device_type
+source_app
+page_url
+raw_payload_json
+collect_type
+created_by
+created_at
+updated_at
+5. inbox_items
+
+收件箱表
+
+核心字段：
+
+id
+team_id
+source_record_id
+status
+assigned_to
+created_at
+updated_at
+关系
+teams 1 --- n collect_records
+collect_records 1 --- 1 inbox_items
+users 1 --- n collect_records(created_by)
+C. 素材中心域
+6. materials
+
+素材主表
+
+核心字段：
+
+id
+team_id
+platform
+source_url
+content_type
+author_name
+title
+body_text
+ocr_text
+metrics_json
+user_notes
+ai_summary
+compliance_score
+risk_level
+dedup_hash
+material_type
+status
+collected_by
+collected_at
+created_at
+updated_at
+7. material_assets
+
+素材附件表
+
+核心字段：
+
+id
+material_id
+asset_type
+file_url
+thumbnail_url
+sort_no
+created_at
+updated_at
+8. material_tags
+
+素材标签表
+
+核心字段：
+
+id
+material_id
+tag_type
+tag_name
+created_at
+9. material_fragments
+
+素材片段表
+
+核心字段：
+
+id
+material_id
+fragment_type
+content_text
+sequence_no
+created_at
+updated_at
+10. material_scores
+
+素材评分表
+
+核心字段：
+
+id
+material_id
+reusability_score
+compliance_score
+rewrite_score
+business_relevance_score
+final_score
+created_at
+updated_at
+11. material_purposes
+
+素材采集目的表
+
+核心字段：
+
+id
+material_id
+purpose_code
+created_by
+created_at
+12. negative_case_flags
+
+反例标记表
+
+核心字段：
+
+id
+material_id
+flag_type
+note
+created_by
+created_at
+13. topic_candidates
+
+选题候选表
+
+核心字段：
+
+id
+team_id
+source_material_id
+title
+topic_direction
+target_platform
+content_angle
+risk_level
+status
+created_by
+created_at
+updated_at
+关系
+materials 1 --- n material_assets
+materials 1 --- n material_tags
+materials 1 --- n material_fragments
+materials 1 --- 1 material_scores
+materials 1 --- n material_purposes
+materials 1 --- n negative_case_flags
+materials 1 --- n topic_candidates
+D. AI 与审核域
+14. material_ai_results
+
+AI 分析结果表
+
+核心字段：
+
+id
+material_id
+analysis_type
+result_json
+model_name
+prompt_version
+created_by
+created_at
+15. material_rewrites
+
+改写结果表
+
+核心字段：
+
+id
+material_id
+target_platform
+rewrite_title
+rewrite_body
+style_tags_json
+risk_level
+status
+created_by
+created_at
+updated_at
+16. material_review_records
+
+审核记录表
+
+核心字段：
+
+id
+material_id
+review_type
+risk_hits_json
+suggestions_json
+review_result
+reviewed_by
+reviewed_at
+created_at
+17. compliance_rules
+
+合规规则表
+
+核心字段：
+
+id
+rule_code
+rule_name
+platform
+risk_level
+match_type
+pattern_text
+suggestion_text
+status
+created_at
+updated_at
+18. sensitive_words
+
+敏感词表
+
+核心字段：
+
+id
+platform
+word_text
+risk_level
+replace_text
+status
+created_at
+updated_at
+19. compliance_check_logs
+
+审核检查日志表
+
+核心字段：
+
+id
+target_type
+target_id
+platform
+input_text
+hits_json
+score
+risk_level
+checked_by
+created_at
+关系
+materials 1 --- n material_ai_results
+materials 1 --- n material_rewrites
+materials 1 --- n material_review_records
+E. 发布与账号域
+20. social_accounts
+
+社交账号台账表
+
+核心字段：
+
+id
+team_id
+owner_user_id
+platform
+account_nickname
+account_uid
+status
+last_posted_at
+risk_note
+created_at
+updated_at
+21. publish_tasks
+
+发布任务表
+
+核心字段：
+
+id
+team_id
+material_id
+rewrite_id
+platform
+account_id
+assigned_to
+title
+content_text
+risk_level
+status
+scheduled_at
+posted_at
+post_url
+created_at
+updated_at
+22. publish_feedbacks
+
+发布反馈表
+
+核心字段：
+
+id
+publish_task_id
+result_type
+view_count
+like_count
+comment_count
+collect_count
+inquiry_count
+is_deleted
+is_limited
+feedback_note
+created_by
+created_at
+23. account_risk_logs
+
+账号风险日志表
+
+核心字段：
+
+id
+account_id
+platform
+event_type
+event_desc
+related_task_id
+created_at
+关系
+social_accounts 1 --- n publish_tasks
+publish_tasks n --- 1 materials
+publish_tasks n --- 1 material_rewrites
+publish_tasks 1 --- n publish_feedbacks
+social_accounts 1 --- n account_risk_logs
+F. 线索与客户域
+24. leads
+
+线索表
+
+核心字段：
+
+id
+team_id
+source_platform
+source_material_id
+source_publish_task_id
+lead_name
+mobile
+wechat
+intent_type
+basic_profile_json
+status
+owner_user_id
+created_at
+updated_at
+25. lead_assign_records
+
+线索分配记录表
+
+核心字段：
+
+id
+lead_id
+from_user_id
+to_user_id
+assigned_by
+assigned_at
+created_at
+26. customers
+
+客户表
+
+核心字段：
+
+id
+team_id
+lead_id
+customer_name
+level_code
+credit_summary
+material_status
+stage
+owner_user_id
+created_at
+updated_at
+27. customer_profiles
+
+客户扩展资料表
+
+核心字段：
+
+id
+customer_id
+has_house
+has_car
+has_fund
+has_business_license
+income_desc
+debt_desc
+credit_desc
+extra_json
+created_at
+updated_at
+28. customer_followups
+
+客户跟进记录表
+
+核心字段：
+
+id
+customer_id
+followup_type
+content
+next_followup_at
+created_by
+created_at
+updated_at
+29. customer_files
+
+客户文件表
+
+核心字段：
+
+id
+customer_id
+file_type
+file_name
+file_url
+ocr_text
+summary_text
+uploaded_by
+created_at
+updated_at
+30. customer_stage_logs
+
+客户阶段变更日志表
+
+核心字段：
+
+id
+customer_id
+from_stage
+to_stage
+changed_by
+changed_at
+created_at
+关系
+leads 1 --- 0..1 customers
+customers 1 --- 1 customer_profiles
+customers 1 --- n customer_followups
+customers 1 --- n customer_files
+customers 1 --- n customer_stage_logs
+publish_tasks 1 --- n leads（来源发布任务）
+materials 1 --- n leads（来源素材）
+G. 企业微信协同域
+31. wecom_bots
+
+机器人配置表
+
+32. wecom_bot_bindings
+
+机器人与群场景绑定表
+
+33. wecom_message_templates
+
+消息模板表
+
+34. wecom_push_logs
+
+推送日志表
+
+35. collected_inbox_messages
+
+微信采集消息表
+
+关系
+wecom_bots 1 --- n wecom_bot_bindings
+wecom_bots 1 --- n wecom_push_logs
+H. 知识库与智能体域
+36. knowledge_bases
+
+知识库表
+
+37. knowledge_documents
+
+知识文档表
+
+38. knowledge_chunks
+
+知识分块表
+
+39. agent_configs
+
+智能体配置表
+
+40. agent_tasks
+
+智能体任务表
+
+关系
+knowledge_bases 1 --- n knowledge_documents
+knowledge_documents 1 --- n knowledge_chunks
+teams 1 --- n agent_configs
+teams 1 --- n agent_tasks
+I. 报表与审计域
+41. dashboard_daily_stats
+
+日报统计表
+
+42. content_performance_stats
+
+内容表现统计表
+
+43. operation_logs
+
+操作日志表
+
+44. login_logs
+
+登录日志表
+
+ER 主关系总览
+
+你可以先按这个主干画 ER：
+
+users ──< team_members >── teams
+
+teams ──< collect_records ──1 inbox_items
+teams ──< materials ──< material_assets
+                    ├─< material_tags
+                    ├─< material_fragments
+                    ├─1 material_scores
+                    ├─< material_ai_results
+                    ├─< material_rewrites
+                    ├─< material_review_records
+                    └─< topic_candidates
+
+teams ──< social_accounts ──< publish_tasks ──< publish_feedbacks
+materials ──< publish_tasks
+material_rewrites ──< publish_tasks
+
+materials ──< leads ──0..1 customers
+publish_tasks ──< leads
+customers ──1 customer_profiles
+customers ──< customer_followups
+customers ──< customer_files
+customers ──< customer_stage_logs
+
+teams ──< wecom_bots ──< wecom_push_logs
+teams ──< knowledge_bases ──< knowledge_documents ──< knowledge_chunks
+teams ──< agent_tasks
+
+系统目录结构
+
+我建议你用 单体应用 + 模块化分层，不要一开始就微服务。
+
+1）项目总目录
+ai-leads-platform/
+├─ README.md
+├─ docs/                         # 产品文档、接口文档、部署文档
+├─ deploy/                       # Docker、Nginx、脚本、环境配置
+├─ scripts/                      # 初始化、备份、迁移、运维脚本
+├─ backend/                      # FastAPI 后端
+├─ desktop/                      # Tauri + React 桌面端
+├─ mobile-h5/                    # 手机采集 H5
+├─ browser-extension/            # PC 浏览器插件
+├─ shared/                       # 前后端共享类型、常量、协议
+└─ sql/                          # 初始化 SQL、演示数据、索引脚本
+2）backend 目录结构
+backend/
+├─ app/
+│  ├─ main.py
+│  ├─ core/                      # 核心配置
+│  │  ├─ config.py
+│  │  ├─ security.py
+│  │  ├─ database.py
+│  │  ├─ redis.py
+│  │  ├─ logger.py
+│  │  └─ exceptions.py
+│  │
+│  ├─ api/                       # 路由层
+│  │  ├─ deps.py
+│  │  ├─ router.py
+│  │  └─ v1/
+│  │     ├─ auth.py
+│  │     ├─ users.py
+│  │     ├─ teams.py
+│  │     ├─ collect.py
+│  │     ├─ inbox.py
+│  │     ├─ materials.py
+│  │     ├─ tags.py
+│  │     ├─ ai.py
+│  │     ├─ compliance.py
+│  │     ├─ publish.py
+│  │     ├─ accounts.py
+│  │     ├─ leads.py
+│  │     ├─ customers.py
+│  │     ├─ dashboard.py
+│  │     ├─ wecom.py
+│  │     ├─ knowledge.py
+│  │     ├─ agents.py
+│  │     └─ audit.py
+│  │
+│  ├─ models/                    # SQLAlchemy 模型
+│  │  ├─ user.py
+│  │  ├─ team.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ compliance.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ audit.py
+│  │
+│  ├─ schemas/                   # Pydantic 请求/响应
+│  │  ├─ auth.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ common.py
+│  │
+│  ├─ services/                  # 业务服务层
+│  │  ├─ auth_service.py
+│  │  ├─ collect_service.py
+│  │  ├─ inbox_service.py
+│  │  ├─ material_service.py
+│  │  ├─ tag_service.py
+│  │  ├─ ai_service.py
+│  │  ├─ compliance_service.py
+│  │  ├─ publish_service.py
+│  │  ├─ account_service.py
+│  │  ├─ lead_service.py
+│  │  ├─ customer_service.py
+│  │  ├─ dashboard_service.py
+│  │  ├─ wecom_service.py
+│  │  ├─ knowledge_service.py
+│  │  ├─ agent_service.py
+│  │  └─ audit_service.py
+│  │
+│  ├─ repositories/              # 数据访问层
+│  │  ├─ base.py
+│  │  ├─ user_repo.py
+│  │  ├─ material_repo.py
+│  │  ├─ publish_repo.py
+│  │  ├─ crm_repo.py
+│  │  └─ ...
+│  │
+│  ├─ integrations/              # 第三方集成
+│  │  ├─ llm/
+│  │  │  ├─ gateway.py
+│  │  │  ├─ openai_like.py
+│  │  │  ├─ volcengine.py
+│  │  │  └─ ollama.py
+│  │  ├─ ocr/
+│  │  │  ├─ base.py
+│  │  │  └─ ocr_service.py
+│  │  ├─ storage/
+│  │  │  ├─ minio_client.py
+│  │  │  └─ oss_client.py
+│  │  └─ wecom/
+│  │     └─ robot_client.py
+│  │
+│  ├─ tasks/                     # 异步任务
+│  │  ├─ queue.py
+│  │  ├─ material_tasks.py
+│  │  ├─ ai_tasks.py
+│  │  ├─ dashboard_tasks.py
+│  │  └─ notify_tasks.py
+│  │
+│  ├─ rules/                     # 风险规则、模板、配置
+│  │  ├─ compliance/
+│  │  │  ├─ douyin_rules.yaml
+│  │  │  ├─ xiaohongshu_rules.yaml
+│  │  │  ├─ zhihu_rules.yaml
+│  │  │  └─ xianyu_rules.yaml
+│  │  ├─ prompts/
+│  │  │  ├─ material_analyze_v1.txt
+│  │  │  ├─ rewrite_xhs_v1.txt
+│  │  │  ├─ rewrite_douyin_v1.txt
+│  │  │  └─ compliance_review_v1.txt
+│  │  └─ tags/
+│  │     └─ default_tags.json
+│  │
+│  ├─ utils/
+│  │  ├─ time.py
+│  │  ├─ hash.py
+│  │  ├─ file.py
+│  │  ├─ text.py
+│  │  └─ validators.py
+│  │
+│  └─ tests/
+│     ├─ api/
+│     ├─ services/
+│     └─ integrations/
+│
+├─ alembic/
+├─ requirements.txt
+├─ Dockerfile
+└─ .env.example
+这个结构的好处
+以后维护时，能一眼分清是 API 层、服务层、规则层、集成层 的问题。
+规则、提示词、平台差异尽量放到 rules/，减少频繁改代码。
+AI、OCR、企业微信都单独隔离，后面换供应商时影响小。
+3）desktop 目录结构
+desktop/
+├─ src/
+│  ├─ main.tsx
+│  ├─ app/
+│  │  ├─ router.tsx
+│  │  ├─ store.ts
+│  │  └─ providers.tsx
+│  │
+│  ├─ api/                       # 前端请求封装
+│  │  ├─ client.ts
+│  │  ├─ auth.ts
+│  │  ├─ materials.ts
+│  │  ├─ ai.ts
+│  │  ├─ publish.ts
+│  │  ├─ crm.ts
+│  │  └─ dashboard.ts
+│  │
+│  ├─ components/                # 通用组件
+│  │  ├─ layout/
+│  │  ├─ table/
+│  │  ├─ form/
+│  │  ├─ charts/
+│  │  └─ common/
+│  │
+│  ├─ pages/
+│  │  ├─ login/
+│  │  ├─ dashboard/
+│  │  ├─ collect-center/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai-workbench/
+│  │  ├─ compliance/
+│  │  ├─ publish/
+│  │  ├─ social-accounts/
+│  │  ├─ leads/
+│  │  ├─ customers/
+│  │  ├─ knowledge/
+│  │  ├─ wecom/
+│  │  └─ settings/
+│  │
+│  ├─ features/                  # 按业务域拆
+│  │  ├─ auth/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai/
+│  │  ├─ publish/
+│  │  ├─ crm/
+│  │  ├─ dashboard/
+│  │  └─ knowledge/
+│  │
+│  ├─ hooks/
+│  ├─ constants/
+│  ├─ types/
+│  ├─ utils/
+│  └─ styles/
+│
+├─ src-tauri/
+│  ├─ src/
+│  ├─ tauri.conf.json
+│  └─ Cargo.toml
+│
+├─ package.json
+└─ vite.config.ts
+4）mobile-h5 目录结构
+mobile-h5/
+├─ src/
+│  ├─ pages/
+│  │  ├─ share-collect/
+│  │  ├─ screenshot-ocr/
+│  │  ├─ quick-note/
+│  │  └─ success/
+│  ├─ api/
+│  ├─ components/
+│  ├─ hooks/
+│  ├─ utils/
+│  └─ types/
+├─ package.json
+└─ vite.config.ts
+
+这个 H5 只做一件事：把手机端素材送进收件箱。
+
+5）browser-extension 目录结构
+browser-extension/
+├─ src/
+│  ├─ background/
+│  ├─ content/
+│  ├─ popup/
+│  ├─ options/
+│  ├─ parsers/
+│  │  ├─ xiaohongshu.ts
+│  │  ├─ douyin.ts
+│  │  ├─ zhihu.ts
+│  │  └─ xianyu.ts
+│  ├─ api/
+│  ├─ utils/
+│  └─ types/
+├─ manifest.json
+└─ package.json
+
+这里的重点是 parsers/，平台页面解析不要散落 everywhere。
+
+二、数据库 ER 清单
+
+下面这版我按 业务域 给你，已经接近你后面做 ER 图的骨架了。
+
+A. 组织与权限域
+1. users
+
+用户表
+
+核心字段：
+
+id
+username
+real_name
+mobile
+email
+password_hash
+status
+last_login_at
+created_at
+updated_at
+2. teams
+
+团队表
+
+核心字段：
+
+id
+team_name
+owner_user_id
+plan_type
+status
+created_at
+updated_at
+3. team_members
+
+团队成员表
+
+核心字段：
+
+id
+team_id
+user_id
+role_code
+status
+joined_at
+created_at
+updated_at
+关系
+users 1 --- n team_members
+teams 1 --- n team_members
+users 1 --- n teams(owner_user_id)
+B. 采集与收件箱域
+4. collect_records
+
+采集记录表
+
+核心字段：
+
+id
+team_id
+collect_source
+device_type
+source_app
+page_url
+raw_payload_json
+collect_type
+created_by
+created_at
+updated_at
+5. inbox_items
+
+收件箱表
+
+核心字段：
+
+id
+team_id
+source_record_id
+status
+assigned_to
+created_at
+updated_at
+关系
+teams 1 --- n collect_records
+collect_records 1 --- 1 inbox_items
+users 1 --- n collect_records(created_by)
+C. 素材中心域
+6. materials
+
+素材主表
+
+核心字段：
+
+id
+team_id
+platform
+source_url
+content_type
+author_name
+title
+body_text
+ocr_text
+metrics_json
+user_notes
+ai_summary
+compliance_score
+risk_level
+dedup_hash
+material_type
+status
+collected_by
+collected_at
+created_at
+updated_at
+7. material_assets
+
+素材附件表
+
+核心字段：
+
+id
+material_id
+asset_type
+file_url
+thumbnail_url
+sort_no
+created_at
+updated_at
+8. material_tags
+
+素材标签表
+
+核心字段：
+
+id
+material_id
+tag_type
+tag_name
+created_at
+9. material_fragments
+
+素材片段表
+
+核心字段：
+
+id
+material_id
+fragment_type
+content_text
+sequence_no
+created_at
+updated_at
+10. material_scores
+
+素材评分表
+
+核心字段：
+
+id
+material_id
+reusability_score
+compliance_score
+rewrite_score
+business_relevance_score
+final_score
+created_at
+updated_at
+11. material_purposes
+
+素材采集目的表
+
+核心字段：
+
+id
+material_id
+purpose_code
+created_by
+created_at
+12. negative_case_flags
+
+反例标记表
+
+核心字段：
+
+id
+material_id
+flag_type
+note
+created_by
+created_at
+13. topic_candidates
+
+选题候选表
+
+核心字段：
+
+id
+team_id
+source_material_id
+title
+topic_direction
+target_platform
+content_angle
+risk_level
+status
+created_by
+created_at
+updated_at
+关系
+materials 1 --- n material_assets
+materials 1 --- n material_tags
+materials 1 --- n material_fragments
+materials 1 --- 1 material_scores
+materials 1 --- n material_purposes
+materials 1 --- n negative_case_flags
+materials 1 --- n topic_candidates
+D. AI 与审核域
+14. material_ai_results
+
+AI 分析结果表
+
+核心字段：
+
+id
+material_id
+analysis_type
+result_json
+model_name
+prompt_version
+created_by
+created_at
+15. material_rewrites
+
+改写结果表
+
+核心字段：
+
+id
+material_id
+target_platform
+rewrite_title
+rewrite_body
+style_tags_json
+risk_level
+status
+created_by
+created_at
+updated_at
+16. material_review_records
+
+审核记录表
+
+核心字段：
+
+id
+material_id
+review_type
+risk_hits_json
+suggestions_json
+review_result
+reviewed_by
+reviewed_at
+created_at
+17. compliance_rules
+
+合规规则表
+
+核心字段：
+
+id
+rule_code
+rule_name
+platform
+risk_level
+match_type
+pattern_text
+suggestion_text
+status
+created_at
+updated_at
+18. sensitive_words
+
+敏感词表
+
+核心字段：
+
+id
+platform
+word_text
+risk_level
+replace_text
+status
+created_at
+updated_at
+19. compliance_check_logs
+
+审核检查日志表
+
+核心字段：
+
+id
+target_type
+target_id
+platform
+input_text
+hits_json
+score
+risk_level
+checked_by
+created_at
+关系
+materials 1 --- n material_ai_results
+materials 1 --- n material_rewrites
+materials 1 --- n material_review_records
+E. 发布与账号域
+20. social_accounts
+
+社交账号台账表
+
+核心字段：
+
+id
+team_id
+owner_user_id
+platform
+account_nickname
+account_uid
+status
+last_posted_at
+risk_note
+created_at
+updated_at
+21. publish_tasks
+
+发布任务表
+
+核心字段：
+
+id
+team_id
+material_id
+rewrite_id
+platform
+account_id
+assigned_to
+title
+content_text
+risk_level
+status
+scheduled_at
+posted_at
+post_url
+created_at
+updated_at
+22. publish_feedbacks
+
+发布反馈表
+
+核心字段：
+
+id
+publish_task_id
+result_type
+view_count
+like_count
+comment_count
+collect_count
+inquiry_count
+is_deleted
+is_limited
+feedback_note
+created_by
+created_at
+23. account_risk_logs
+
+账号风险日志表
+
+核心字段：
+
+id
+account_id
+platform
+event_type
+event_desc
+related_task_id
+created_at
+关系
+social_accounts 1 --- n publish_tasks
+publish_tasks n --- 1 materials
+publish_tasks n --- 1 material_rewrites
+publish_tasks 1 --- n publish_feedbacks
+social_accounts 1 --- n account_risk_logs
+F. 线索与客户域
+24. leads
+
+线索表
+
+核心字段：
+
+id
+team_id
+source_platform
+source_material_id
+source_publish_task_id
+lead_name
+mobile
+wechat
+intent_type
+basic_profile_json
+status
+owner_user_id
+created_at
+updated_at
+25. lead_assign_records
+
+线索分配记录表
+
+核心字段：
+
+id
+lead_id
+from_user_id
+to_user_id
+assigned_by
+assigned_at
+created_at
+26. customers
+
+客户表
+
+核心字段：
+
+id
+team_id
+lead_id
+customer_name
+level_code
+credit_summary
+material_status
+stage
+owner_user_id
+created_at
+updated_at
+27. customer_profiles
+
+客户扩展资料表
+
+核心字段：
+
+id
+customer_id
+has_house
+has_car
+has_fund
+has_business_license
+income_desc
+debt_desc
+credit_desc
+extra_json
+created_at
+updated_at
+28. customer_followups
+
+客户跟进记录表
+
+核心字段：
+
+id
+customer_id
+followup_type
+content
+next_followup_at
+created_by
+created_at
+updated_at
+29. customer_files
+
+客户文件表
+
+核心字段：
+
+id
+customer_id
+file_type
+file_name
+file_url
+ocr_text
+summary_text
+uploaded_by
+created_at
+updated_at
+30. customer_stage_logs
+
+客户阶段变更日志表
+
+核心字段：
+
+id
+customer_id
+from_stage
+to_stage
+changed_by
+changed_at
+created_at
+关系
+leads 1 --- 0..1 customers
+customers 1 --- 1 customer_profiles
+customers 1 --- n customer_followups
+customers 1 --- n customer_files
+customers 1 --- n customer_stage_logs
+publish_tasks 1 --- n leads（来源发布任务）
+materials 1 --- n leads（来源素材）
+G. 企业微信协同域
+31. wecom_bots
+
+机器人配置表
+
+32. wecom_bot_bindings
+
+机器人与群场景绑定表
+
+33. wecom_message_templates
+
+消息模板表
+
+34. wecom_push_logs
+
+推送日志表
+
+35. collected_inbox_messages
+
+微信采集消息表
+
+关系
+wecom_bots 1 --- n wecom_bot_bindings
+wecom_bots 1 --- n wecom_push_logs
+H. 知识库与智能体域
+36. knowledge_bases
+
+知识库表
+
+37. knowledge_documents
+
+知识文档表
+
+38. knowledge_chunks
+
+知识分块表
+
+39. agent_configs
+
+智能体配置表
+
+40. agent_tasks
+
+智能体任务表
+
+关系
+knowledge_bases 1 --- n knowledge_documents
+knowledge_documents 1 --- n knowledge_chunks
+teams 1 --- n agent_configs
+teams 1 --- n agent_tasks
+I. 报表与审计域
+41. dashboard_daily_stats
+
+日报统计表
+
+42. content_performance_stats
+
+内容表现统计表
+
+43. operation_logs
+
+操作日志表
+
+44. login_logs
+
+登录日志表
+
+ER 主关系总览
+
+你可以先按这个主干画 ER：
+
+users ──< team_members >── teams
+
+teams ──< collect_records ──1 inbox_items
+teams ──< materials ──< material_assets
+                    ├─< material_tags
+                    ├─< material_fragments
+                    ├─1 material_scores
+                    ├─< material_ai_results
+                    ├─< material_rewrites
+                    ├─< material_review_records
+                    └─< topic_candidates
+
+teams ──< social_accounts ──< publish_tasks ──< publish_feedbacks
+materials ──< publish_tasks
+material_rewrites ──< publish_tasks
+
+materials ──< leads ──0..1 customers
+publish_tasks ──< leads
+customers ──1 customer_profiles
+customers ──< customer_followups
+customers ──< customer_files
+customers ──< customer_stage_logs
+
+teams ──< wecom_bots ──< wecom_push_logs
+teams ──< knowledge_bases ──< knowledge_documents ──< knowledge_chunks
+teams ──< agent_tasks
+系统目录结构
+
+我建议你用 单体应用 + 模块化分层，不要一开始就微服务。
+
+1）项目总目录
+ai-leads-platform/
+├─ README.md
+├─ docs/                         # 产品文档、接口文档、部署文档
+├─ deploy/                       # Docker、Nginx、脚本、环境配置
+├─ scripts/                      # 初始化、备份、迁移、运维脚本
+├─ backend/                      # FastAPI 后端
+├─ desktop/                      # Tauri + React 桌面端
+├─ mobile-h5/                    # 手机采集 H5
+├─ browser-extension/            # PC 浏览器插件
+├─ shared/                       # 前后端共享类型、常量、协议
+└─ sql/                          # 初始化 SQL、演示数据、索引脚本
+2）backend 目录结构
+backend/
+├─ app/
+│  ├─ main.py
+│  ├─ core/                      # 核心配置
+│  │  ├─ config.py
+│  │  ├─ security.py
+│  │  ├─ database.py
+│  │  ├─ redis.py
+│  │  ├─ logger.py
+│  │  └─ exceptions.py
+│  │
+│  ├─ api/                       # 路由层
+│  │  ├─ deps.py
+│  │  ├─ router.py
+│  │  └─ v1/
+│  │     ├─ auth.py
+│  │     ├─ users.py
+│  │     ├─ teams.py
+│  │     ├─ collect.py
+│  │     ├─ inbox.py
+│  │     ├─ materials.py
+│  │     ├─ tags.py
+│  │     ├─ ai.py
+│  │     ├─ compliance.py
+│  │     ├─ publish.py
+│  │     ├─ accounts.py
+│  │     ├─ leads.py
+│  │     ├─ customers.py
+│  │     ├─ dashboard.py
+│  │     ├─ wecom.py
+│  │     ├─ knowledge.py
+│  │     ├─ agents.py
+│  │     └─ audit.py
+│  │
+│  ├─ models/                    # SQLAlchemy 模型
+│  │  ├─ user.py
+│  │  ├─ team.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ compliance.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ audit.py
+│  │
+│  ├─ schemas/                   # Pydantic 请求/响应
+│  │  ├─ auth.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ common.py
+│  │
+│  ├─ services/                  # 业务服务层
+│  │  ├─ auth_service.py
+│  │  ├─ collect_service.py
+│  │  ├─ inbox_service.py
+│  │  ├─ material_service.py
+│  │  ├─ tag_service.py
+│  │  ├─ ai_service.py
+│  │  ├─ compliance_service.py
+│  │  ├─ publish_service.py
+│  │  ├─ account_service.py
+│  │  ├─ lead_service.py
+│  │  ├─ customer_service.py
+│  │  ├─ dashboard_service.py
+│  │  ├─ wecom_service.py
+│  │  ├─ knowledge_service.py
+│  │  ├─ agent_service.py
+│  │  └─ audit_service.py
+│  │
+│  ├─ repositories/              # 数据访问层
+│  │  ├─ base.py
+│  │  ├─ user_repo.py
+│  │  ├─ material_repo.py
+│  │  ├─ publish_repo.py
+│  │  ├─ crm_repo.py
+│  │  └─ ...
+│  │
+│  ├─ integrations/              # 第三方集成
+│  │  ├─ llm/
+│  │  │  ├─ gateway.py
+│  │  │  ├─ openai_like.py
+│  │  │  ├─ volcengine.py
+│  │  │  └─ ollama.py
+│  │  ├─ ocr/
+│  │  │  ├─ base.py
+│  │  │  └─ ocr_service.py
+│  │  ├─ storage/
+│  │  │  ├─ minio_client.py
+│  │  │  └─ oss_client.py
+│  │  └─ wecom/
+│  │     └─ robot_client.py
+│  │
+│  ├─ tasks/                     # 异步任务
+│  │  ├─ queue.py
+│  │  ├─ material_tasks.py
+│  │  ├─ ai_tasks.py
+│  │  ├─ dashboard_tasks.py
+│  │  └─ notify_tasks.py
+│  │
+│  ├─ rules/                     # 风险规则、模板、配置
+│  │  ├─ compliance/
+│  │  │  ├─ douyin_rules.yaml
+│  │  │  ├─ xiaohongshu_rules.yaml
+│  │  │  ├─ zhihu_rules.yaml
+│  │  │  └─ xianyu_rules.yaml
+│  │  ├─ prompts/
+│  │  │  ├─ material_analyze_v1.txt
+│  │  │  ├─ rewrite_xhs_v1.txt
+│  │  │  ├─ rewrite_douyin_v1.txt
+│  │  │  └─ compliance_review_v1.txt
+│  │  └─ tags/
+│  │     └─ default_tags.json
+│  │
+│  ├─ utils/
+│  │  ├─ time.py
+│  │  ├─ hash.py
+│  │  ├─ file.py
+│  │  ├─ text.py
+│  │  └─ validators.py
+│  │
+│  └─ tests/
+│     ├─ api/
+│     ├─ services/
+│     └─ integrations/
+│
+├─ alembic/
+├─ requirements.txt
+├─ Dockerfile
+└─ .env.example
+这个结构的好处
+以后维护时，能一眼分清是 API 层、服务层、规则层、集成层 的问题。
+规则、提示词、平台差异尽量放到 rules/，减少频繁改代码。
+AI、OCR、企业微信都单独隔离，后面换供应商时影响小。
+3）desktop 目录结构
+desktop/
+├─ src/
+│  ├─ main.tsx
+│  ├─ app/
+│  │  ├─ router.tsx
+│  │  ├─ store.ts
+│  │  └─ providers.tsx
+│  │
+│  ├─ api/                       # 前端请求封装
+│  │  ├─ client.ts
+│  │  ├─ auth.ts
+│  │  ├─ materials.ts
+│  │  ├─ ai.ts
+│  │  ├─ publish.ts
+│  │  ├─ crm.ts
+│  │  └─ dashboard.ts
+│  │
+│  ├─ components/                # 通用组件
+│  │  ├─ layout/
+│  │  ├─ table/
+│  │  ├─ form/
+│  │  ├─ charts/
+│  │  └─ common/
+│  │
+│  ├─ pages/
+│  │  ├─ login/
+│  │  ├─ dashboard/
+│  │  ├─ collect-center/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai-workbench/
+│  │  ├─ compliance/
+│  │  ├─ publish/
+│  │  ├─ social-accounts/
+│  │  ├─ leads/
+│  │  ├─ customers/
+│  │  ├─ knowledge/
+│  │  ├─ wecom/
+│  │  └─ settings/
+│  │
+│  ├─ features/                  # 按业务域拆
+│  │  ├─ auth/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai/
+│  │  ├─ publish/
+│  │  ├─ crm/
+│  │  ├─ dashboard/
+│  │  └─ knowledge/
+│  │
+│  ├─ hooks/
+│  ├─ constants/
+│  ├─ types/
+│  ├─ utils/
+│  └─ styles/
+│
+├─ src-tauri/
+│  ├─ src/
+│  ├─ tauri.conf.json
+│  └─ Cargo.toml
+│
+├─ package.json
+└─ vite.config.ts
+4）mobile-h5 目录结构
+mobile-h5/
+├─ src/
+│  ├─ pages/
+│  │  ├─ share-collect/
+│  │  ├─ screenshot-ocr/
+│  │  ├─ quick-note/
+│  │  └─ success/
+│  ├─ api/
+│  ├─ components/
+│  ├─ hooks/
+│  ├─ utils/
+│  └─ types/
+├─ package.json
+└─ vite.config.ts
+
+这个 H5 只做一件事：把手机端素材送进收件箱。
+
+5）browser-extension 目录结构
+browser-extension/
+├─ src/
+│  ├─ background/
+│  ├─ content/
+│  ├─ popup/
+│  ├─ options/
+│  ├─ parsers/
+│  │  ├─ xiaohongshu.ts
+│  │  ├─ douyin.ts
+│  │  ├─ zhihu.ts
+│  │  └─ xianyu.ts
+│  ├─ api/
+│  ├─ utils/
+│  └─ types/
+├─ manifest.json
+└─ package.json
+
+这里的重点是 parsers/，平台页面解析不要散落 everywhere。
+
+二、数据库 ER 清单
+
+下面这版我按 业务域 给你，已经接近你后面做 ER 图的骨架了。
+
+A. 组织与权限域
+1. users
+
+用户表
+
+核心字段：
+
+id
+username
+real_name
+mobile
+email
+password_hash
+status
+last_login_at
+created_at
+updated_at
+2. teams
+
+团队表
+
+核心字段：
+
+id
+team_name
+owner_user_id
+plan_type
+status
+created_at
+updated_at
+3. team_members
+
+团队成员表
+
+核心字段：
+
+id
+team_id
+user_id
+role_code
+status
+joined_at
+created_at
+updated_at
+关系
+users 1 --- n team_members
+teams 1 --- n team_members
+users 1 --- n teams(owner_user_id)
+B. 采集与收件箱域
+4. collect_records
+
+采集记录表
+
+核心字段：
+
+id
+team_id
+collect_source
+device_type
+source_app
+page_url
+raw_payload_json
+collect_type
+created_by
+created_at
+updated_at
+5. inbox_items
+
+收件箱表
+
+核心字段：
+
+id
+team_id
+source_record_id
+status
+assigned_to
+created_at
+updated_at
+关系
+teams 1 --- n collect_records
+collect_records 1 --- 1 inbox_items
+users 1 --- n collect_records(created_by)
+C. 素材中心域
+6. materials
+
+素材主表
+
+核心字段：
+
+id
+team_id
+platform
+source_url
+content_type
+author_name
+title
+body_text
+ocr_text
+metrics_json
+user_notes
+ai_summary
+compliance_score
+risk_level
+dedup_hash
+material_type
+status
+collected_by
+collected_at
+created_at
+updated_at
+7. material_assets
+
+素材附件表
+
+核心字段：
+
+id
+material_id
+asset_type
+file_url
+thumbnail_url
+sort_no
+created_at
+updated_at
+8. material_tags
+
+素材标签表
+
+核心字段：
+
+id
+material_id
+tag_type
+tag_name
+created_at
+9. material_fragments
+
+素材片段表
+
+核心字段：
+
+id
+material_id
+fragment_type
+content_text
+sequence_no
+created_at
+updated_at
+10. material_scores
+
+素材评分表
+
+核心字段：
+
+id
+material_id
+reusability_score
+compliance_score
+rewrite_score
+business_relevance_score
+final_score
+created_at
+updated_at
+11. material_purposes
+
+素材采集目的表
+
+核心字段：
+
+id
+material_id
+purpose_code
+created_by
+created_at
+12. negative_case_flags
+
+反例标记表
+
+核心字段：
+
+id
+material_id
+flag_type
+note
+created_by
+created_at
+13. topic_candidates
+
+选题候选表
+
+核心字段：
+
+id
+team_id
+source_material_id
+title
+topic_direction
+target_platform
+content_angle
+risk_level
+status
+created_by
+created_at
+updated_at
+关系
+materials 1 --- n material_assets
+materials 1 --- n material_tags
+materials 1 --- n material_fragments
+materials 1 --- 1 material_scores
+materials 1 --- n material_purposes
+materials 1 --- n negative_case_flags
+materials 1 --- n topic_candidates
+D. AI 与审核域
+14. material_ai_results
+
+AI 分析结果表
+
+核心字段：
+
+id
+material_id
+analysis_type
+result_json
+model_name
+prompt_version
+created_by
+created_at
+15. material_rewrites
+
+改写结果表
+
+核心字段：
+
+id
+material_id
+target_platform
+rewrite_title
+rewrite_body
+style_tags_json
+risk_level
+status
+created_by
+created_at
+updated_at
+16. material_review_records
+
+审核记录表
+
+核心字段：
+
+id
+material_id
+review_type
+risk_hits_json
+suggestions_json
+review_result
+reviewed_by
+reviewed_at
+created_at
+17. compliance_rules
+
+合规规则表
+
+核心字段：
+
+id
+rule_code
+rule_name
+platform
+risk_level
+match_type
+pattern_text
+suggestion_text
+status
+created_at
+updated_at
+18. sensitive_words
+
+敏感词表
+
+核心字段：
+
+id
+platform
+word_text
+risk_level
+replace_text
+status
+created_at
+updated_at
+19. compliance_check_logs
+
+审核检查日志表
+
+核心字段：
+
+id
+target_type
+target_id
+platform
+input_text
+hits_json
+score
+risk_level
+checked_by
+created_at
+关系
+materials 1 --- n material_ai_results
+materials 1 --- n material_rewrites
+materials 1 --- n material_review_records
+E. 发布与账号域
+20. social_accounts
+
+社交账号台账表
+
+核心字段：
+
+id
+team_id
+owner_user_id
+platform
+account_nickname
+account_uid
+status
+last_posted_at
+risk_note
+created_at
+updated_at
+21. publish_tasks
+
+发布任务表
+
+核心字段：
+
+id
+team_id
+material_id
+rewrite_id
+platform
+account_id
+assigned_to
+title
+content_text
+risk_level
+status
+scheduled_at
+posted_at
+post_url
+created_at
+updated_at
+22. publish_feedbacks
+
+发布反馈表
+
+核心字段：
+
+id
+publish_task_id
+result_type
+view_count
+like_count
+comment_count
+collect_count
+inquiry_count
+is_deleted
+is_limited
+feedback_note
+created_by
+created_at
+23. account_risk_logs
+
+账号风险日志表
+
+核心字段：
+
+id
+account_id
+platform
+event_type
+event_desc
+related_task_id
+created_at
+关系
+social_accounts 1 --- n publish_tasks
+publish_tasks n --- 1 materials
+publish_tasks n --- 1 material_rewrites
+publish_tasks 1 --- n publish_feedbacks
+social_accounts 1 --- n account_risk_logs
+F. 线索与客户域
+24. leads
+
+线索表
+
+核心字段：
+
+id
+team_id
+source_platform
+source_material_id
+source_publish_task_id
+lead_name
+mobile
+wechat
+intent_type
+basic_profile_json
+status
+owner_user_id
+created_at
+updated_at
+25. lead_assign_records
+
+线索分配记录表
+
+核心字段：
+
+id
+lead_id
+from_user_id
+to_user_id
+assigned_by
+assigned_at
+created_at
+26. customers
+
+客户表
+
+核心字段：
+
+id
+team_id
+lead_id
+customer_name
+level_code
+credit_summary
+material_status
+stage
+owner_user_id
+created_at
+updated_at
+27. customer_profiles
+
+客户扩展资料表
+
+核心字段：
+
+id
+customer_id
+has_house
+has_car
+has_fund
+has_business_license
+income_desc
+debt_desc
+credit_desc
+extra_json
+created_at
+updated_at
+28. customer_followups
+
+客户跟进记录表
+
+核心字段：
+
+id
+customer_id
+followup_type
+content
+next_followup_at
+created_by
+created_at
+updated_at
+29. customer_files
+
+客户文件表
+
+核心字段：
+
+id
+customer_id
+file_type
+file_name
+file_url
+ocr_text
+summary_text
+uploaded_by
+created_at
+updated_at
+30. customer_stage_logs
+
+客户阶段变更日志表
+
+核心字段：
+
+id
+customer_id
+from_stage
+to_stage
+changed_by
+changed_at
+created_at
+关系
+leads 1 --- 0..1 customers
+customers 1 --- 1 customer_profiles
+customers 1 --- n customer_followups
+customers 1 --- n customer_files
+customers 1 --- n customer_stage_logs
+publish_tasks 1 --- n leads（来源发布任务）
+materials 1 --- n leads（来源素材）
+G. 企业微信协同域
+31. wecom_bots
+
+机器人配置表
+
+32. wecom_bot_bindings
+
+机器人与群场景绑定表
+
+33. wecom_message_templates
+
+消息模板表
+
+34. wecom_push_logs
+
+推送日志表
+
+35. collected_inbox_messages
+
+微信采集消息表
+
+关系
+wecom_bots 1 --- n wecom_bot_bindings
+wecom_bots 1 --- n wecom_push_logs
+H. 知识库与智能体域
+36. knowledge_bases
+
+知识库表
+
+37. knowledge_documents
+
+知识文档表
+
+38. knowledge_chunks
+
+知识分块表
+
+39. agent_configs
+
+智能体配置表
+
+40. agent_tasks
+
+智能体任务表
+
+关系
+knowledge_bases 1 --- n knowledge_documents
+knowledge_documents 1 --- n knowledge_chunks
+teams 1 --- n agent_configs
+teams 1 --- n agent_tasks
+I. 报表与审计域
+41. dashboard_daily_stats
+
+日报统计表
+
+42. content_performance_stats
+
+内容表现统计表
+
+43. operation_logs
+
+操作日志表
+
+44. login_logs
+
+登录日志表
+
+ER 主关系总览
+
+你可以先按这个主干画 ER：
+
+users ──< team_members >── teams
+
+teams ──< collect_records ──1 inbox_items
+teams ──< materials ──< material_assets
+                    ├─< material_tags
+                    ├─< material_fragments
+                    ├─1 material_scores
+                    ├─< material_ai_results
+                    ├─< material_rewrites
+                    ├─< material_review_records
+                    └─< topic_candidates
+
+teams ──< social_accounts ──< publish_tasks ──< publish_feedbacks
+materials ──< publish_tasks
+material_rewrites ──< publish_tasks
+
+materials ──< leads ──0..1 customers
+publish_tasks ──< leads
+customers ──1 customer_profiles
+customers ──< customer_followups
+customers ──< customer_files
+customers ──< customer_stage_logs
+
+teams ──< wecom_bots ──< wecom_push_logs
+teams ──< knowledge_bases ──< knowledge_documents ──< knowledge_chunks
+teams ──< agent_tasks
+系统目录结构
+
+我建议你用 单体应用 + 模块化分层，不要一开始就微服务。
+
+1）项目总目录
+ai-leads-platform/
+├─ README.md
+├─ docs/                         # 产品文档、接口文档、部署文档
+├─ deploy/                       # Docker、Nginx、脚本、环境配置
+├─ scripts/                      # 初始化、备份、迁移、运维脚本
+├─ backend/                      # FastAPI 后端
+├─ desktop/                      # Tauri + React 桌面端
+├─ mobile-h5/                    # 手机采集 H5
+├─ browser-extension/            # PC 浏览器插件
+├─ shared/                       # 前后端共享类型、常量、协议
+└─ sql/                          # 初始化 SQL、演示数据、索引脚本
+2）backend 目录结构
+backend/
+├─ app/
+│  ├─ main.py
+│  ├─ core/                      # 核心配置
+│  │  ├─ config.py
+│  │  ├─ security.py
+│  │  ├─ database.py
+│  │  ├─ redis.py
+│  │  ├─ logger.py
+│  │  └─ exceptions.py
+│  │
+│  ├─ api/                       # 路由层
+│  │  ├─ deps.py
+│  │  ├─ router.py
+│  │  └─ v1/
+│  │     ├─ auth.py
+│  │     ├─ users.py
+│  │     ├─ teams.py
+│  │     ├─ collect.py
+│  │     ├─ inbox.py
+│  │     ├─ materials.py
+│  │     ├─ tags.py
+│  │     ├─ ai.py
+│  │     ├─ compliance.py
+│  │     ├─ publish.py
+│  │     ├─ accounts.py
+│  │     ├─ leads.py
+│  │     ├─ customers.py
+│  │     ├─ dashboard.py
+│  │     ├─ wecom.py
+│  │     ├─ knowledge.py
+│  │     ├─ agents.py
+│  │     └─ audit.py
+│  │
+│  ├─ models/                    # SQLAlchemy 模型
+│  │  ├─ user.py
+│  │  ├─ team.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ compliance.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ audit.py
+│  │
+│  ├─ schemas/                   # Pydantic 请求/响应
+│  │  ├─ auth.py
+│  │  ├─ collect.py
+│  │  ├─ material.py
+│  │  ├─ ai.py
+│  │  ├─ publish.py
+│  │  ├─ crm.py
+│  │  ├─ wecom.py
+│  │  ├─ knowledge.py
+│  │  └─ common.py
+│  │
+│  ├─ services/                  # 业务服务层
+│  │  ├─ auth_service.py
+│  │  ├─ collect_service.py
+│  │  ├─ inbox_service.py
+│  │  ├─ material_service.py
+│  │  ├─ tag_service.py
+│  │  ├─ ai_service.py
+│  │  ├─ compliance_service.py
+│  │  ├─ publish_service.py
+│  │  ├─ account_service.py
+│  │  ├─ lead_service.py
+│  │  ├─ customer_service.py
+│  │  ├─ dashboard_service.py
+│  │  ├─ wecom_service.py
+│  │  ├─ knowledge_service.py
+│  │  ├─ agent_service.py
+│  │  └─ audit_service.py
+│  │
+│  ├─ repositories/              # 数据访问层
+│  │  ├─ base.py
+│  │  ├─ user_repo.py
+│  │  ├─ material_repo.py
+│  │  ├─ publish_repo.py
+│  │  ├─ crm_repo.py
+│  │  └─ ...
+│  │
+│  ├─ integrations/              # 第三方集成
+│  │  ├─ llm/
+│  │  │  ├─ gateway.py
+│  │  │  ├─ openai_like.py
+│  │  │  ├─ volcengine.py
+│  │  │  └─ ollama.py
+│  │  ├─ ocr/
+│  │  │  ├─ base.py
+│  │  │  └─ ocr_service.py
+│  │  ├─ storage/
+│  │  │  ├─ minio_client.py
+│  │  │  └─ oss_client.py
+│  │  └─ wecom/
+│  │     └─ robot_client.py
+│  │
+│  ├─ tasks/                     # 异步任务
+│  │  ├─ queue.py
+│  │  ├─ material_tasks.py
+│  │  ├─ ai_tasks.py
+│  │  ├─ dashboard_tasks.py
+│  │  └─ notify_tasks.py
+│  │
+│  ├─ rules/                     # 风险规则、模板、配置
+│  │  ├─ compliance/
+│  │  │  ├─ douyin_rules.yaml
+│  │  │  ├─ xiaohongshu_rules.yaml
+│  │  │  ├─ zhihu_rules.yaml
+│  │  │  └─ xianyu_rules.yaml
+│  │  ├─ prompts/
+│  │  │  ├─ material_analyze_v1.txt
+│  │  │  ├─ rewrite_xhs_v1.txt
+│  │  │  ├─ rewrite_douyin_v1.txt
+│  │  │  └─ compliance_review_v1.txt
+│  │  └─ tags/
+│  │     └─ default_tags.json
+│  │
+│  ├─ utils/
+│  │  ├─ time.py
+│  │  ├─ hash.py
+│  │  ├─ file.py
+│  │  ├─ text.py
+│  │  └─ validators.py
+│  │
+│  └─ tests/
+│     ├─ api/
+│     ├─ services/
+│     └─ integrations/
+│
+├─ alembic/
+├─ requirements.txt
+├─ Dockerfile
+└─ .env.example
+这个结构的好处
+以后维护时，能一眼分清是 API 层、服务层、规则层、集成层 的问题。
+规则、提示词、平台差异尽量放到 rules/，减少频繁改代码。
+AI、OCR、企业微信都单独隔离，后面换供应商时影响小。
+3）desktop 目录结构
+desktop/
+├─ src/
+│  ├─ main.tsx
+│  ├─ app/
+│  │  ├─ router.tsx
+│  │  ├─ store.ts
+│  │  └─ providers.tsx
+│  │
+│  ├─ api/                       # 前端请求封装
+│  │  ├─ client.ts
+│  │  ├─ auth.ts
+│  │  ├─ materials.ts
+│  │  ├─ ai.ts
+│  │  ├─ publish.ts
+│  │  ├─ crm.ts
+│  │  └─ dashboard.ts
+│  │
+│  ├─ components/                # 通用组件
+│  │  ├─ layout/
+│  │  ├─ table/
+│  │  ├─ form/
+│  │  ├─ charts/
+│  │  └─ common/
+│  │
+│  ├─ pages/
+│  │  ├─ login/
+│  │  ├─ dashboard/
+│  │  ├─ collect-center/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai-workbench/
+│  │  ├─ compliance/
+│  │  ├─ publish/
+│  │  ├─ social-accounts/
+│  │  ├─ leads/
+│  │  ├─ customers/
+│  │  ├─ knowledge/
+│  │  ├─ wecom/
+│  │  └─ settings/
+│  │
+│  ├─ features/                  # 按业务域拆
+│  │  ├─ auth/
+│  │  ├─ inbox/
+│  │  ├─ materials/
+│  │  ├─ ai/
+│  │  ├─ publish/
+│  │  ├─ crm/
+│  │  ├─ dashboard/
+│  │  └─ knowledge/
+│  │
+│  ├─ hooks/
+│  ├─ constants/
+│  ├─ types/
+│  ├─ utils/
+│  └─ styles/
+│
+├─ src-tauri/
+│  ├─ src/
+│  ├─ tauri.conf.json
+│  └─ Cargo.toml
+│
+├─ package.json
+└─ vite.config.ts
+4）mobile-h5 目录结构
+mobile-h5/
+├─ src/
+│  ├─ pages/
+│  │  ├─ share-collect/
+│  │  ├─ screenshot-ocr/
+│  │  ├─ quick-note/
+│  │  └─ success/
+│  ├─ api/
+│  ├─ components/
+│  ├─ hooks/
+│  ├─ utils/
+│  └─ types/
+├─ package.json
+└─ vite.config.ts
+
+这个 H5 只做一件事：把手机端素材送进收件箱。
+
+5）browser-extension 目录结构
+browser-extension/
+├─ src/
+│  ├─ background/
+│  ├─ content/
+│  ├─ popup/
+│  ├─ options/
+│  ├─ parsers/
+│  │  ├─ xiaohongshu.ts
+│  │  ├─ douyin.ts
+│  │  ├─ zhihu.ts
+│  │  └─ xianyu.ts
+│  ├─ api/
+│  ├─ utils/
+│  └─ types/
+├─ manifest.json
+└─ package.json
+
+这里的重点是 parsers/，平台页面解析不要散落 everywhere。
+
+二、数据库 ER 清单
+
+下面这版我按 业务域 给你，已经接近你后面做 ER 图的骨架了。
+
+A. 组织与权限域
+1. users
+
+用户表
+
+核心字段：
+
+id
+username
+real_name
+mobile
+email
+password_hash
+status
+last_login_at
+created_at
+updated_at
+2. teams
+
+团队表
+
+核心字段：
+
+id
+team_name
+owner_user_id
+plan_type
+status
+created_at
+updated_at
+3. team_members
+
+团队成员表
+
+核心字段：
+
+id
+team_id
+user_id
+role_code
+status
+joined_at
+created_at
+updated_at
+关系
+users 1 --- n team_members
+teams 1 --- n team_members
+users 1 --- n teams(owner_user_id)
+B. 采集与收件箱域
+4. collect_records
+
+采集记录表
+
+核心字段：
+
+id
+team_id
+collect_source
+device_type
+source_app
+page_url
+raw_payload_json
+collect_type
+created_by
+created_at
+updated_at
+5. inbox_items
+
+收件箱表
+
+核心字段：
+
+id
+team_id
+source_record_id
+status
+assigned_to
+created_at
+updated_at
+关系
+teams 1 --- n collect_records
+collect_records 1 --- 1 inbox_items
+users 1 --- n collect_records(created_by)
+C. 素材中心域
+6. materials
+
+素材主表
+
+核心字段：
+
+id
+team_id
+platform
+source_url
+content_type
+author_name
+title
+body_text
+ocr_text
+metrics_json
+user_notes
+ai_summary
+compliance_score
+risk_level
+dedup_hash
+material_type
+status
+collected_by
+collected_at
+created_at
+updated_at
+7. material_assets
+
+素材附件表
+
+核心字段：
+
+id
+material_id
+asset_type
+file_url
+thumbnail_url
+sort_no
+created_at
+updated_at
+8. material_tags
+
+素材标签表
+
+核心字段：
+
+id
+material_id
+tag_type
+tag_name
+created_at
+9. material_fragments
+
+素材片段表
+
+核心字段：
+
+id
+material_id
+fragment_type
+content_text
+sequence_no
+created_at
+updated_at
+10. material_scores
+
+素材评分表
+
+核心字段：
+
+id
+material_id
+reusability_score
+compliance_score
+rewrite_score
+business_relevance_score
+final_score
+created_at
+updated_at
+11. material_purposes
+
+素材采集目的表
+
+核心字段：
+
+id
+material_id
+purpose_code
+created_by
+created_at
+12. negative_case_flags
+
+反例标记表
+
+核心字段：
+
+id
+material_id
+flag_type
+note
+created_by
+created_at
+13. topic_candidates
+
+选题候选表
+
+核心字段：
+
+id
+team_id
+source_material_id
+title
+topic_direction
+target_platform
+content_angle
+risk_level
+status
+created_by
+created_at
+updated_at
+关系
+materials 1 --- n material_assets
+materials 1 --- n material_tags
+materials 1 --- n material_fragments
+materials 1 --- 1 material_scores
+materials 1 --- n material_purposes
+materials 1 --- n negative_case_flags
+materials 1 --- n topic_candidates
+D. AI 与审核域
+14. material_ai_results
+
+AI 分析结果表
+
+核心字段：
+
+id
+material_id
+analysis_type
+result_json
+model_name
+prompt_version
+created_by
+created_at
+15. material_rewrites
+
+改写结果表
+
+核心字段：
+
+id
+material_id
+target_platform
+rewrite_title
+rewrite_body
+style_tags_json
+risk_level
+status
+created_by
+created_at
+updated_at
+16. material_review_records
+
+审核记录表
+
+核心字段：
+
+id
+material_id
+review_type
+risk_hits_json
+suggestions_json
+review_result
+reviewed_by
+reviewed_at
+created_at
+17. compliance_rules
+
+合规规则表
+
+核心字段：
+
+id
+rule_code
+rule_name
+platform
+risk_level
+match_type
+pattern_text
+suggestion_text
+status
+created_at
+updated_at
+18. sensitive_words
+
+敏感词表
+
+核心字段：
+
+id
+platform
+word_text
+risk_level
+replace_text
+status
+created_at
+updated_at
+19. compliance_check_logs
+
+审核检查日志表
+
+核心字段：
+
+id
+target_type
+target_id
+platform
+input_text
+hits_json
+score
+risk_level
+checked_by
+created_at
+关系
+materials 1 --- n material_ai_results
+materials 1 --- n material_rewrites
+materials 1 --- n material_review_records
+E. 发布与账号域
+20. social_accounts
+
+社交账号台账表
+
+核心字段：
+
+id
+team_id
+owner_user_id
+platform
+account_nickname
+account_uid
+status
+last_posted_at
+risk_note
+created_at
+updated_at
+21. publish_tasks
+
+发布任务表
+
+核心字段：
+
+id
+team_id
+material_id
+rewrite_id
+platform
+account_id
+assigned_to
+title
+content_text
+risk_level
+status
+scheduled_at
+posted_at
+post_url
+created_at
+updated_at
+22. publish_feedbacks
+
+发布反馈表
+
+核心字段：
+
+id
+publish_task_id
+result_type
+view_count
+like_count
+comment_count
+collect_count
+inquiry_count
+is_deleted
+is_limited
+feedback_note
+created_by
+created_at
+23. account_risk_logs
+
+账号风险日志表
+
+核心字段：
+
+id
+account_id
+platform
+event_type
+event_desc
+related_task_id
+created_at
+关系
+social_accounts 1 --- n publish_tasks
+publish_tasks n --- 1 materials
+publish_tasks n --- 1 material_rewrites
+publish_tasks 1 --- n publish_feedbacks
+social_accounts 1 --- n account_risk_logs
+F. 线索与客户域
+24. leads
+
+线索表
+
+核心字段：
+
+id
+team_id
+source_platform
+source_material_id
+source_publish_task_id
+lead_name
+mobile
+wechat
+intent_type
+basic_profile_json
+status
+owner_user_id
+created_at
+updated_at
+25. lead_assign_records
+
+线索分配记录表
+
+核心字段：
+
+id
+lead_id
+from_user_id
+to_user_id
+assigned_by
+assigned_at
+created_at
+26. customers
+
+客户表
+
+核心字段：
+
+id
+team_id
+lead_id
+customer_name
+level_code
+credit_summary
+material_status
+stage
+owner_user_id
+created_at
+updated_at
+27. customer_profiles
+
+客户扩展资料表
+
+核心字段：
+
+id
+customer_id
+has_house
+has_car
+has_fund
+has_business_license
+income_desc
+debt_desc
+credit_desc
+extra_json
+created_at
+updated_at
+28. customer_followups
+
+客户跟进记录表
+
+核心字段：
+
+id
+customer_id
+followup_type
+content
+next_followup_at
+created_by
+created_at
+updated_at
+29. customer_files
+
+客户文件表
+
+核心字段：
+
+id
+customer_id
+file_type
+file_name
+file_url
+ocr_text
+summary_text
+uploaded_by
+created_at
+updated_at
+30. customer_stage_logs
+
+客户阶段变更日志表
+
+核心字段：
+
+id
+customer_id
+from_stage
+to_stage
+changed_by
+changed_at
+created_at
+关系
+leads 1 --- 0..1 customers
+customers 1 --- 1 customer_profiles
+customers 1 --- n customer_followups
+customers 1 --- n customer_files
+customers 1 --- n customer_stage_logs
+publish_tasks 1 --- n leads（来源发布任务）
+materials 1 --- n leads（来源素材）
+G. 企业微信协同域
+31. wecom_bots
+
+机器人配置表
+
+32. wecom_bot_bindings
+
+机器人与群场景绑定表
+
+33. wecom_message_templates
+
+消息模板表
+
+34. wecom_push_logs
+
+推送日志表
+
+35. collected_inbox_messages
+
+微信采集消息表
+
+关系
+wecom_bots 1 --- n wecom_bot_bindings
+wecom_bots 1 --- n wecom_push_logs
+H. 知识库与智能体域
+36. knowledge_bases
+
+知识库表
+
+37. knowledge_documents
+
+知识文档表
+
+38. knowledge_chunks
+
+知识分块表
+
+39. agent_configs
+
+智能体配置表
+
+40. agent_tasks
+
+智能体任务表
+
+关系
+knowledge_bases 1 --- n knowledge_documents
+knowledge_documents 1 --- n knowledge_chunks
+teams 1 --- n agent_configs
+teams 1 --- n agent_tasks
+I. 报表与审计域
+41. dashboard_daily_stats
+
+日报统计表
+
+42. content_performance_stats
+
+内容表现统计表
+
+43. operation_logs
+
+操作日志表
+
+44. login_logs
+
+登录日志表
+
+ER 主关系总览
+
+你可以先按这个主干画 ER：
+
+users ──< team_members >── teams
+
+teams ──< collect_records ──1 inbox_items
+teams ──< materials ──< material_assets
+                    ├─< material_tags
+                    ├─< material_fragments
+                    ├─1 material_scores
+                    ├─< material_ai_results
+                    ├─< material_rewrites
+                    ├─< material_review_records
+                    └─< topic_candidates
+
+teams ──< social_accounts ──< publish_tasks ──< publish_feedbacks
+materials ──< publish_tasks
+material_rewrites ──< publish_tasks
+
+materials ──< leads ──0..1 customers
+publish_tasks ──< leads
+customers ──1 customer_profiles
+customers ──< customer_followups
+customers ──< customer_files
+customers ──< customer_stage_logs
+
+teams ──< wecom_bots ──< wecom_push_logs
+teams ──< knowledge_bases ──< knowledge_documents ──< knowledge_chunks
+teams ──< agent_tasks
+
+
+五、火山引擎接入细化方案
+5.1 模型接入方式
+
+后端只认你自己封装的 VolcengineService，不让业务模块直接调 SDK。
+
+统一能力接口：
+
+summarize_material()
+analyze_material()
+rewrite_content()
+review_compliance()
+suggest_followup()
+
+内部再按场景路由到对应 Endpoint。火山方舟官方当前就是通过接入点模式调用模型，适合你按“摘要、改写、审核”拆不同 Endpoint 或不同模型配置。
+
+5.2 推荐火山侧资源拆分
+Endpoint A：素材拆解 / 摘要
+
+特点：
+
+响应快
+成本低
+高频调用
+Endpoint B：文案改写
+
+特点：
+
+中文表达更好
+支持长文本改写
+输出稳定
+Endpoint C：审核辅助
+
+特点：
+
+更稳重
+输出结构化风险说明
+支持规则引用
+Knowledge Base 1：产品知识库
+Knowledge Base 2：合规知识库
+Knowledge Base 3：素材知识库
+Knowledge Base 4：反例知识库
+5.3 审核为什么不要只靠模型
+
+因为模型审核再强，也不如你自己业务规则稳定。
+最终审核链路建议是：
+
+本地规则命中 → 实时规则中心 → 火山知识库召回 → 火山审核模型语义判断 → 可选火山内容安全能力兜底
+
+火山方舟有内容安全护栏，火山也有 AIGC 内容安全与大模型应用防火墙，这些更适合做“平台级兜底”，而你自己的规则中心负责“助贷业务特定表达”。
+
+六、审核规则实时更新方案
+
+这是这版里最重要的新增设计。
+
+6.1 目标
+
+做到这三件事：
+
+运营或管理员改规则后，不用发版
+多实例服务能立刻同步
+每次规则变更都能追溯版本
+6.2 规则中心架构
+存储层
+
+PostgreSQL：
+
+compliance_rules
+sensitive_words
+rule_versions
+rule_publish_logs
+热缓存层
+
+Redis：
+
+rule:active_version:{team_id}
+rule:bundle:{team_id}:{version}
+rule:update:channel
+服务层
+
+rules_service.py 负责：
+
+读取当前生效版本
+构建规则包
+发布新版本
+通知各实例热更新
+客户端展示层
+
+桌面端审核中心支持：
+
+查看当前规则版本
+查看命中规则
+查看变更记录
+一键启停规则
+6.3 规则发布流程
+管理员在后台改规则
+写入数据库草稿
+点击发布
+生成新 version_no
+组装规则包写 Redis
+通过 pub/sub 发更新消息
+各服务实例刷新内存缓存
+新审核请求立即使用新规则
+6.4 为什么再接知识库
+
+因为“固定词”只是一部分。
+很多风险表达是变化的、语义性的。
+所以建议再做一个“合规知识库”，把这些放进去：
+
+最新平台案例
+反例文案
+替代表达
+审核备注模板
+风险说明样本
+
+火山方舟知识检索支持标签过滤、重排和在线检索，适合按平台、风险级别、场景做检索增强。
+
+七、开发排期 v1.1
+
+我按 12 周给你。
+
+第 1-2 周：基础框架
+
+目标：把系统底座搭起来。
+
+交付：
+
+后端 FastAPI 基础骨架
+PostgreSQL / Redis / Alembic
+桌面端主框架
+登录 / 团队 / 权限
+基础日志
+企业微信机器人基础配置页骨架
+第 3-4 周：采集中心 + 收件箱
+
+交付：
+
+手机 H5 采集
+手动速记采集
+图片上传
+OCR 接入
+收件箱列表/详情
+企业微信轻采集入收件箱
+collect_records / inbox_items / collected_inbox_messages
+第 5-6 周：素材中心
+
+交付：
+
+素材库
+标签体系
+反例标记
+选题候选
+去重逻辑
+material 系列表
+基础搜索筛选
+第 7 周：火山引擎接入层
+
+交付：
+
+integrations/volcengine/
+Endpoint 配置管理
+文案摘要接口
+文案拆解接口
+改写接口
+审核接口
+调用日志记录
+
+这一步建议先把火山侧接口都包好，后面业务直接用。
+
+第 8 周：AI 工作台
+
+交付：
+
+素材拆解
+小红书改写
+抖音口播改写
+知乎回答改写
+闲鱼描述改写
+改写结果保存
+第 9 周：审核中心 + 实时规则 v1
+
+交付：
+
+compliance_rules
+sensitive_words
+rule_versions
+rule_publish_logs
+审核命中展示
+实时规则发布
+Redis 热更新
+规则版本查看
+第 10 周：发布任务 + 账号台账
+
+交付：
+
+social_accounts
+publish_tasks
+publish_feedbacks
+account_risk_logs
+发布任务中心
+回填链接
+账号台账页
+第 11 周：线索、客户、提醒
+
+交付：
+
+leads / customers / customer_followups
+customer_reminders
+延后跟进弹窗
+到期提醒
+待唤醒客户列表
+企业微信今日跟进提醒
+第 12 周：看板 + 联调 + 试运行
+
+交付：
+
+内容看板
+线索看板
+转化看板
+培育看板
+企业微信日报
+全链路联调
+内部 3-5 人试运行
+八、P0 / P1 / P2 最终优先级
+P0
+火山引擎接入层
+多入口采集
+收件箱
+素材库
+AI 拆解与改写
+审核中心
+实时规则 v1
+发布任务中心
+线索池
+客户跟进
+客户提醒机制
+企业微信通知
+P1
+企业微信轻采集增强
+账号台账
+选题池
+反例库
+培育看板
+合规知识库
+P2
+完整知识库中心
+审核智能体增强
+跟进助手智能体
+手机采集助手 App
+私有化授权系统
+九、你现在最适合的落地顺序
+
+我建议你这样执行：
+
+先把这四件事做稳：
+
+火山引擎接入封装
+审核规则实时更新
+发布任务 + 人工手机发布模式
+客户培育与提醒 + 企业微信推送
+
+因为这四块最能形成差异化，也最贴助贷团队真实需求。
+
+十、一句话定稿
+
+这套 v1.1 的最终架构可以定义成：
+
+“基于火山方舟的大模型与知识库能力，结合本地实时规则中心、桌面端运营中台、企业微信内部协同、人工手机端发布和 CRM 客户培育机制的助贷行业 AI 工作系统。”
+
+下一步最顺的就是出 PostgreSQL 建表 SQL 第一版。
+
+好的
+Thought for 17s
+
+那我直接给你一版 PostgreSQL 建表 SQL 第一版。
+这版按你前面定的架构来，重点覆盖：
+
+团队与权限
+采集与收件箱
+素材中心
+AI 与审核
+发布任务与账号台账
+线索、客户、培育提醒
+企业微信协同
+知识库与智能体
+看板与日志
+
+这版是 v1 可落地骨架，适合先开发 MVP，再逐步补字段。
+
+PostgreSQL 建表 SQL v1
+-- =========================================================
+-- AI 助贷获客合规运营中台
+-- PostgreSQL Schema v1
+-- =========================================================
+
+-- 推荐扩展
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- =========================================================
+-- 通用更新时间触发器
+-- =========================================================
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =========================================================
+-- 1. 组织与权限
+-- =========================================================
+
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    real_name VARCHAR(50),
+    mobile VARCHAR(20),
+    email VARCHAR(100),
+    password_hash VARCHAR(255) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    last_login_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE teams (
+    id BIGSERIAL PRIMARY KEY,
+    team_name VARCHAR(100) NOT NULL,
+    owner_user_id BIGINT REFERENCES users(id),
+    plan_type VARCHAR(30) NOT NULL DEFAULT 'basic',
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE roles (
+    id BIGSERIAL PRIMARY KEY,
+    role_code VARCHAR(30) NOT NULL UNIQUE,
+    role_name VARCHAR(50) NOT NULL,
+    description VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE permissions (
+    id BIGSERIAL PRIMARY KEY,
+    perm_code VARCHAR(50) NOT NULL UNIQUE,
+    perm_name VARCHAR(100) NOT NULL,
+    module VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE role_permissions (
+    id BIGSERIAL PRIMARY KEY,
+    role_id BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(role_id, permission_id)
+);
+
+CREATE TABLE team_members (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_code VARCHAR(30) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    joined_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, user_id)
+);
+
+-- =========================================================
+-- 2. 采集与收件箱
+-- =========================================================
+
+CREATE TABLE collect_records (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    collect_source VARCHAR(30) NOT NULL,  -- mobile_share / screenshot_ocr / wecom / extension / manual
+    device_type VARCHAR(20),              -- android / ios / desktop
+    source_app VARCHAR(30),               -- xiaohongshu / douyin / zhihu / xianyu / wecom
+    page_url TEXT,
+    raw_payload_json JSONB,
+    collect_type VARCHAR(30) NOT NULL,    -- page / fragment / screenshot / note / message
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE inbox_items (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    source_record_id BIGINT REFERENCES collect_records(id) ON DELETE SET NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending / tagging / analyzing / reviewing / accepted / discarded
+    assigned_to BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE collected_inbox_messages (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    source_channel VARCHAR(30) NOT NULL DEFAULT 'wecom',
+    sender_user_id BIGINT REFERENCES users(id),
+    sender_name VARCHAR(100),
+    raw_text TEXT,
+    attachments_json JSONB,
+    parsed_type VARCHAR(30),              -- link / image / text / command
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =========================================================
+-- 3. 素材中心
+-- =========================================================
+
+CREATE TABLE materials (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    platform VARCHAR(30) NOT NULL,        -- xiaohongshu / douyin / zhihu / xianyu
+    source_url TEXT,
+    content_type VARCHAR(30),             -- post / video / answer / goods / comment / note
+    author_name VARCHAR(100),
+    title VARCHAR(255),
+    body_text TEXT,
+    ocr_text TEXT,
+    metrics_json JSONB,
+    user_notes TEXT,
+    ai_summary TEXT,
+    compliance_score NUMERIC(5,2),
+    risk_level VARCHAR(20),               -- low / medium / high / forbidden
+    dedup_hash VARCHAR(64),
+    material_type VARCHAR(30) NOT NULL DEFAULT 'normal', -- normal / high_value / negative_case
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    collected_by BIGINT REFERENCES users(id),
+    collected_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE material_assets (
+    id BIGSERIAL PRIMARY KEY,
+    material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    asset_type VARCHAR(30) NOT NULL,      -- image / screenshot / video_cover / file
+    file_url TEXT NOT NULL,
+    thumbnail_url TEXT,
+    sort_no INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE material_tags (
+    id BIGSERIAL PRIMARY KEY,
+    material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    tag_type VARCHAR(30) NOT NULL,        -- platform / theme / structure / risk / value
+    tag_name VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE material_fragments (
+    id BIGSERIAL PRIMARY KEY,
+    material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    fragment_type VARCHAR(30) NOT NULL,   -- title / opening / hook / comment / dm / qa
+    content_text TEXT NOT NULL,
+    sequence_no INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE material_scores (
+    id BIGSERIAL PRIMARY KEY,
+    material_id BIGINT NOT NULL UNIQUE REFERENCES materials(id) ON DELETE CASCADE,
+    reusability_score NUMERIC(5,2),
+    compliance_score NUMERIC(5,2),
+    rewrite_score NUMERIC(5,2),
+    business_relevance_score NUMERIC(5,2),
+    final_score NUMERIC(5,2),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE material_purposes (
+    id BIGSERIAL PRIMARY KEY,
+    material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    purpose_code VARCHAR(30) NOT NULL,    -- topic / title / opening / comment / dm / negative_case
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE negative_case_flags (
+    id BIGSERIAL PRIMARY KEY,
+    material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    flag_type VARCHAR(30) NOT NULL,       -- exaggerated / misleading / pricing_unclear / fake_case
+    note TEXT,
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE topic_candidates (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    source_material_id BIGINT REFERENCES materials(id) ON DELETE SET NULL,
+    title VARCHAR(255) NOT NULL,
+    topic_direction VARCHAR(100),
+    target_platform VARCHAR(30),
+    content_angle TEXT,
+    risk_level VARCHAR(20),
+    status VARCHAR(20) NOT NULL DEFAULT 'draft',
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =========================================================
+-- 4. AI 与审核
+-- =========================================================
+
+CREATE TABLE material_ai_results (
+    id BIGSERIAL PRIMARY KEY,
+    material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    analysis_type VARCHAR(30) NOT NULL,   -- summary / structure / sentiment / scenario
+    result_json JSONB NOT NULL,
+    model_name VARCHAR(100),
+    prompt_version VARCHAR(50),
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE material_rewrites (
+    id BIGSERIAL PRIMARY KEY,
+    material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    target_platform VARCHAR(30) NOT NULL,
+    rewrite_title VARCHAR(255),
+    rewrite_body TEXT NOT NULL,
+    style_tags_json JSONB,
+    risk_level VARCHAR(20),
+    status VARCHAR(20) NOT NULL DEFAULT 'draft', -- draft / reviewed / approved / rejected
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE material_review_records (
+    id BIGSERIAL PRIMARY KEY,
+    material_id BIGINT NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+    review_type VARCHAR(30) NOT NULL,     -- rule / ai / final
+    risk_hits_json JSONB,
+    suggestions_json JSONB,
+    review_result VARCHAR(20) NOT NULL,   -- pass / revise / reject
+    reviewed_by BIGINT REFERENCES users(id),
+    reviewed_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE compliance_rules (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+    rule_code VARCHAR(50) NOT NULL,
+    rule_name VARCHAR(100) NOT NULL,
+    platform VARCHAR(30) NOT NULL,
+    scene_code VARCHAR(30),               -- post / comment / dm / answer
+    risk_level VARCHAR(20) NOT NULL,
+    match_type VARCHAR(20) NOT NULL,      -- keyword / regex / semantic_hint
+    pattern_text TEXT NOT NULL,
+    suggestion_text TEXT,
+    source_type VARCHAR(20) NOT NULL DEFAULT 'manual', -- manual / imported / knowledge
+    is_realtime BOOLEAN NOT NULL DEFAULT TRUE,
+    version_no INT NOT NULL DEFAULT 1,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, rule_code, version_no)
+);
+
+CREATE TABLE sensitive_words (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+    platform VARCHAR(30) NOT NULL,
+    word_text VARCHAR(100) NOT NULL,
+    risk_level VARCHAR(20) NOT NULL,
+    replace_text VARCHAR(100),
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE compliance_check_logs (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+    target_type VARCHAR(30) NOT NULL,     -- material / rewrite / publish_task
+    target_id BIGINT NOT NULL,
+    platform VARCHAR(30),
+    input_text TEXT,
+    hits_json JSONB,
+    score NUMERIC(5,2),
+    risk_level VARCHAR(20),
+    checked_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE rule_versions (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    version_no INT NOT NULL,
+    published_by BIGINT REFERENCES users(id),
+    publish_note TEXT,
+    effective_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, version_no)
+);
+
+CREATE TABLE rule_publish_logs (
+    id BIGSERIAL PRIMARY KEY,
+    version_id BIGINT NOT NULL REFERENCES rule_versions(id) ON DELETE CASCADE,
+    publish_channel VARCHAR(30) NOT NULL, -- redis / local / api
+    publish_status VARCHAR(20) NOT NULL,  -- success / failed
+    detail_json JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =========================================================
+-- 5. 发布与账号
+-- =========================================================
+
+CREATE TABLE social_accounts (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    owner_user_id BIGINT NOT NULL REFERENCES users(id),
+    platform VARCHAR(30) NOT NULL,
+    account_nickname VARCHAR(100) NOT NULL,
+    account_uid VARCHAR(100),
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    last_posted_at TIMESTAMP,
+    risk_note TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE publish_tasks (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    material_id BIGINT REFERENCES materials(id) ON DELETE SET NULL,
+    rewrite_id BIGINT REFERENCES material_rewrites(id) ON DELETE SET NULL,
+    platform VARCHAR(30) NOT NULL,
+    account_id BIGINT REFERENCES social_accounts(id) ON DELETE SET NULL,
+    assigned_to BIGINT REFERENCES users(id),
+    title VARCHAR(255),
+    content_text TEXT NOT NULL,
+    risk_level VARCHAR(20),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending / claimed / posted / filled / rejected / closed
+    scheduled_at TIMESTAMP,
+    posted_at TIMESTAMP,
+    post_url TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE publish_feedbacks (
+    id BIGSERIAL PRIMARY KEY,
+    publish_task_id BIGINT NOT NULL REFERENCES publish_tasks(id) ON DELETE CASCADE,
+    result_type VARCHAR(30),              -- normal / deleted / limited
+    view_count INT DEFAULT 0,
+    like_count INT DEFAULT 0,
+    comment_count INT DEFAULT 0,
+    collect_count INT DEFAULT 0,
+    inquiry_count INT DEFAULT 0,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    is_limited BOOLEAN NOT NULL DEFAULT FALSE,
+    feedback_note TEXT,
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE account_risk_logs (
+    id BIGSERIAL PRIMARY KEY,
+    account_id BIGINT NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
+    platform VARCHAR(30) NOT NULL,
+    event_type VARCHAR(30) NOT NULL,      -- deleted / limited / warning / complaint
+    event_desc TEXT,
+    related_task_id BIGINT REFERENCES publish_tasks(id) ON DELETE SET NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =========================================================
+-- 6. 线索与客户
+-- =========================================================
+
+CREATE TABLE leads (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    source_platform VARCHAR(30),
+    source_material_id BIGINT REFERENCES materials(id) ON DELETE SET NULL,
+    source_publish_task_id BIGINT REFERENCES publish_tasks(id) ON DELETE SET NULL,
+    lead_name VARCHAR(100),
+    mobile VARCHAR(20),
+    wechat VARCHAR(50),
+    intent_type VARCHAR(50),
+    basic_profile_json JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'new',
+    owner_user_id BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE lead_assign_records (
+    id BIGSERIAL PRIMARY KEY,
+    lead_id BIGINT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    from_user_id BIGINT REFERENCES users(id),
+    to_user_id BIGINT REFERENCES users(id),
+    assigned_by BIGINT REFERENCES users(id),
+    assigned_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE customers (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    lead_id BIGINT UNIQUE REFERENCES leads(id) ON DELETE SET NULL,
+    customer_name VARCHAR(100),
+    level_code VARCHAR(20),
+    credit_summary TEXT,
+    material_status VARCHAR(30),
+    stage VARCHAR(30) NOT NULL DEFAULT 'new',
+    owner_user_id BIGINT REFERENCES users(id),
+    followup_status VARCHAR(30),          -- active / scheduled / nurturing / overdue / closed
+    next_followup_at TIMESTAMP,
+    followup_reason VARCHAR(100),
+    remind_days_before INT DEFAULT 3,
+    followup_priority VARCHAR(20),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE customer_profiles (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id BIGINT NOT NULL UNIQUE REFERENCES customers(id) ON DELETE CASCADE,
+    has_house BOOLEAN,
+    has_car BOOLEAN,
+    has_fund BOOLEAN,
+    has_business_license BOOLEAN,
+    income_desc VARCHAR(255),
+    debt_desc VARCHAR(255),
+    credit_desc VARCHAR(255),
+    extra_json JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE customer_followups (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    followup_type VARCHAR(30) NOT NULL,   -- call / wechat / visit / system_note
+    content TEXT NOT NULL,
+    next_followup_at TIMESTAMP,
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE customer_files (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    file_type VARCHAR(30) NOT NULL,       -- credit_report / id / income / other
+    file_name VARCHAR(255),
+    file_url TEXT NOT NULL,
+    ocr_text TEXT,
+    summary_text TEXT,
+    uploaded_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE customer_stage_logs (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    from_stage VARCHAR(30),
+    to_stage VARCHAR(30) NOT NULL,
+    changed_by BIGINT REFERENCES users(id),
+    changed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE customer_reminders (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    owner_user_id BIGINT NOT NULL REFERENCES users(id),
+    reminder_type VARCHAR(30) NOT NULL,   -- next_followup / recheck_credit / docs_retry / long_term_nurture / custom
+    reminder_reason VARCHAR(100),
+    planned_at TIMESTAMP NOT NULL,
+    remind_days_before INT NOT NULL DEFAULT 3,
+    remind_at TIMESTAMP,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending / triggered / completed / canceled / overdue
+    last_triggered_at TIMESTAMP,
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =========================================================
+-- 7. 企业微信协同
+-- =========================================================
+
+CREATE TABLE wecom_bots (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    bot_name VARCHAR(100) NOT NULL,
+    webhook_key VARCHAR(255) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    remark TEXT,
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE wecom_bot_bindings (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    bot_id BIGINT NOT NULL REFERENCES wecom_bots(id) ON DELETE CASCADE,
+    scene_code VARCHAR(50) NOT NULL,      -- new_material / risk_alert / reminder / daily_report
+    target_group_name VARCHAR(100),
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE wecom_message_templates (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    template_code VARCHAR(50) NOT NULL,
+    template_name VARCHAR(100) NOT NULL,
+    message_type VARCHAR(30) NOT NULL,    -- text / markdown / news
+    content_template TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, template_code)
+);
+
+CREATE TABLE wecom_push_logs (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    bot_id BIGINT REFERENCES wecom_bots(id) ON DELETE SET NULL,
+    scene_code VARCHAR(50) NOT NULL,
+    message_type VARCHAR(30),
+    request_body_json JSONB,
+    response_body_json JSONB,
+    push_status VARCHAR(20) NOT NULL,     -- success / failed
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =========================================================
+-- 8. 知识库与智能体
+-- =========================================================
+
+CREATE TABLE knowledge_bases (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    kb_code VARCHAR(30) NOT NULL,
+    kb_name VARCHAR(100) NOT NULL,
+    description TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, kb_code)
+);
+
+CREATE TABLE knowledge_documents (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    kb_id BIGINT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    source_type VARCHAR(30),              -- material / rule / manual / faq / product
+    source_id BIGINT,
+    content_text TEXT NOT NULL,
+    summary_text TEXT,
+    metadata_json JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE knowledge_chunks (
+    id BIGSERIAL PRIMARY KEY,
+    document_id BIGINT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+    chunk_index INT NOT NULL,
+    chunk_text TEXT NOT NULL,
+    metadata_json JSONB,
+    embedding VECTOR(1024),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(document_id, chunk_index)
+);
+
+CREATE TABLE agent_configs (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    agent_type VARCHAR(30) NOT NULL,      -- material / rewrite / compliance / lead_triage / followup
+    config_json JSONB NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, agent_type)
+);
+
+CREATE TABLE agent_tasks (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    agent_type VARCHAR(30) NOT NULL,
+    target_type VARCHAR(30) NOT NULL,
+    target_id BIGINT NOT NULL,
+    input_json JSONB,
+    output_json JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    model_name VARCHAR(100),
+    prompt_version VARCHAR(50),
+    created_by BIGINT REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =========================================================
+-- 9. 看板与日志
+-- =========================================================
+
+CREATE TABLE dashboard_daily_stats (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    stat_date DATE NOT NULL,
+    platform VARCHAR(30),
+    material_count INT NOT NULL DEFAULT 0,
+    publish_count INT NOT NULL DEFAULT 0,
+    lead_count INT NOT NULL DEFAULT 0,
+    valid_lead_count INT NOT NULL DEFAULT 0,
+    customer_count INT NOT NULL DEFAULT 0,
+    deal_count INT NOT NULL DEFAULT 0,
+    risk_count INT NOT NULL DEFAULT 0,
+    nurture_count INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, stat_date, platform)
+);
+
+CREATE TABLE content_performance_stats (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    material_id BIGINT REFERENCES materials(id) ON DELETE SET NULL,
+    publish_task_id BIGINT REFERENCES publish_tasks(id) ON DELETE SET NULL,
+    platform VARCHAR(30),
+    view_count INT NOT NULL DEFAULT 0,
+    like_count INT NOT NULL DEFAULT 0,
+    comment_count INT NOT NULL DEFAULT 0,
+    collect_count INT NOT NULL DEFAULT 0,
+    inquiry_count INT NOT NULL DEFAULT 0,
+    deal_count INT NOT NULL DEFAULT 0,
+    stat_date DATE NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE operation_logs (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+    user_id BIGINT REFERENCES users(id),
+    module VARCHAR(50) NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    target_type VARCHAR(30),
+    target_id BIGINT,
+    detail_json JSONB,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE login_logs (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    login_ip VARCHAR(50),
+    device_info VARCHAR(255),
+    login_result VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- =========================================================
+-- 索引
+-- =========================================================
+
+CREATE INDEX idx_team_members_team_user ON team_members(team_id, user_id);
+
+CREATE INDEX idx_collect_records_team_created ON collect_records(team_id, created_at DESC);
+CREATE INDEX idx_inbox_items_team_status ON inbox_items(team_id, status, created_at DESC);
+
+CREATE INDEX idx_materials_team_platform_status ON materials(team_id, platform, status);
+CREATE INDEX idx_materials_dedup_hash ON materials(dedup_hash);
+CREATE INDEX idx_material_tags_material ON material_tags(material_id);
+CREATE INDEX idx_topic_candidates_team_status ON topic_candidates(team_id, status);
+
+CREATE INDEX idx_material_rewrites_material_platform ON material_rewrites(material_id, target_platform);
+CREATE INDEX idx_compliance_rules_team_platform_status ON compliance_rules(team_id, platform, status);
+CREATE INDEX idx_sensitive_words_team_platform_status ON sensitive_words(team_id, platform, status);
+CREATE INDEX idx_compliance_logs_target ON compliance_check_logs(target_type, target_id);
+
+CREATE INDEX idx_social_accounts_team_owner ON social_accounts(team_id, owner_user_id, platform);
+CREATE INDEX idx_publish_tasks_team_status ON publish_tasks(team_id, status, scheduled_at);
+CREATE INDEX idx_publish_tasks_assigned_to ON publish_tasks(assigned_to, status);
+CREATE INDEX idx_account_risk_logs_account_created ON account_risk_logs(account_id, created_at DESC);
+
+CREATE INDEX idx_leads_team_status_owner ON leads(team_id, status, owner_user_id);
+CREATE INDEX idx_customers_team_stage_owner ON customers(team_id, stage, owner_user_id);
+CREATE INDEX idx_customer_followups_customer_next ON customer_followups(customer_id, next_followup_at);
+CREATE INDEX idx_customer_reminders_owner_status_time ON customer_reminders(owner_user_id, status, planned_at);
+CREATE INDEX idx_customer_reminders_team_status_time ON customer_reminders(team_id, status, planned_at);
+
+CREATE INDEX idx_wecom_push_logs_team_created ON wecom_push_logs(team_id, created_at DESC);
+
+CREATE INDEX idx_knowledge_documents_team_kb ON knowledge_documents(team_id, kb_id, status);
+CREATE INDEX idx_agent_tasks_team_type_status ON agent_tasks(team_id, agent_type, status);
+CREATE INDEX idx_dashboard_daily_stats_team_date ON dashboard_daily_stats(team_id, stat_date DESC);
+CREATE INDEX idx_operation_logs_team_user_created ON operation_logs(team_id, user_id, created_at DESC);
+
+-- pgvector 索引（先保留，后面可按实际维度和规模再开）
+-- CREATE INDEX idx_knowledge_chunks_embedding
+-- ON knowledge_chunks USING ivfflat (embedding vector_cosine_ops)
+-- WITH (lists = 100);
+
+-- =========================================================
+-- 更新时间触发器绑定
+-- =========================================================
+
+CREATE TRIGGER trg_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_teams_updated_at BEFORE UPDATE ON teams FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_roles_updated_at BEFORE UPDATE ON roles FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_permissions_updated_at BEFORE UPDATE ON permissions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_team_members_updated_at BEFORE UPDATE ON team_members FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_collect_records_updated_at BEFORE UPDATE ON collect_records FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_inbox_items_updated_at BEFORE UPDATE ON inbox_items FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_collected_inbox_messages_updated_at BEFORE UPDATE ON collected_inbox_messages FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_materials_updated_at BEFORE UPDATE ON materials FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_material_assets_updated_at BEFORE UPDATE ON material_assets FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_material_fragments_updated_at BEFORE UPDATE ON material_fragments FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_material_scores_updated_at BEFORE UPDATE ON material_scores FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_topic_candidates_updated_at BEFORE UPDATE ON topic_candidates FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_material_rewrites_updated_at BEFORE UPDATE ON material_rewrites FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_compliance_rules_updated_at BEFORE UPDATE ON compliance_rules FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_sensitive_words_updated_at BEFORE UPDATE ON sensitive_words FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_social_accounts_updated_at BEFORE UPDATE ON social_accounts FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_publish_tasks_updated_at BEFORE UPDATE ON publish_tasks FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_leads_updated_at BEFORE UPDATE ON leads FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_customers_updated_at BEFORE UPDATE ON customers FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_customer_profiles_updated_at BEFORE UPDATE ON customer_profiles FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_customer_followups_updated_at BEFORE UPDATE ON customer_followups FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_customer_files_updated_at BEFORE UPDATE ON customer_files FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_customer_reminders_updated_at BEFORE UPDATE ON customer_reminders FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_wecom_bots_updated_at BEFORE UPDATE ON wecom_bots FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_wecom_bot_bindings_updated_at BEFORE UPDATE ON wecom_bot_bindings FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_wecom_message_templates_updated_at BEFORE UPDATE ON wecom_message_templates FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_knowledge_bases_updated_at BEFORE UPDATE ON knowledge_bases FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_knowledge_documents_updated_at BEFORE UPDATE ON knowledge_documents FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_knowledge_chunks_updated_at BEFORE UPDATE ON knowledge_chunks FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_agent_configs_updated_at BEFORE UPDATE ON agent_configs FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_agent_tasks_updated_at BEFORE UPDATE ON agent_tasks FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_dashboard_daily_stats_updated_at BEFORE UPDATE ON dashboard_daily_stats FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_content_performance_stats_updated_at BEFORE UPDATE ON content_performance_stats FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+这版你可以怎么用
+
+最适合的顺序是：
+
+先建这几组核心表：
+
+users / teams / team_members
+collect_records / inbox_items
+materials / material_tags / material_rewrites
+compliance_rules / sensitive_words / rule_versions
+publish_tasks / social_accounts
+leads / customers / customer_followups / customer_reminders
+wecom_bots / wecom_push_logs
+
+这样就能先把 MVP 跑起来。
+
+我建议你下一步做这两个之一
+
+我可以继续直接给你：
+
+1. Alembic 迁移拆分版
+把上面 SQL 拆成 001_base, 002_materials, 003_ai_compliance 这种更适合开发的版本。
+
+2. FastAPI SQLAlchemy 模型骨架
+我直接按这套表结构给你生成 models/*.py 的第一版。
+
+都做
+Stopped thinking
+快速回答
+1. Alembic 迁移拆分版1. Alembic 迁移拆分版
+
+我先按可直接开工的方式给你拆：会给出 迁移文件顺序、每个 revision 管什么、命名规范、执行顺序，再补一版 首批 Alembic 文件骨架，你后面就能直接照着建。
+
+Thought for 31s
+
+那就先定 Alembic 迁移拆分版 v1。
+
+Alembic 的标准做法是先初始化迁移环境，在 env.py 里接入你的 target_metadata，然后用 alembic revision --autogenerate -m "..." 生成候选迁移，再手工检查和修改后执行 alembic upgrade head。需要导出 SQL 时也可以用 --sql。
+
+一、我建议的迁移拆分原则
+
+不要一上来只做一个大迁移文件。
+最适合你这套系统的是：
+
+按业务域拆
+先主干，后增强
+结构迁移和初始化数据迁移分开
+规则中心单独拆
+企业微信、知识库、智能体单独拆
+提醒机制单独拆
+
+这样以后你维护时，看到 revision 名就知道大概是哪块出了变化。
+
+二、推荐目录结构
+backend/
+├─ alembic.ini
+├─ alembic/
+│  ├─ env.py
+│  ├─ script.py.mako
+│  └─ versions/
+│     ├─ 001_base_core.py
+│     ├─ 002_collect_inbox.py
+│     ├─ 003_materials_core.py
+│     ├─ 004_ai_compliance_core.py
+│     ├─ 005_rules_realtime.py
+│     ├─ 006_publish_accounts.py
+│     ├─ 007_leads_customers.py
+│     ├─ 008_customer_reminders.py
+│     ├─ 009_wecom_collab.py
+│     ├─ 010_knowledge_agents.py
+│     ├─ 011_dashboard_logs.py
+│     └─ 012_seed_system_defaults.py
+三、迁移拆分清单
+
+下面这版就是你后面最适合按顺序建的 revision。
+
+001_base_core.py
+
+作用：系统基础底座
+
+创建：
+
+users
+teams
+roles
+permissions
+role_permissions
+team_members
+
+额外建议放进去：
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto
+CREATE EXTENSION IF NOT EXISTS vector
+set_updated_at() 触发器函数
+
+原因：
+这批表是全系统根表，必须最先落。
+
+002_collect_inbox.py
+
+作用：采集入口与收件箱
+
+创建：
+
+collect_records
+inbox_items
+collected_inbox_messages
+
+原因：
+你的系统主入口就是采集，所以它应在素材库前落地。
+
+003_materials_core.py
+
+作用：素材中心主结构
+
+创建：
+
+materials
+material_assets
+material_tags
+material_fragments
+material_scores
+material_purposes
+negative_case_flags
+topic_candidates
+
+原因：
+这批表是内容中台核心，建议单独一版，不和 AI、审核混在一起。
+
+004_ai_compliance_core.py
+
+作用：AI 结果与审核记录基础
+
+创建：
+
+material_ai_results
+material_rewrites
+material_review_records
+compliance_check_logs
+
+原因：
+这些表是“AI 运行结果”和“审核结果留痕”，先和规则中心拆开。
+
+005_rules_realtime.py
+
+作用：实时规则中心
+
+创建：
+
+compliance_rules
+sensitive_words
+rule_versions
+rule_publish_logs
+
+这版很关键。
+因为你要支持“审核规则实时更新”，所以必须单独成一个 revision，后面加字段、改规则中心时不会影响素材和改写表。
+
+006_publish_accounts.py
+
+作用：发布任务与账号台账
+
+创建：
+
+social_accounts
+publish_tasks
+publish_feedbacks
+account_risk_logs
+
+原因：
+你明确采用的是“人工手机端发布”，所以这块是独立业务域。
+
+007_leads_customers.py
+
+作用：线索与客户主流程
+
+创建：
+
+leads
+lead_assign_records
+customers
+customer_profiles
+customer_followups
+customer_files
+customer_stage_logs
+
+原因：
+CRM 主流程建议独立一版，后面你加字段会很频繁。
+
+008_customer_reminders.py
+
+作用：客户培育与延期提醒
+
+创建：
+
+customer_reminders
+
+同时建议补字段到 customers：
+
+followup_status
+next_followup_at
+followup_reason
+remind_days_before
+followup_priority
+
+原因：
+这块是你后面补进来的重点功能，单独拆最好维护。
+
+009_wecom_collab.py
+
+作用：企业微信协同
+
+创建：
+
+wecom_bots
+wecom_bot_bindings
+wecom_message_templates
+wecom_push_logs
+
+原因：
+企业微信是一级模块，不要和日志、看板混成一版。
+
+010_knowledge_agents.py
+
+作用：知识库与智能体
+
+创建：
+
+knowledge_bases
+knowledge_documents
+knowledge_chunks
+agent_configs
+agent_tasks
+
+原因：
+知识库和智能体大概率是 P1/P2 上线，单独 revision 最灵活。
+
+011_dashboard_logs.py
+
+作用：看板统计与系统日志
+
+创建：
+
+dashboard_daily_stats
+content_performance_stats
+operation_logs
+login_logs
+
+原因：
+这块偏统计和审计，独立出来更清爽。
+
+012_seed_system_defaults.py
+
+作用：初始化系统数据
+
+这是数据迁移，不是纯建表。
+
+初始化：
+
+默认角色
+默认权限
+默认标签
+默认企业微信消息模板
+默认风险等级枚举
+默认平台标签
+默认客户阶段
+默认提醒类型
+
+原因：
+结构迁移和种子数据分开，后面更好管理。
+
+四、revision 依赖顺序
+
+建议这样串：
+
+001_base_core
+  ↓
+002_collect_inbox
+  ↓
+003_materials_core
+  ↓
+004_ai_compliance_core
+  ↓
+005_rules_realtime
+  ↓
+006_publish_accounts
+  ↓
+007_leads_customers
+  ↓
+008_customer_reminders
+  ↓
+009_wecom_collab
+  ↓
+010_knowledge_agents
+  ↓
+011_dashboard_logs
+  ↓
+012_seed_system_defaults
+
+这版先用单链最稳，不建议现在就搞多分支 revision。Alembic 确实支持多 head、branch label 和多版本目录，但你现在这个项目不需要，先保持一条主线最省事。
+
+五、每个 revision 的命名规范
+
+我建议你统一这样：
+
+alembic revision -m "001_base_core"
+alembic revision -m "002_collect_inbox"
+alembic revision -m "003_materials_core"
+...
+
+如果你要手动指定 revision id，也可以，但前期没必要。Alembic 的 revision 命令支持 -m、--autogenerate、--rev-id、--head 等参数。
+
+六、env.py 建议怎么配
+
+Alembic 官方建议在 env.py 里把应用的 MetaData 暴露给 target_metadata，这样 --autogenerate 才能比较数据库和 ORM 模型差异。
+
+你这边建议的 env.py 关键点是：
+
+1）导入 Base.metadata
+from app.models.base import Base
+target_metadata = Base.metadata
+2）打开类型比较
+context.configure(
+    connection=connection,
+    target_metadata=target_metadata,
+    compare_type=True,
+    compare_server_default=True,
+)
+3）给 PostgreSQL 用 schema 过滤时再补 include_object
+
+如果后面你要做多 schema，再加过滤。
+
+七、autogenerate 的使用建议
+
+Alembic 官方明确说了，--autogenerate 生成的是候选迁移，要人工 review 之后再执行。
+
+所以你这里建议：
+
+适合 autogenerate 的
+新增表
+新增列
+新增索引
+一些简单约束
+不建议纯靠 autogenerate 的
+复杂数据迁移
+枚举重构
+JSONB 数据修正
+触发器 / 函数
+pgvector 索引优化
+初始化种子数据
+
+这些最好手写。
+
+八、你这套项目最适合的迁移执行方式
+本地开发
+alembic upgrade head
+预发布环境
+
+先看 SQL：
+
+alembic upgrade head --sql
+
+Alembic 支持离线生成 SQL 脚本，这在你后面做私有化交付时会很有用。
+
+正式环境
+先备份数据库
+执行 upgrade head
+检查 alembic_version
+再启动新后端服务
+九、最适合你的 revision 内容边界
+
+为了避免后面越来越乱，我建议你遵守这几个规则：
+
+1）一个 revision 只做一个业务域
+
+比如不要把：
+
+规则中心
+发布任务
+企业微信
+放在同一个 revision。
+2）结构迁移和数据迁移分开
+
+比如：
+
+011_dashboard_logs.py 只建表
+012_seed_system_defaults.py 才插默认数据
+3）大字段改造单独开 revision
+
+比如以后你要把 materials.body_text 改结构，不要顺手塞进别的 revision。
+
+4）实时规则升级单独走规则链
+
+以后你可能还会加：
+
+013_rules_add_scene_priority.py
+014_rules_knowledge_binding.py
+
+这样最清晰。
+
+十、我建议你优先真正创建的第一批 revision
+
+如果你想快点开工，先做这 8 个就够了：
+
+001_base_core
+002_collect_inbox
+003_materials_core
+004_ai_compliance_core
+005_rules_realtime
+006_publish_accounts
+007_leads_customers
+008_customer_reminders
+
+这 8 个已经能把 MVP 主流程撑起来。
+
+十一、我建议的 Alembic 初始化命令顺序
+alembic init alembic
+alembic revision -m "001_base_core"
+alembic revision -m "002_collect_inbox"
+alembic revision -m "003_materials_core"
+alembic revision -m "004_ai_compliance_core"
+alembic revision -m "005_rules_realtime"
+alembic revision -m "006_publish_accounts"
+alembic revision -m "007_leads_customers"
+alembic revision -m "008_customer_reminders"
+alembic revision -m "009_wecom_collab"
+alembic revision -m "010_knowledge_agents"
+alembic revision -m "011_dashboard_logs"
+alembic revision -m "012_seed_system_defaults"
+
+如果你后面配好了 target_metadata，就可以在适合的 revision 上用：
+
+alembic revision --autogenerate -m "003_materials_core"
+
+但还是那句话：生成后一定手改。
+
+十二、你现在最适合的下一步
+
+你已经把 revision 拆分方案定下来了。
+下一步最顺的是：
+
+直接开始写前 4 个迁移文件：
+
+001_base_core.py
+002_collect_inbox.py
+003_materials_core.py
+004_ai_compliance_core.py
+
+这样数据库骨架就起来了。
+
+下一条我就直接给你这 4 个 Alembic revision 文件的完整 Python 模板。
+
+Alembic 迁移拆分版这是啥意思
+
+我先用官方文档把这个词解释成你能直接用的版本，再顺手帮你对应到你这个项目里。
+
+Thought for 16s
+
+“Alembic 迁移拆分版” 的意思，简单说就是：
+
+把数据库的变化，分成一小步一小步去管理，而不是一次性写一个超大的 SQL 文件。
+
+Alembic 本身就是用来做关系型数据库变更脚本的创建、管理和执行的工具。官方文档里把它描述为：为关系型数据库创建、管理、调用变更脚本；它会生成一个迁移环境，里面有 env.py、versions/ 等文件，后续每次改表结构都新增一个版本脚本。
+
+你可以把它理解成
+
+假设你的项目数据库会经历这些阶段：
+
+先建用户和团队表
+再加素材收件箱
+再加素材库
+再加 AI 审核表
+再加发布任务
+再加线索和客户表
+
+如果不用 Alembic，可能就是：
+
+手写一个大 SQL
+改一次表再手改一次
+过几天自己都忘了改过什么
+
+如果用 Alembic 迁移拆分版，就是把这些步骤分别做成：
+
+001_base_core
+002_collect_inbox
+003_materials_core
+004_ai_compliance_core
+005_rules_realtime
+…
+
+每个文件只负责一块。
+
+“拆分版” 为什么重要
+
+对你这个项目特别重要，因为你的系统模块很多：
+
+素材采集
+收件箱
+AI 改写
+审核规则
+企业微信
+客户提醒
+知识库
+
+如果全塞进一个迁移里，后面会很难维护。
+
+拆分以后有 4 个明显好处：
+
+1. 好排查
+
+以后出问题，你一看 revision 名字，大概就知道是哪块。
+
+2. 好回滚
+
+比如你改坏了“企业微信协同”那一版，理论上可以只回退那部分，而不是全库乱动。Alembic 官方也支持升级、降级、查看历史。
+
+3. 好协作
+
+你自己开发，或者以后找别人一起做，都更清楚。
+
+4. 好交付
+
+以后你卖给别人，私有化部署时，也能按迁移顺序一版版执行，而不是发一坨 SQL。
+
+在你这个项目里，它具体是什么样
+
+你这个项目的“迁移拆分版”就是类似这样：
+
+001_base_core：用户、团队、角色
+002_collect_inbox：采集记录、收件箱
+003_materials_core：素材表、标签表、片段表
+004_ai_compliance_core：AI 结果、审核记录
+005_rules_realtime：规则中心、敏感词、规则版本
+006_publish_accounts：发布任务、账号台账
+007_leads_customers：线索、客户、跟进
+008_customer_reminders：三个月后提醒这种客户培育能力
+009_wecom_collab：企业微信机器人和推送日志
+010_knowledge_agents：知识库和智能体
+
+这就叫“迁移拆分版”。
+
+和“直接写 SQL”有什么区别
+直接写 SQL
+
+像这样：
+
+CREATE TABLE users (...);
+CREATE TABLE teams (...);
+CREATE TABLE materials (...);
+CREATE TABLE leads (...);
+
+问题是：
+
+不知道先后顺序怎么管
+改过什么不容易追踪
+别人接手很痛苦
+Alembic 迁移
+
+会变成一系列版本脚本，每个脚本里有：
+
+upgrade()：往前升级
+downgrade()：往后回退
+
+这样数据库演进是有历史的。Alembic 官方迁移环境里，版本脚本就是放在 versions/ 目录里管理的。
+
+再说白一点
+
+你可以把它理解成：
+
+给数据库建“版本历史”。
+
+就像代码有 Git 提交记录一样，数据库也要有“我什么时候加了哪张表、加了哪个字段”的记录。
+
+你现在最需要它的原因
+
+因为你的项目不是一个小脚本，而是一个完整系统，后面一定会频繁改：
+
+新增规则字段
+加企业微信表
+加客户提醒表
+改发布任务状态
+加知识库字段
+
+不用迁移管理，后面会越来越乱。
+
+一句话总结
+
+Alembic 迁移拆分版 = 把数据库的每次结构变更，按模块拆成一版版可升级、可回退、可追踪的迁移文件。
+
+如果你点头，我下一条就直接给你看一个最真实的例子：
+001_base_core.py 长什么样。
+
+2. FastAPI SQLAlchemy 模型骨架
+我直接按这套表结构给你生成 models/*.py 的第一版2. FastAPI SQLAlchemy 模型骨架
+我直接按这套表结构给你生成 models/*.py 的第一版
+Thought for 21s
+
+可以，下面我直接给你一版 FastAPI + SQLAlchemy 2.0 的 models/*.py 第一版骨架。
+我按你前面定的业务域来拆，方便你后面继续接：
+
+Alembic
+Pydantic schemas
+repositories
+services
+
+我这里默认你用的是：
+
+SQLAlchemy 2.0
+PostgreSQL
+FastAPI
+Alembic
+可选 pgvector
+一、推荐目录结构
+backend/app/models/
+├─ __init__.py
+├─ base.py
+├─ mixins.py
+├─ user.py
+├─ team.py
+├─ collect.py
+├─ material.py
+├─ ai.py
+├─ compliance.py
+├─ publish.py
+├─ crm.py
+├─ wecom.py
+├─ knowledge.py
+└─ dashboard.py
+二、base.py
+# backend/app/models/base.py
+from sqlalchemy.orm import DeclarativeBase
+
+
+class Base(DeclarativeBase):
+    pass
+三、mixins.py
+# backend/app/models/mixins.py
+from datetime import datetime
+
+from sqlalchemy import DateTime, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+四、user.py
+# backend/app/models/user.py
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import String, DateTime
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class User(Base, TimestampMixin):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    real_name: Mapped[Optional[str]] = mapped_column(String(50))
+    mobile: Mapped[Optional[str]] = mapped_column(String(20))
+    email: Mapped[Optional[str]] = mapped_column(String(100))
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    owned_teams = relationship("Team", back_populates="owner")
+    team_memberships = relationship("TeamMember", back_populates="user")
+五、team.py
+# backend/app/models/team.py
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class Team(Base, TimestampMixin):
+    __tablename__ = "teams"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    owner_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    plan_type: Mapped[str] = mapped_column(String(30), default="basic", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+    owner = relationship("User", back_populates="owned_teams")
+    members = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
+
+
+class Role(Base, TimestampMixin):
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    role_code: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
+    role_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(255))
+
+
+class Permission(Base, TimestampMixin):
+    __tablename__ = "permissions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    perm_code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    perm_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    module: Mapped[str] = mapped_column(String(50), nullable=False)
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    __table_args__ = (UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    permission_id: Mapped[int] = mapped_column(
+        ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False
+    )
+
+
+class TeamMember(Base, TimestampMixin):
+    __tablename__ = "team_members"
+    __table_args__ = (UniqueConstraint("team_id", "user_id", name="uq_team_member"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+    team = relationship("Team", back_populates="members")
+    user = relationship("User", back_populates="team_memberships")
+六、collect.py
+# backend/app/models/collect.py
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class CollectRecord(Base, TimestampMixin):
+    __tablename__ = "collect_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    collect_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    device_type: Mapped[Optional[str]] = mapped_column(String(20))
+    source_app: Mapped[Optional[str]] = mapped_column(String(30))
+    page_url: Mapped[Optional[str]] = mapped_column(Text)
+    raw_payload_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    collect_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    inbox_item = relationship("InboxItem", back_populates="source_record", uselist=False)
+
+
+class InboxItem(Base, TimestampMixin):
+    __tablename__ = "inbox_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    source_record_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("collect_records.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    assigned_to: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    source_record = relationship("CollectRecord", back_populates="inbox_item")
+
+
+class CollectedInboxMessage(Base, TimestampMixin):
+    __tablename__ = "collected_inbox_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    source_channel: Mapped[str] = mapped_column(String(30), default="wecom", nullable=False)
+    sender_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    sender_name: Mapped[Optional[str]] = mapped_column(String(100))
+    raw_text: Mapped[Optional[str]] = mapped_column(Text)
+    attachments_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    parsed_type: Mapped[Optional[str]] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+七、material.py
+# backend/app/models/material.py
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class Material(Base, TimestampMixin):
+    __tablename__ = "materials"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_url: Mapped[Optional[str]] = mapped_column(Text)
+    content_type: Mapped[Optional[str]] = mapped_column(String(30))
+    author_name: Mapped[Optional[str]] = mapped_column(String(100))
+    title: Mapped[Optional[str]] = mapped_column(String(255))
+    body_text: Mapped[Optional[str]] = mapped_column(Text)
+    ocr_text: Mapped[Optional[str]] = mapped_column(Text)
+    metrics_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    user_notes: Mapped[Optional[str]] = mapped_column(Text)
+    ai_summary: Mapped[Optional[str]] = mapped_column(Text)
+    compliance_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
+    risk_level: Mapped[Optional[str]] = mapped_column(String(20))
+    dedup_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True)
+    material_type: Mapped[str] = mapped_column(String(30), default="normal", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    collected_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    collected_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    assets = relationship("MaterialAsset", back_populates="material", cascade="all, delete-orphan")
+    tags = relationship("MaterialTag", back_populates="material", cascade="all, delete-orphan")
+    fragments = relationship("MaterialFragment", back_populates="material", cascade="all, delete-orphan")
+    score = relationship("MaterialScore", back_populates="material", uselist=False, cascade="all, delete-orphan")
+    purposes = relationship("MaterialPurpose", back_populates="material", cascade="all, delete-orphan")
+    negative_flags = relationship("NegativeCaseFlag", back_populates="material", cascade="all, delete-orphan")
+    topics = relationship("TopicCandidate", back_populates="source_material")
+
+
+class MaterialAsset(Base, TimestampMixin):
+    __tablename__ = "material_assets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"), nullable=False)
+    asset_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    file_url: Mapped[str] = mapped_column(Text, nullable=False)
+    thumbnail_url: Mapped[Optional[str]] = mapped_column(Text)
+    sort_no: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    material = relationship("Material", back_populates="assets")
+
+
+class MaterialTag(Base):
+    __tablename__ = "material_tags"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"), nullable=False)
+    tag_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    tag_name: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    material = relationship("Material", back_populates="tags")
+
+
+class MaterialFragment(Base, TimestampMixin):
+    __tablename__ = "material_fragments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"), nullable=False)
+    fragment_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    sequence_no: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    material = relationship("Material", back_populates="fragments")
+
+
+class MaterialScore(Base, TimestampMixin):
+    __tablename__ = "material_scores"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(
+        ForeignKey("materials.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    reusability_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
+    compliance_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
+    rewrite_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
+    business_relevance_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
+    final_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
+
+    material = relationship("Material", back_populates="score")
+
+
+class MaterialPurpose(Base):
+    __tablename__ = "material_purposes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"), nullable=False)
+    purpose_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    material = relationship("Material", back_populates="purposes")
+
+
+class NegativeCaseFlag(Base):
+    __tablename__ = "negative_case_flags"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"), nullable=False)
+    flag_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(Text)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    material = relationship("Material", back_populates="negative_flags")
+
+
+class TopicCandidate(Base, TimestampMixin):
+    __tablename__ = "topic_candidates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    source_material_id: Mapped[Optional[int]] = mapped_column(ForeignKey("materials.id", ondelete="SET NULL"))
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    topic_direction: Mapped[Optional[str]] = mapped_column(String(100))
+    target_platform: Mapped[Optional[str]] = mapped_column(String(30))
+    content_angle: Mapped[Optional[str]] = mapped_column(Text)
+    risk_level: Mapped[Optional[str]] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    source_material = relationship("Material", back_populates="topics")
+八、ai.py
+# backend/app/models/ai.py
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class MaterialAIResult(Base):
+    __tablename__ = "material_ai_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"), nullable=False)
+    analysis_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    result_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    model_name: Mapped[Optional[str]] = mapped_column(String(100))
+    prompt_version: Mapped[Optional[str]] = mapped_column(String(50))
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+
+class MaterialRewrite(Base, TimestampMixin):
+    __tablename__ = "material_rewrites"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"), nullable=False)
+    target_platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    rewrite_title: Mapped[Optional[str]] = mapped_column(String(255))
+    rewrite_body: Mapped[str] = mapped_column(Text, nullable=False)
+    style_tags_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    risk_level: Mapped[Optional[str]] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    publish_tasks = relationship("PublishTask", back_populates="rewrite")
+九、compliance.py
+# backend/app/models/compliance.py
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class MaterialReviewRecord(Base):
+    __tablename__ = "material_review_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id", ondelete="CASCADE"), nullable=False)
+    review_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    risk_hits_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    suggestions_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    review_result: Mapped[str] = mapped_column(String(20), nullable=False)
+    reviewed_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    reviewed_at: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class ComplianceRule(Base, TimestampMixin):
+    __tablename__ = "compliance_rules"
+    __table_args__ = (
+        UniqueConstraint("team_id", "rule_code", "version_no", name="uq_team_rule_version"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))
+    rule_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    rule_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    scene_code: Mapped[Optional[str]] = mapped_column(String(30))
+    risk_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    match_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    pattern_text: Mapped[str] = mapped_column(Text, nullable=False)
+    suggestion_text: Mapped[Optional[str]] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
+    is_realtime: Mapped[bool] = mapped_column(default=True, nullable=False)
+    version_no: Mapped[int] = mapped_column(default=1, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+
+class SensitiveWord(Base, TimestampMixin):
+    __tablename__ = "sensitive_words"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    word_text: Mapped[str] = mapped_column(String(100), nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    replace_text: Mapped[Optional[str]] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+
+class ComplianceCheckLog(Base):
+    __tablename__ = "compliance_check_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))
+    target_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    target_id: Mapped[int] = mapped_column(nullable=False)
+    platform: Mapped[Optional[str]] = mapped_column(String(30))
+    input_text: Mapped[Optional[str]] = mapped_column(Text)
+    hits_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    score: Mapped[Optional[float]] = mapped_column(nullable=True)
+    risk_level: Mapped[Optional[str]] = mapped_column(String(20))
+    checked_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+
+class RuleVersion(Base):
+    __tablename__ = "rule_versions"
+    __table_args__ = (
+        UniqueConstraint("team_id", "version_no", name="uq_team_rule_version_no"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    version_no: Mapped[int] = mapped_column(nullable=False)
+    published_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    publish_note: Mapped[Optional[str]] = mapped_column(Text)
+    effective_at: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class RulePublishLog(Base):
+    __tablename__ = "rule_publish_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version_id: Mapped[int] = mapped_column(ForeignKey("rule_versions.id", ondelete="CASCADE"), nullable=False)
+    publish_channel: Mapped[str] = mapped_column(String(30), nullable=False)
+    publish_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    detail_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+这里 reviewed_at / effective_at 你后面可以改成 DateTime，我为了先给你完整骨架，先保持简单。正式落地时建议全改成 DateTime。
+
+十、publish.py
+# backend/app/models/publish.py
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class SocialAccount(Base, TimestampMixin):
+    __tablename__ = "social_accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    account_nickname: Mapped[str] = mapped_column(String(100), nullable=False)
+    account_uid: Mapped[Optional[str]] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    last_posted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    risk_note: Mapped[Optional[str]] = mapped_column(Text)
+
+    publish_tasks = relationship("PublishTask", back_populates="account")
+    risk_logs = relationship("AccountRiskLog", back_populates="account", cascade="all, delete-orphan")
+
+
+class PublishTask(Base, TimestampMixin):
+    __tablename__ = "publish_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    material_id: Mapped[Optional[int]] = mapped_column(ForeignKey("materials.id", ondelete="SET NULL"))
+    rewrite_id: Mapped[Optional[int]] = mapped_column(ForeignKey("material_rewrites.id", ondelete="SET NULL"))
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    account_id: Mapped[Optional[int]] = mapped_column(ForeignKey("social_accounts.id", ondelete="SET NULL"))
+    assigned_to: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[Optional[str]] = mapped_column(String(255))
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    risk_level: Mapped[Optional[str]] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    posted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    post_url: Mapped[Optional[str]] = mapped_column(Text)
+
+    rewrite = relationship("MaterialRewrite", back_populates="publish_tasks")
+    account = relationship("SocialAccount", back_populates="publish_tasks")
+    feedbacks = relationship("PublishFeedback", back_populates="publish_task", cascade="all, delete-orphan")
+
+
+class PublishFeedback(Base):
+    __tablename__ = "publish_feedbacks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    publish_task_id: Mapped[int] = mapped_column(
+        ForeignKey("publish_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    result_type: Mapped[Optional[str]] = mapped_column(String(30))
+    view_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    like_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    comment_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    collect_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    inquiry_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_limited: Mapped[bool] = mapped_column(default=False, nullable=False)
+    feedback_note: Mapped[Optional[str]] = mapped_column(Text)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    publish_task = relationship("PublishTask", back_populates="feedbacks")
+
+
+class AccountRiskLog(Base):
+    __tablename__ = "account_risk_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    platform: Mapped[str] = mapped_column(String(30), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    event_desc: Mapped[Optional[str]] = mapped_column(Text)
+    related_task_id: Mapped[Optional[int]] = mapped_column(ForeignKey("publish_tasks.id", ondelete="SET NULL"))
+
+    account = relationship("SocialAccount", back_populates="risk_logs")
+十一、crm.py
+# backend/app/models/crm.py
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class Lead(Base, TimestampMixin):
+    __tablename__ = "leads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    source_platform: Mapped[Optional[str]] = mapped_column(String(30))
+    source_material_id: Mapped[Optional[int]] = mapped_column(ForeignKey("materials.id", ondelete="SET NULL"))
+    source_publish_task_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("publish_tasks.id", ondelete="SET NULL")
+    )
+    lead_name: Mapped[Optional[str]] = mapped_column(String(100))
+    mobile: Mapped[Optional[str]] = mapped_column(String(20))
+    wechat: Mapped[Optional[str]] = mapped_column(String(50))
+    intent_type: Mapped[Optional[str]] = mapped_column(String(50))
+    basic_profile_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(20), default="new", nullable=False)
+    owner_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    customer = relationship("Customer", back_populates="lead", uselist=False)
+    assign_records = relationship("LeadAssignRecord", back_populates="lead", cascade="all, delete-orphan")
+
+
+class LeadAssignRecord(Base):
+    __tablename__ = "lead_assign_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"), nullable=False)
+    from_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    to_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    assigned_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    assigned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    lead = relationship("Lead", back_populates="assign_records")
+
+
+class Customer(Base, TimestampMixin):
+    __tablename__ = "customers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    lead_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("leads.id", ondelete="SET NULL"), unique=True
+    )
+    customer_name: Mapped[Optional[str]] = mapped_column(String(100))
+    level_code: Mapped[Optional[str]] = mapped_column(String(20))
+    credit_summary: Mapped[Optional[str]] = mapped_column(Text)
+    material_status: Mapped[Optional[str]] = mapped_column(String(30))
+    stage: Mapped[str] = mapped_column(String(30), default="new", nullable=False)
+    owner_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    followup_status: Mapped[Optional[str]] = mapped_column(String(30))
+    next_followup_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    followup_reason: Mapped[Optional[str]] = mapped_column(String(100))
+    remind_days_before: Mapped[Optional[int]] = mapped_column(default=3)
+    followup_priority: Mapped[Optional[str]] = mapped_column(String(20))
+
+    lead = relationship("Lead", back_populates="customer")
+    profile = relationship("CustomerProfile", back_populates="customer", uselist=False, cascade="all, delete-orphan")
+    followups = relationship("CustomerFollowup", back_populates="customer", cascade="all, delete-orphan")
+    files = relationship("CustomerFile", back_populates="customer", cascade="all, delete-orphan")
+    stage_logs = relationship("CustomerStageLog", back_populates="customer", cascade="all, delete-orphan")
+    reminders = relationship("CustomerReminder", back_populates="customer", cascade="all, delete-orphan")
+
+
+class CustomerProfile(Base, TimestampMixin):
+    __tablename__ = "customer_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    has_house: Mapped[Optional[bool]]
+    has_car: Mapped[Optional[bool]]
+    has_fund: Mapped[Optional[bool]]
+    has_business_license: Mapped[Optional[bool]]
+    income_desc: Mapped[Optional[str]] = mapped_column(String(255))
+    debt_desc: Mapped[Optional[str]] = mapped_column(String(255))
+    credit_desc: Mapped[Optional[str]] = mapped_column(String(255))
+    extra_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    customer = relationship("Customer", back_populates="profile")
+
+
+class CustomerFollowup(Base, TimestampMixin):
+    __tablename__ = "customer_followups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    followup_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    next_followup_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    customer = relationship("Customer", back_populates="followups")
+
+
+class CustomerFile(Base, TimestampMixin):
+    __tablename__ = "customer_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    file_name: Mapped[Optional[str]] = mapped_column(String(255))
+    file_url: Mapped[str] = mapped_column(Text, nullable=False)
+    ocr_text: Mapped[Optional[str]] = mapped_column(Text)
+    summary_text: Mapped[Optional[str]] = mapped_column(Text)
+    uploaded_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    customer = relationship("Customer", back_populates="files")
+
+
+class CustomerStageLog(Base):
+    __tablename__ = "customer_stage_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    from_stage: Mapped[Optional[str]] = mapped_column(String(30))
+    to_stage: Mapped[str] = mapped_column(String(30), nullable=False)
+    changed_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    customer = relationship("Customer", back_populates="stage_logs")
+
+
+class CustomerReminder(Base, TimestampMixin):
+    __tablename__ = "customer_reminders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    reminder_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    reminder_reason: Mapped[Optional[str]] = mapped_column(String(100))
+    planned_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    remind_days_before: Mapped[int] = mapped_column(default=3, nullable=False)
+    remind_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    last_triggered_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    customer = relationship("Customer", back_populates="reminders")
+十二、wecom.py
+# backend/app/models/wecom.py
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class WecomBot(Base, TimestampMixin):
+    __tablename__ = "wecom_bots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    bot_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    webhook_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    remark: Mapped[Optional[str]] = mapped_column(Text)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    bindings = relationship("WecomBotBinding", back_populates="bot", cascade="all, delete-orphan")
+    push_logs = relationship("WecomPushLog", back_populates="bot", cascade="all, delete-orphan")
+
+
+class WecomBotBinding(Base, TimestampMixin):
+    __tablename__ = "wecom_bot_bindings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    bot_id: Mapped[int] = mapped_column(ForeignKey("wecom_bots.id", ondelete="CASCADE"), nullable=False)
+    scene_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_group_name: Mapped[Optional[str]] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+    bot = relationship("WecomBot", back_populates="bindings")
+
+
+class WecomMessageTemplate(Base, TimestampMixin):
+    __tablename__ = "wecom_message_templates"
+    __table_args__ = (
+        UniqueConstraint("team_id", "template_code", name="uq_team_wecom_template"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    template_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    template_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    message_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    content_template: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+
+class WecomPushLog(Base):
+    __tablename__ = "wecom_push_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    bot_id: Mapped[Optional[int]] = mapped_column(ForeignKey("wecom_bots.id", ondelete="SET NULL"))
+    scene_code: Mapped[str] = mapped_column(String(50), nullable=False)
+    message_type: Mapped[Optional[str]] = mapped_column(String(30))
+    request_body_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    response_body_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    push_status: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    bot = relationship("WecomBot", back_populates="push_logs")
+十三、knowledge.py
+# backend/app/models/knowledge.py
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:  # 没装 pgvector 也能先跑骨架
+    Vector = None
+
+
+class KnowledgeBase(Base, TimestampMixin):
+    __tablename__ = "knowledge_bases"
+    __table_args__ = (
+        UniqueConstraint("team_id", "kb_code", name="uq_team_kb_code"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    kb_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    kb_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+    documents = relationship("KnowledgeDocument", back_populates="kb", cascade="all, delete-orphan")
+
+
+class KnowledgeDocument(Base, TimestampMixin):
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    kb_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_type: Mapped[Optional[str]] = mapped_column(String(30))
+    source_id: Mapped[Optional[int]]
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    summary_text: Mapped[Optional[str]] = mapped_column(Text)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+
+    kb = relationship("KnowledgeBase", back_populates="documents")
+    chunks = relationship("KnowledgeChunk", back_populates="document", cascade="all, delete-orphan")
+
+
+class KnowledgeChunk(Base, TimestampMixin):
+    __tablename__ = "knowledge_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_index: Mapped[int] = mapped_column(nullable=False)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    if Vector is not None:
+        embedding: Mapped[Optional[list[float]]] = mapped_column(Vector(1024))
+    else:
+        embedding: Mapped[Optional[list[float]]] = mapped_column(JSONB)
+
+    document = relationship("KnowledgeDocument", back_populates="chunks")
+
+
+class AgentConfig(Base, TimestampMixin):
+    __tablename__ = "agent_configs"
+    __table_args__ = (
+        UniqueConstraint("team_id", "agent_type", name="uq_team_agent_type"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    agent_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    config_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+
+class AgentTask(Base, TimestampMixin):
+    __tablename__ = "agent_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    agent_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    target_id: Mapped[int] = mapped_column(nullable=False)
+    input_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    output_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    model_name: Mapped[Optional[str]] = mapped_column(String(100))
+    prompt_version: Mapped[Optional[str]] = mapped_column(String(50))
+    created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+十四、dashboard.py
+# backend/app/models/dashboard.py
+from __future__ import annotations
+
+from typing import Optional
+
+from sqlalchemy import Date, ForeignKey, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models.base import Base
+from app.models.mixins import TimestampMixin
+
+
+class DashboardDailyStat(Base, TimestampMixin):
+    __tablename__ = "dashboard_daily_stats"
+    __table_args__ = (
+        UniqueConstraint("team_id", "stat_date", "platform", name="uq_team_stat_date_platform"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    stat_date: Mapped[Date] = mapped_column(Date, nullable=False)
+    platform: Mapped[Optional[str]] = mapped_column(String(30))
+    material_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    publish_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    lead_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    valid_lead_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    customer_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    deal_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    risk_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    nurture_count: Mapped[int] = mapped_column(default=0, nullable=False)
+
+
+class ContentPerformanceStat(Base, TimestampMixin):
+    __tablename__ = "content_performance_stats"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    material_id: Mapped[Optional[int]] = mapped_column(ForeignKey("materials.id", ondelete="SET NULL"))
+    publish_task_id: Mapped[Optional[int]] = mapped_column(ForeignKey("publish_tasks.id", ondelete="SET NULL"))
+    platform: Mapped[Optional[str]] = mapped_column(String(30))
+    view_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    like_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    comment_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    collect_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    inquiry_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    deal_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    stat_date: Mapped[Date] = mapped_column(Date, nullable=False)
+
+
+class OperationLog(Base):
+    __tablename__ = "operation_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"))
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    module: Mapped[str] = mapped_column(String(50), nullable=False)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_type: Mapped[Optional[str]] = mapped_column(String(30))
+    target_id: Mapped[Optional[int]]
+    detail_json: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+
+class LoginLog(Base):
+    __tablename__ = "login_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    login_ip: Mapped[Optional[str]] = mapped_column(String(50))
+    device_info: Mapped[Optional[str]] = mapped_column(String(255))
+    login_result: Mapped[str] = mapped_column(String(20), nullable=False)
+十五、models/init.py
+
+这个很重要，不然后面 Alembic 不一定能完整发现所有表。
+
+# backend/app/models/__init__.py
+
+from app.models.base import Base
+from app.models.user import User
+from app.models.team import Team, Role, Permission, RolePermission, TeamMember
+from app.models.collect import CollectRecord, InboxItem, CollectedInboxMessage
+from app.models.material import (
+    Material,
+    MaterialAsset,
+    MaterialTag,
+    MaterialFragment,
+    MaterialScore,
+    MaterialPurpose,
+    NegativeCaseFlag,
+    TopicCandidate,
+)
+from app.models.ai import MaterialAIResult, MaterialRewrite
+from app.models.compliance import (
+    MaterialReviewRecord,
+    ComplianceRule,
+    SensitiveWord,
+    ComplianceCheckLog,
+    RuleVersion,
+    RulePublishLog,
+)
+from app.models.publish import SocialAccount, PublishTask, PublishFeedback, AccountRiskLog
+from app.models.crm import (
+    Lead,
+    LeadAssignRecord,
+    Customer,
+    CustomerProfile,
+    CustomerFollowup,
+    CustomerFile,
+    CustomerStageLog,
+    CustomerReminder,
+)
+from app.models.wecom import (
+    WecomBot,
+    WecomBotBinding,
+    WecomMessageTemplate,
+    WecomPushLog,
+)
+from app.models.knowledge import (
+    KnowledgeBase,
+    KnowledgeDocument,
+    KnowledgeChunk,
+    AgentConfig,
+    AgentTask,
+)
+from app.models.dashboard import (
+    DashboardDailyStat,
+    ContentPerformanceStat,
+    OperationLog,
+    LoginLog,
+)
+
+__all__ = [
+    "Base",
+    "User",
+    "Team",
+    "Role",
+    "Permission",
+    "RolePermission",
+    "TeamMember",
+    "CollectRecord",
+    "InboxItem",
+    "CollectedInboxMessage",
+    "Material",
+    "MaterialAsset",
+    "MaterialTag",
+    "MaterialFragment",
+    "MaterialScore",
+    "MaterialPurpose",
+    "NegativeCaseFlag",
+    "TopicCandidate",
+    "MaterialAIResult",
+    "MaterialRewrite",
+    "MaterialReviewRecord",
+    "ComplianceRule",
+    "SensitiveWord",
+    "ComplianceCheckLog",
+    "RuleVersion",
+    "RulePublishLog",
+    "SocialAccount",
+    "PublishTask",
+    "PublishFeedback",
+    "AccountRiskLog",
+    "Lead",
+    "LeadAssignRecord",
+    "Customer",
+    "CustomerProfile",
+    "CustomerFollowup",
+    "CustomerFile",
+    "CustomerStageLog",
+    "CustomerReminder",
+    "WecomBot",
+    "WecomBotBinding",
+    "WecomMessageTemplate",
+    "WecomPushLog",
+    "KnowledgeBase",
+    "KnowledgeDocument",
+    "KnowledgeChunk",
+    "AgentConfig",
+    "AgentTask",
+    "DashboardDailyStat",
+    "ContentPerformanceStat",
+    "OperationLog",
+    "LoginLog",
+]
+十六、给 Alembic 用的提示
+
+在 alembic/env.py 里，至少要这样：
+
+from app.models import Base
+target_metadata = Base.metadata
+
+这样 Alembic 才能自动识别这批表。
+
+十七、这版骨架的使用建议
+
+你现在最适合这样落地：
+
+第一步
+
+先把这些模型文件建出来，保证：
+
+import 不报错
+Base.metadata 能加载
+第二步
+
+先做前 4 个迁移：
+
+base_core
+collect_inbox
+materials_core
+ai_compliance_core
+第三步
+
+再补：
+
+publish
+crm
+reminders
+wecom
+第四步
+
+最后上：
+
+knowledge
+agents
+dashboard
