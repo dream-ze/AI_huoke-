@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>截图 OCR - 智获客 Mobile H5</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body>
+    <main class="page" id="app">
+      <a class="header-link" href="../../../index.html">返回首页</a>
+      <section class="panel form-grid">
+        <h1>截图 OCR</h1>
+        <div class="row">
+          <label>API Base URL<input id="baseUrl" placeholder="http://127.0.0.1:8000" /></label>
+          <label>移动 Token（应急）<input id="token" placeholder="优先使用 ticket 自动换取" /></label>
+        </div>
+        <div class="row">
+          <label>超时（毫秒）<input id="timeoutMs" type="number" min="5000" step="1000" /></label>
+          <label>重试次数<input id="maxRetries" type="number" min="0" max="2" step="1" /></label>
+        </div>
+        <button id="saveConfig" type="button" class="secondary">保存配置</button>
+        <div id="authStatus" class="status auth-status">正在检测授权状态...</div>
+      </section>
+
+      <section class="panel form-grid">
+        <div class="row">
+          <label>平台
+            <select id="platform">
+              <option value="xiaohongshu">小红书</option>
+              <option value="douyin">抖音</option>
+              <option value="wechat">微信</option>
+              <option value="other">其他</option>
+            </select>
+          </label>
+          <label>作者<input id="author" /></label>
+        </div>
+        <label>来源链接<input id="sourceUrl" placeholder="https://..." /></label>
+        <label>标题<input id="title" placeholder="可选，默认使用文件名" /></label>
+        <label>截图文件<input id="image" type="file" accept="image/*" /></label>
+        <label><input id="saveToInbox" type="checkbox" checked /> 识别后直接入收件箱</label>
+        <button id="submitBtn" type="button">上传并识别</button>
+      </section>
+
+      <section class="panel">
+        <div id="status" class="status">等待上传</div>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        bindGlobalConfig,
+        bootstrapPageAuth,
+        buildClientRequestId,
+        callApi,
+        getConfigFromPage,
+        setButtonBusy,
+        setStatus,
+      } from "../../utils/api-client.js";
+
+      const app = document.querySelector("#app");
+      bindGlobalConfig(app);
+      await bootstrapPageAuth(app).catch(() => null);
+
+      const submitBtn = app.querySelector("#submitBtn");
+
+      submitBtn.addEventListener("click", async () => {
+        const imageInput = app.querySelector("#image");
+        const file = imageInput.files?.[0];
+        if (!file) {
+          setStatus(app, "请先选择截图文件", true);
+          return;
+        }
+
+        const { baseUrl, token, requestTimeoutMs, maxRetries } = getConfigFromPage(app);
+        if (!token) {
+          setStatus(app, "当前未授权，请使用带 ticket 的移动链接重新打开，或临时填写 Token。", true);
+          return;
+        }
+
+        const form = new FormData();
+        form.append("image", file);
+        form.append("platform", app.querySelector("#platform").value);
+        form.append("source_url", app.querySelector("#sourceUrl").value || "");
+        form.append("title", app.querySelector("#title").value || "");
+        form.append("author", app.querySelector("#author").value || "");
+        form.append("save_to_inbox", String(app.querySelector("#saveToInbox").checked));
+        form.append("client_request_id", buildClientRequestId("ocr"));
+
+        try {
+          setStatus(app, "OCR 处理中...");
+          setButtonBusy(submitBtn, true, "上传中...", "上传并识别");
+          const data = await callApi({
+            baseUrl,
+            token,
+            path: "/api/v1/collect/ocr",
+            method: "POST",
+            body: form,
+            isForm: true,
+            timeoutMs: requestTimeoutMs,
+            maxRetries,
+            requestKey: "screenshot-ocr-submit",
+          });
+          setStatus(app, `OCR 成功\n${JSON.stringify(data, null, 2)}`);
+        } catch (err) {
+          setStatus(app, `OCR 失败\n${err.message}`, true);
+        } finally {
+          setButtonBusy(submitBtn, false, "上传中...", "上传并识别");
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>快捷记录 - 智获客 Mobile H5</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body>
+    <main class="page" id="app">
+      <a class="header-link" href="../../../index.html">返回首页</a>
+      <section class="panel form-grid">
+        <h1>快捷记录</h1>
+        <div class="row">
+          <label>API Base URL<input id="baseUrl" placeholder="http://127.0.0.1:8000" /></label>
+          <label>移动 Token（应急）<input id="token" placeholder="优先使用 ticket 自动换取" /></label>
+        </div>
+        <div class="row">
+          <label>超时（毫秒）<input id="timeoutMs" type="number" min="3000" step="1000" /></label>
+          <label>重试次数<input id="maxRetries" type="number" min="0" max="3" step="1" /></label>
+        </div>
+        <button id="saveConfig" type="button" class="secondary">保存配置</button>
+        <div id="authStatus" class="status auth-status">正在检测授权状态...</div>
+      </section>
+
+      <section class="panel form-grid">
+        <div class="row">
+          <label>平台
+            <select id="platform">
+              <option value="other">其他</option>
+              <option value="wechat">微信</option>
+              <option value="xiaohongshu">小红书</option>
+              <option value="douyin">抖音</option>
+              <option value="zhihu">知乎</option>
+            </select>
+          </label>
+          <label>标题<input id="title" placeholder="例如：客户反馈-转化话术" /></label>
+        </div>
+        <label>记录内容<textarea id="content" placeholder="输入你要记录的内容"></textarea></label>
+        <label>标签（逗号分隔）<input id="tags" placeholder="客户反馈,话术,线索" /></label>
+        <button id="submitBtn" type="button">保存到收件箱</button>
+      </section>
+
+      <section class="panel">
+        <div id="status" class="status">等待提交</div>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        bindGlobalConfig,
+        bootstrapPageAuth,
+        buildClientRequestId,
+        callApi,
+        getConfigFromPage,
+        setButtonBusy,
+        setStatus,
+      } from "../../utils/api-client.js";
+
+      const app = document.querySelector("#app");
+      bindGlobalConfig(app);
+      await bootstrapPageAuth(app).catch(() => null);
+
+      const submitBtn = app.querySelector("#submitBtn");
+
+      submitBtn.addEventListener("click", async () => {
+        const { baseUrl, token, requestTimeoutMs, maxRetries } = getConfigFromPage(app);
+        const title = app.querySelector("#title").value.trim();
+        const content = app.querySelector("#content").value.trim();
+
+        if (!token) {
+          setStatus(app, "当前未授权，请使用带 ticket 的移动链接重新打开，或临时填写 Token。", true);
+          return;
+        }
+
+        if (!title || !content) {
+          setStatus(app, "标题和记录内容不能为空", true);
+          return;
+        }
+
+        const tags = app.querySelector("#tags").value
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
+
+        const payload = {
+          platform: app.querySelector("#platform").value,
+          source_url: null,
+          content_type: "note",
+          title,
+          content,
+          author: null,
+          manual_note: "来自 mobile-h5 quick-note",
+          source_type: "paste",
+          tags,
+          metrics: {},
+          raw_payload: { entry: "mobile-h5/quick-note" },
+          client_request_id: buildClientRequestId("note"),
+        };
+
+        try {
+          setStatus(app, "提交中...");
+          setButtonBusy(submitBtn, true, "保存中...", "保存到收件箱");
+          const data = await callApi({
+            baseUrl,
+            token,
+            path: "/api/v1/collect/intake",
+            method: "POST",
+            body: payload,
+            timeoutMs: requestTimeoutMs,
+            maxRetries,
+            requestKey: "quick-note-submit",
+          });
+          setStatus(app, `保存成功\n${JSON.stringify(data, null, 2)}`);
+        } catch (err) {
+          setStatus(app, `保存失败\n${err.message}`, true);
+        } finally {
+          setButtonBusy(submitBtn, false, "保存中...", "保存到收件箱");
+        }
+      });
+    </script>
+  </body>
+</html>
