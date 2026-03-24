@@ -12,7 +12,7 @@ interface DbConfig {
 
 interface Props {
   initialConfig?: Partial<DbConfig>;
-  onSaved: () => void;
+  onSaved: (cfg: DbConfig) => void;
 }
 
 export function SetupPage({ initialConfig, onSaved }: Props) {
@@ -64,7 +64,7 @@ export function SetupPage({ initialConfig, onSaved }: Props) {
     try {
       const result = await (window as any).desktop.saveDbConfig(cfg);
       if (result.ok) {
-        onSaved();
+        onSaved(cfg);
       } else {
         setError(`连接失败: ${result.error || "请检查数据库配置"}`);
       }

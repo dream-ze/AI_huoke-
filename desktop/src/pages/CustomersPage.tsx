@@ -1,8 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
-import { createCustomer, listCustomers } from "../lib/api";
+import { useSearchParams } from "react-router-dom";
+import { createCustomer, exportCustomersCsv, listCustomers } from "../lib/api";
 import { Customer } from "../types";
 
 export function CustomersPage() {
+  const [searchParams] = useSearchParams();
   const [items, setItems] = useState<Customer[]>([]);
   const [nickname, setNickname] = useState("");
   const [wechatId, setWechatId] = useState("");
@@ -10,6 +12,8 @@ export function CustomersPage() {
   const [tags, setTags] = useState("新线索");
   const [intention, setIntention] = useState("medium");
   const [message, setMessage] = useState("");
+  const focusCustomerId = Number(searchParams.get("focusCustomerId") || 0);
+  const fromLeadId = Number(searchParams.get("fromLeadId") || 0);
 
   async function fetchData() {
     const data = await listCustomers();
@@ -40,6 +44,21 @@ export function CustomersPage() {
       await fetchData();
     } catch (err: any) {
       setMessage(err?.response?.data?.detail || "录入失败");
+    }
+  }
+
+  async function handleExportCustomers() {
+    try {
+      const { blob } = await exportCustomersCsv();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "customers_export.csv";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setMessage("客户导出已开始");
+    } catch (err: any) {
+      setMessage(err?.response?.data?.detail || "客户导出失败");
     }
   }
 
@@ -97,6 +116,14 @@ export function CustomersPage() {
 
       <section className="card">
         <h3>客户列表</h3>
+        <div style={{ marginBottom: 10 }}>
+          <button className="ghost" type="button" onClick={handleExportCustomers}>导出客户CSV</button>
+        </div>
+        {focusCustomerId > 0 && (
+          <div className="muted" style={{ marginBottom: 10 }}>
+            已从线索 #{fromLeadId || "-"} 跳转，定位客户 #{focusCustomerId}
+          </div>
+        )}
         <table className="table">
           <thead>
             <tr>
@@ -111,7 +138,7 @@ export function CustomersPage() {
           </thead>
           <tbody>
             {items.map((item) => (
-              <tr key={item.id}>
+              <tr key={item.id} style={item.id === focusCustomerId ? { background: "#fff8e8" } : undefined}>
                 <td>{item.id}</td>
                 <td>{item.nickname}</td>
                 <td>{item.wechat_id || "-"}</td>

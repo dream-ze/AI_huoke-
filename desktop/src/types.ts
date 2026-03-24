@@ -38,6 +38,13 @@ export type AICallStatsResponse = {
   data: AICallStatItem[];
 };
 
+export type UserSummary = {
+  id: number;
+  username: string;
+  role: string;
+  is_active: boolean;
+};
+
 export type ContentAsset = {
   id: number;
   platform: string;
@@ -96,6 +103,78 @@ export type CollectStats = {
   by_category: Record<string, number>;
 };
 
+export type InboxItem = {
+  id: number;
+  platform: string;
+  source_url?: string;
+  content_type: string;
+  title: string;
+  content: string;
+  author?: string;
+  tags: string[];
+  metrics: Record<string, number>;
+  source_type?: string;
+  category?: string;
+  manual_note?: string;
+  heat_score: number;
+  is_viral: boolean;
+  status: "pending" | "analyzed" | "imported" | "discarded" | string;
+  promoted_content_id?: number;
+  promoted_insight_item_id?: number;
+  review_note?: string;
+  created_at: string;
+};
+
+export type InboxStats = {
+  total: number;
+  pending: number;
+  analyzed: number;
+  imported: number;
+  discarded: number;
+  by_platform: Record<string, number>;
+};
+
+export type PublishTask = {
+  id: number;
+  owner_id: number;
+  rewritten_content_id?: number;
+  publish_record_id?: number;
+  platform: string;
+  account_name: string;
+  task_title: string;
+  content_text: string;
+  status: string;
+  assigned_to?: number;
+  due_time?: string;
+  claimed_at?: string;
+  posted_at?: string;
+  closed_at?: string;
+  post_url?: string;
+  reject_reason?: string;
+  close_reason?: string;
+  views: number;
+  likes: number;
+  comments: number;
+  favorites: number;
+  shares: number;
+  private_messages: number;
+  wechat_adds: number;
+  leads: number;
+  valid_leads: number;
+  conversions: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PublishTaskStats = {
+  total: number;
+  pending: number;
+  claimed: number;
+  submitted: number;
+  rejected: number;
+  closed: number;
+};
+
 export type Customer = {
   id: number;
   nickname: string;
@@ -104,5 +183,24 @@ export type Customer = {
   tags: string[];
   intention_level: string;
   customer_status: string;
+  created_at: string;
+};
+
+export type LeadItem = {
+  id: number;
+  owner_id: number;
+  publish_task_id?: number;
+  customer_id?: number;
+  platform: string;
+  source: string;
+  title: string;
+  post_url?: string;
+  wechat_adds: number;
+  leads: number;
+  valid_leads: number;
+  conversions: number;
+  status: string;
+  intention_level: string;
+  note?: string;
   created_at: string;
 };

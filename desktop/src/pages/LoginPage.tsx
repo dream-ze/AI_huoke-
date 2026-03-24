@@ -1,10 +1,11 @@
 import { FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { login } from "../lib/api";
-import { setToken } from "../lib/auth";
+import { consumeRedirectPath, setToken } from "../lib/auth";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState("testuser");
   const [password, setPassword] = useState("password123");
   const [loading, setLoading] = useState(false);
@@ -17,7 +18,13 @@ export function LoginPage() {
     try {
       const data = await login(username, password);
       setToken(data.access_token);
-      navigate("/dashboard", { replace: true });
+      const stateFrom = (location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null)
+        ?.from;
+      const statePath = stateFrom
+        ? `${stateFrom.pathname || ""}${stateFrom.search || ""}${stateFrom.hash || ""}`
+        : "";
+      const fallbackPath = statePath || "/dashboard";
+      navigate(consumeRedirectPath(fallbackPath), { replace: true });
     } catch (err: any) {
       setError(err?.response?.data?.detail || "登录失败，请检查账号密码或后端服务状态");
     } finally {

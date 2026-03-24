@@ -1,14 +1,22 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { clearToken, isLoggedIn } from "./lib/auth";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import {
+  clearToken,
+  getLogoutEventName,
+  isLoggedIn,
+  saveRedirectPath,
+} from "./lib/auth";
 import { AppLayout } from "./components/AppLayout";
 import { LoginPage } from "./pages/LoginPage";
-import { DashboardPage } from "./pages/DashboardPage";
-import { ContentPage } from "./pages/ContentPage";
-import { AIPage } from "./pages/AIPage";
+import { DashboardPage } from "./pages/dashboard/DashboardPage";
+import { CollectCenterPage } from "./pages/collect-center/CollectCenterPage";
+import { InboxPage } from "./pages/inbox/InboxPage";
+import { MaterialsPage } from "./pages/materials/MaterialsPage";
+import { AIWorkbenchPage } from "./pages/ai-workbench/AIWorkbenchPage";
 import { CompliancePage } from "./pages/CompliancePage";
 import { CustomersPage } from "./pages/CustomersPage";
 import { PublishPage } from "./pages/PublishPage";
+import { LeadsPage } from "./pages/leads/LeadsPage";
 import { SetupPage } from "./pages/SetupPage";
 import { InsightPage } from "./pages/InsightPage";
 
@@ -17,9 +25,19 @@ const isElectron = typeof window !== "undefined" && !!(window as any).desktop?.i
 
 type AppState = "loading" | "setup" | "ready";
 
+function applyRuntimeApiBaseUrl(port?: string) {
+  if (typeof window === "undefined") return;
+  const validPort = Number(port || "8000");
+  const targetPort = Number.isFinite(validPort) && validPort > 0 ? validPort : 8000;
+  localStorage.setItem("zhk_api_base_url", `http://127.0.0.1:${targetPort}`);
+}
+
 function Protected({ children }: { children: JSX.Element }) {
+  const location = useLocation();
   if (!isLoggedIn()) {
-    return <Navigate to="/login" replace />;
+    const redirect = `${location.pathname}${location.search}${location.hash}`;
+    saveRedirectPath(redirect);
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
   return children;
 }
@@ -60,6 +78,7 @@ export default function App() {
       // 读取已保存的配置
       const cfg = await desktop.getDbConfig().catch(() => null);
       setInitConfig(cfg);
+      applyRuntimeApiBaseUrl(cfg?.BACKEND_PORT);
 
       // 检查后端是否已就绪
       const { running } = await desktop.checkBackend().catch(() => ({ running: false }));
@@ -74,6 +93,16 @@ export default function App() {
     initApp();
   }, []);
 
+  useEffect(() => {
+    const eventName = getLogoutEventName();
+    const onLogout = () => {
+      navigate("/login", { replace: true });
+    };
+
+    window.addEventListener(eventName, onLogout as EventListener);
+    return () => window.removeEventListener(eventName, onLogout as EventListener);
+  }, [navigate]);
+
   // 开发模式或非 Electron：直接跳入主 app
   if (appState === "loading") {
     return <LoadingScreen message="正在启动后端服务，请稍候..." />;
@@ -83,7 +112,10 @@ export default function App() {
     return (
       <SetupPage
         initialConfig={initConfig}
-        onSaved={() => setAppState("ready")}
+        onSaved={(cfg) => {
+          applyRuntimeApiBaseUrl(cfg?.BACKEND_PORT);
+          setAppState("ready");
+        }}
       />
     );
   }
@@ -97,17 +129,20 @@ export default function App() {
           <Protected>
             <AppLayout
               onLogout={() => {
-                clearToken();
+                clearToken("manual");
                 navigate("/login");
               }}
             >
               <Routes>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/content" element={<ContentPage />} />
+                <Route path="/collect-center" element={<CollectCenterPage />} />
+                <Route path="/inbox" element={<InboxPage />} />
+                <Route path="/materials" element={<MaterialsPage />} />
                 <Route path="/insight" element={<InsightPage />} />
-                <Route path="/ai" element={<AIPage />} />
+                <Route path="/ai-workbench" element={<AIWorkbenchPage />} />
                 <Route path="/compliance" element={<CompliancePage />} />
+                <Route path="/leads" element={<LeadsPage />} />
                 <Route path="/customers" element={<CustomersPage />} />
                 <Route path="/publish" element={<PublishPage />} />
               </Routes>
