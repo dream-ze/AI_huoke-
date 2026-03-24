@@ -7,7 +7,9 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
 
 # Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Use pbkdf2_sha256 as default to avoid bcrypt backend issues in some Windows environments.
+# Keep bcrypt in the context for backward compatibility when verifying historical hashes.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
 # Bearer scheme
 security = HTTPBearer()

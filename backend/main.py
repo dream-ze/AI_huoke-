@@ -8,23 +8,15 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.database import Base, engine
+from app.api.router import register_routers
 
 # Resolve the frontend build directory (desktop/dist)
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "desktop" / "dist"
-from app.api.endpoints import (
-    auth_router,
-    content_router,
-    compliance_router,
-    customer_router,
-    publish_router,
-    dashboard_router,
-    ai_router,
-    collect_router,
-    insight_router,
-)
+_FRONTEND_INDEX = _FRONTEND_DIR / "index.html"
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
+# Create database tables only when explicitly enabled.
+if settings.DB_AUTO_CREATE_TABLES:
+    Base.metadata.create_all(bind=engine)
 
 # Create FastAPI app
 app = FastAPI(
@@ -48,15 +40,7 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(auth_router)
-app.include_router(content_router)
-app.include_router(compliance_router)
-app.include_router(customer_router)
-app.include_router(publish_router)
-app.include_router(dashboard_router)
-app.include_router(ai_router)
-app.include_router(collect_router)
-app.include_router(insight_router)
+register_routers(app)
 
 
 @app.get("/health")
@@ -66,7 +50,7 @@ def health_check():
 
 
 # ── Serve frontend static files ─────────────────────────────────
-if _FRONTEND_DIR.is_dir():
+if _FRONTEND_DIR.is_dir() and _FRONTEND_INDEX.is_file():
     # Mount assets with cache-friendly headers
     _assets_dir = _FRONTEND_DIR / "assets"
     if _assets_dir.is_dir():
@@ -75,15 +59,18 @@ if _FRONTEND_DIR.is_dir():
     @app.get("/")
     async def serve_index():
         """Serve the SPA index.html"""
-        return FileResponse(str(_FRONTEND_DIR / "index.html"), media_type="text/html")
+        return FileResponse(str(_FRONTEND_INDEX), media_type="text/html")
 
     @app.get("/{full_path:path}")
     async def serve_spa(request: Request, full_path: str):
-        """SPA fallback: serve static file if exists, otherwise index.html"""
+        """SPA fallback: serve static file if exists, otherwise index.html.
+        Skip /api/ paths so missing API routes return proper 404."""
+        if full_path.startswith("api/"):
+            return HTMLResponse(status_code=404, content='{"detail":"Not Found"}')
         file_path = _FRONTEND_DIR / full_path
         if file_path.is_file():
             return FileResponse(str(file_path))
-        return FileResponse(str(_FRONTEND_DIR / "index.html"), media_type="text/html")
+        return FileResponse(str(_FRONTEND_INDEX), media_type="text/html")
 else:
     @app.get("/")
     def root():

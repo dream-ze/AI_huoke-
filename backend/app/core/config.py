@@ -1,6 +1,6 @@
 from typing import List
 from pydantic import field_validator, model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 INSECURE_SECRET_KEYS = {
@@ -13,6 +13,12 @@ INSECURE_SECRET_KEYS = {
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
     # Project
     API_TITLE: str = "智获客 API"
     API_VERSION: str = "0.1.0"
@@ -25,11 +31,19 @@ class Settings(BaseSettings):
     DATABASE_USER: str = "postgres"
     DATABASE_PASSWORD: str = "password"
     DATABASE_NAME: str = "zhihuokeke"
+    DB_AUTO_CREATE_TABLES: bool = False
 
     # JWT
     SECRET_KEY: str = "CHANGE_ME_SECRET_KEY_MIN_32_CHARS"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    MOBILE_H5_TICKET_EXPIRE_MINUTES: int = 10
+
+    # 企业微信 OAuth（可选；不配置时 OAuth 入口自动隐藏，降级为短票据）
+    WECOM_CORP_ID: str = ""
+    WECOM_AGENT_ID: str = ""
+    WECOM_AGENT_SECRET: str = ""
+    WECOM_OAUTH_SCOPE: str = "snsapi_base"  # snsapi_base | snsapi_privateinfo
 
     # CORS
     CORS_ORIGINS: List[str] = [
@@ -65,6 +79,8 @@ class Settings(BaseSettings):
     ARK_TIMEOUT_SECONDS: int = 60
     ARK_VISION_RATE_LIMIT_PER_MINUTE: int = 20
     ARK_VISION_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    INSIGHT_BATCH_ANALYZE_RATE_LIMIT_PER_MINUTE: int = 6
+    INSIGHT_BATCH_ANALYZE_RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     # Redis (distributed rate limiting)
     USE_REDIS_RATE_LIMIT: bool = True
@@ -75,9 +91,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE: int = 52428800  # 50MB
     UPLOAD_DIR: str = "./uploads"
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-
+    # WeCom
+    WECOM_WEBHOOK_URL: str = ""
 
 settings = Settings()

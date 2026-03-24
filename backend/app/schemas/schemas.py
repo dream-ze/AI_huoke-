@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 
 # ===== Auth Schemas =====
@@ -20,8 +21,19 @@ class UserResponse(BaseModel):
     id: int
     username: str
     email: str
+    role: str = "operator"
     is_active: bool
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserSummaryResponse(BaseModel):
+    id: int
+    username: str
+    role: str = "operator"
+    is_active: bool
 
     class Config:
         from_attributes = True
@@ -31,6 +43,29 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+
+class MobileH5TicketCreateRequest(BaseModel):
+    redirect_path: Optional[str] = None
+    api_base_url: Optional[str] = None
+
+
+class MobileH5TicketResponse(BaseModel):
+    ticket: str
+    expires_in: int
+    auth_url: Optional[str] = None
+
+
+class WecomOAuthConfigResponse(BaseModel):
+    """返回给前端的企业微信 OAuth 公开配置（不含 secret）"""
+    corp_id: str
+    agent_id: str
+    oauth_enabled: bool
+
+
+class WecomBindRequest(BaseModel):
+    """管理员为当前登录用户绑定企业微信 userid"""
+    wecom_userid: str = Field(min_length=1, max_length=64)
 
 
 # ===== Content Asset Schemas =====
@@ -165,6 +200,87 @@ class CustomerResponse(BaseModel):
         from_attributes = True
 
 
+class LeadCreate(BaseModel):
+    platform: str
+    title: str
+    source: str = "manual"
+    post_url: Optional[str] = None
+    wechat_adds: int = 0
+    leads: int = 0
+    valid_leads: int = 0
+    conversions: int = 0
+    status: str = "new"
+    intention_level: str = "medium"
+    note: Optional[str] = None
+
+
+class LeadStatusUpdate(BaseModel):
+    status: str
+
+
+class LeadAssignRequest(BaseModel):
+    owner_id: Optional[int] = None
+
+
+class LeadConvertCustomerRequest(BaseModel):
+    nickname: Optional[str] = None
+    wechat_id: Optional[str] = None
+    phone: Optional[str] = None
+    intention_level: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    inquiry_content: Optional[str] = None
+
+
+class LeadResponse(BaseModel):
+    id: int
+    owner_id: int
+    publish_task_id: Optional[int]
+    platform: str
+    source: str
+    title: str
+    post_url: Optional[str]
+    wechat_adds: int
+    leads: int
+    valid_leads: int
+    conversions: int
+    status: str
+    intention_level: str
+    note: Optional[str]
+    customer_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LeadTraceResponse(LeadResponse):
+    customer_id: Optional[int] = None
+    publish_record_id: Optional[int] = None
+
+
+class InsightAnalyzeBatchTaskResponse(BaseModel):
+    id: int
+    platform: str
+    collect_mode: str
+    target_value: Optional[str]
+    status: str
+    result_count: int
+    notes: Optional[str]
+    created_at: datetime
+    run_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class SystemVersionResponse(BaseModel):
+    api_version: str
+    app_name: str
+    release_channel: str
+    min_desktop_version: Optional[str] = None
+    latest_desktop_version: Optional[str] = None
+
+
 # ===== Publish Record Schemas =====
 class PublishRecordCreate(BaseModel):
     rewritten_content_id: int
@@ -201,6 +317,101 @@ class PublishRecordResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PublishTaskCreate(BaseModel):
+    rewritten_content_id: Optional[int] = None
+    platform: str
+    account_name: str
+    task_title: str
+    content_text: str
+    assigned_to: Optional[int] = None
+    due_time: Optional[datetime] = None
+
+
+class PublishTaskSubmit(BaseModel):
+    post_url: Optional[str] = None
+    posted_at: Optional[datetime] = None
+    views: Optional[int] = None
+    likes: Optional[int] = None
+    comments: Optional[int] = None
+    favorites: Optional[int] = None
+    shares: Optional[int] = None
+    private_messages: Optional[int] = None
+    wechat_adds: Optional[int] = None
+    leads: Optional[int] = None
+    valid_leads: Optional[int] = None
+    conversions: Optional[int] = None
+    note: Optional[str] = None
+
+
+class PublishTaskActionRequest(BaseModel):
+    note: Optional[str] = None
+
+
+class PublishTaskAssignRequest(BaseModel):
+    assigned_to: int = Field(..., ge=1)
+    note: Optional[str] = None
+
+
+class PublishTaskFeedbackResponse(BaseModel):
+    id: int
+    action: str
+    note: Optional[str]
+    payload: Dict[str, Any]
+    created_by: Optional[int]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PublishTaskResponse(BaseModel):
+    id: int
+    owner_id: int
+    rewritten_content_id: Optional[int]
+    publish_record_id: Optional[int]
+    platform: str
+    account_name: str
+    task_title: str
+    content_text: str
+    status: str
+    assigned_to: Optional[int]
+    due_time: Optional[datetime]
+    claimed_at: Optional[datetime]
+    posted_at: Optional[datetime]
+    closed_at: Optional[datetime]
+    post_url: Optional[str]
+    reject_reason: Optional[str]
+    close_reason: Optional[str]
+    views: int
+    likes: int
+    comments: int
+    favorites: int
+    shares: int
+    private_messages: int
+    wechat_adds: int
+    leads: int
+    valid_leads: int
+    conversions: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PublishTaskDetailResponse(PublishTaskResponse):
+    feedbacks: List[PublishTaskFeedbackResponse] = Field(default_factory=list)
+
+
+class PublishTaskStatsResponse(BaseModel):
+    total: int
+    pending: int
+    claimed: int
+    submitted: int
+    rejected: int
+    closed: int
 
 
 # ===== Dashboard Schemas =====
@@ -289,6 +500,8 @@ class PluginContentResponse(BaseModel):
     url: str
     heat_score: float
     is_viral: bool
+    synced_content_asset_id: Optional[int] = None
+    synced_insight_item_id: Optional[int] = None
     created_at: datetime
 
     class Config:
@@ -369,6 +582,160 @@ class ContentAssetDetailResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CollectIntakeRequest(BaseModel):
+    """Unified intake for multi-channel acquisition into inbox."""
+
+    platform: str
+    source_url: Optional[str] = None
+    content_type: str = "post"
+    title: str
+    content: str
+    author: Optional[str] = None
+    publish_time: Optional[datetime] = None
+    tags: List[str] = Field(default_factory=list)
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    manual_note: Optional[str] = None
+    source_type: Literal[
+        "link",
+        "paste",
+        "import",
+        "plugin",
+        "mobile_share",
+        "screenshot_ocr",
+        "wechat_forward",
+    ] = "paste"
+    category: Optional[str] = None
+    raw_payload: Dict[str, Any] = Field(default_factory=dict)
+    client_request_id: Optional[str] = Field(default=None, min_length=8, max_length=128)
+
+
+class CollectIntakeResponse(BaseModel):
+    inbox_id: int
+    status: str
+    source_type: str
+    dedupe_hit: bool = False
+    duplicate_ids: List[int] = Field(default_factory=list)
+    message: str
+
+
+class CollectOcrResponse(BaseModel):
+    extracted_text: str
+    engine: str
+    warnings: List[str] = Field(default_factory=list)
+    inbox_id: Optional[int] = None
+    dedupe_hit: bool = False
+    message: str
+
+
+class InboxCreateRequest(BaseModel):
+    platform: str
+    source_url: Optional[str] = None
+    content_type: str = "post"
+    title: str
+    content: str
+    author: Optional[str] = None
+    publish_time: Optional[datetime] = None
+    tags: List[str] = Field(default_factory=list)
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    manual_note: Optional[str] = None
+    source_type: str = "paste"
+    category: Optional[str] = None
+
+
+class InboxUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    author: Optional[str] = None
+    tags: Optional[List[str]] = None
+    category: Optional[str] = None
+    manual_note: Optional[str] = None
+    review_note: Optional[str] = None
+    assignee_user_id: Optional[int] = None
+
+
+class InboxResponse(BaseModel):
+    id: int
+    platform: str
+    source_url: Optional[str]
+    content_type: str
+    title: str
+    content: str
+    author: Optional[str]
+    publish_time: Optional[datetime]
+    tags: List[str]
+    metrics: Dict[str, Any]
+    source_type: Optional[str]
+    category: Optional[str]
+    manual_note: Optional[str]
+    heat_score: float
+    is_viral: bool
+    status: str
+    assigned_to: Optional[int]
+    assigned_at: Optional[datetime]
+    promoted_content_id: Optional[int]
+    promoted_insight_item_id: Optional[int]
+    review_note: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class InboxPromoteResponse(BaseModel):
+    inbox_id: int
+    status: str
+    content_asset_id: int
+    insight_item_id: int
+
+
+class InboxStatsResponse(BaseModel):
+    total: int
+    pending: int
+    analyzed: int
+    imported: int
+    discarded: int
+    by_platform: Dict[str, int]
+
+
+class InboxBatchAssignRequest(BaseModel):
+    inbox_ids: List[int] = Field(min_length=1, max_length=200)
+    assignee_user_id: int = Field(..., ge=1)
+    note_template: Optional[str] = None
+
+
+class InboxBatchDiscardRequest(BaseModel):
+    inbox_ids: List[int] = Field(min_length=1, max_length=200)
+    review_note: str = Field(..., min_length=4, max_length=500)
+
+
+class InboxBatchPromoteRequest(BaseModel):
+    inbox_ids: List[int] = Field(min_length=1, max_length=200)
+
+
+class InboxAutoMergeRequest(BaseModel):
+    keep_strategy: Literal["latest", "earliest"] = "latest"
+    dry_run: bool = True
+
+
+class InboxBatchActionResponse(BaseModel):
+    total: int
+    success: int
+    failed: int
+    details: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class InboxDedupeGroup(BaseModel):
+    key: str
+    count: int
+    inbox_ids: List[int] = Field(default_factory=list)
+    titles: List[str] = Field(default_factory=list)
+
+
+class InboxDedupePreviewResponse(BaseModel):
+    duplicate_groups: List[InboxDedupeGroup] = Field(default_factory=list)
+    total_duplicates: int
 
 
 # ===== 爆款内容采集分析中心 Schemas =====

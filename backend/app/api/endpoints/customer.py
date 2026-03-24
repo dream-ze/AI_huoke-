@@ -1,6 +1,11 @@
+import csv
+import io
+
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.core.database import get_db
+from app.core.permissions import require_roles
 from app.core.security import verify_token
 from app.schemas import (
     CustomerCreate, 
@@ -98,3 +103,45 @@ def get_pending_follow_customers(
     """Get customers pending follow-up"""
     customers = CustomerService.get_pending_follow_customers(db, current_user["user_id"], limit)
     return customers
+
+
+@router.get("/export/csv")
+def export_customers_csv(
+    status: str = Query(None),
+    current_user: dict = Depends(require_roles("admin", "operator")),
+    db: Session = Depends(get_db),
+):
+    """Export current user's customers as CSV."""
+    customers = CustomerService.get_user_customers(db, current_user["user_id"], status, 0, 5000)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "id",
+        "nickname",
+        "wechat_id",
+        "source_platform",
+        "tags",
+        "intention_level",
+        "customer_status",
+        "created_at",
+    ])
+
+    for item in customers:
+        writer.writerow([
+            item.id,
+            item.nickname,
+            item.wechat_id or "",
+            item.source_platform,
+            "|".join(item.tags or []),
+            item.intention_level,
+            item.customer_status,
+            item.created_at.isoformat() if item.created_at else "",
+        ])
+
+    filename = "customers_export.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

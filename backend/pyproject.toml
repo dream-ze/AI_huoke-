@@ -23,8 +23,11 @@ httpx = "^0.25.1"
 pytest = "^7.4.3"
 pytest-asyncio = "^0.21.1"
 python-dotenv = "^1.0.0"
+email-validator = "^2.1.0"
 ollama = "^0.0.55"
 redis = "^5.0.1"
+pillow = "^10.0.0"
+pytesseract = "^0.3.10"
 
 [tool.poetry.dev-dependencies]
 black = "^23.12.0"

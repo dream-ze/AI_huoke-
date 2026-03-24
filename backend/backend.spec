@@ -16,6 +16,10 @@ a = Analysis(
     datas=[
         # 包含 .env 示例文件（如存在）
         (".env.example", "."),
+        # AI prompt templates
+        ("app/ai/prompts", "app/ai/prompts"),
+        # 合规规则（如存在）
+        ("app/rules", "app/rules"),
     ],
     hiddenimports=[
         # FastAPI / Starlette
@@ -75,11 +79,29 @@ a = Analysis(
         "app",
         "app.api",
         "app.api.endpoints",
+        "app.api.v1",
+        "app.api.v1.endpoints",
         "app.core",
         "app.models",
         "app.schemas",
         "app.services",
+        "app.domains",
+        "app.domains.acquisition",
+        "app.domains.ai_workbench",
+        "app.integrations",
+        "app.integrations.ark",
+        "app.integrations.ocr",
+        "app.integrations.storage",
+        "app.integrations.wecom",
+        "app.ai",
+        "app.ai.agents",
+        "app.ai.prompts",
+        "app.ai.rag",
+        "app.rules",
+        "app.repositories",
+        "app.tasks",
         "app.utils",
+        "app.workers",
         "main",
     ],
     hookspath=[],

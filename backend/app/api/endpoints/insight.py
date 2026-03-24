@@ -21,15 +21,19 @@ POST   /api/insight/retrieve             检索召回（给生成模块）
 GET    /api/insight/stats                统计数据
 """
 from typing import List, Optional
+from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.rate_limit import DistributedRateLimiter
 from app.core.security import verify_token
 from app.models.models import InsightAuthorProfile, InsightContentItem
 from app.schemas.schemas import (
     InsightAnalyzeResponse,
+    InsightAnalyzeBatchTaskResponse,
     InsightAuthorResponse,
     InsightBatchImport,
     InsightContentImport,
@@ -39,10 +43,19 @@ from app.schemas.schemas import (
     InsightTopicCreate,
     InsightTopicResponse,
 )
-from app.services.ai_service import AIService
+from app.models import InsightCollectTask
+from app.domains.ai_workbench.ai_service import AIService
 from app.services.insight_service import InsightService
 
 router = APIRouter(prefix="/api/insight", tags=["insight"])
+
+insight_batch_limiter = DistributedRateLimiter(
+    limit=settings.INSIGHT_BATCH_ANALYZE_RATE_LIMIT_PER_MINUTE,
+    window_seconds=settings.INSIGHT_BATCH_ANALYZE_RATE_LIMIT_WINDOW_SECONDS,
+    use_redis=settings.USE_REDIS_RATE_LIMIT,
+    redis_url=settings.REDIS_URL,
+    key_prefix=settings.RATE_LIMIT_KEY_PREFIX,
+)
 
 
 # ─────────────────────────────────────────────
@@ -226,6 +239,8 @@ async def analyze_batch(
     db: Session = Depends(get_db),
 ):
     """批量AI分析（异步后台）– 最多50条"""
+    await insight_batch_limiter.check(f"insight_batch:{current_user['user_id']}")
+
     if len(item_ids) > 50:
         raise HTTPException(status_code=400, detail="单次最多批量分析50条")
 
@@ -241,22 +256,90 @@ async def analyze_batch(
     found_ids = [i.id for i in items]
     not_found = [x for x in item_ids if x not in found_ids]
 
+    task = InsightCollectTask(
+        owner_id=current_user["user_id"],
+        platform="mixed",
+        collect_mode="analyze_batch",
+        target_value=",".join(str(i) for i in found_ids[:100]),
+        status="running",
+        result_count=0,
+        notes=f"queued={len(found_ids)}, not_found={len(not_found)}",
+        run_at=datetime.utcnow(),
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
     async def _run_batch():
         ai_service = AIService(db=db)
+        ok_count = 0
+        fail_count = 0
         for item in items:
             try:
                 await InsightService.analyze_with_ai(
                     db, item, ai_service, user_id=current_user["user_id"]
                 )
-            except Exception as e:
-                pass  # 单条失败不中断批量
+                ok_count += 1
+            except Exception:
+                fail_count += 1  # 单条失败不中断批量
+
+        task.status = "done" if fail_count == 0 else "failed"
+        task.result_count = ok_count
+        task.notes = f"ok={ok_count}, failed={fail_count}, queued={len(found_ids)}"
+        db.commit()
+        return {"ok": ok_count, "failed": fail_count, "task_id": task.id}
 
     background_tasks.add_task(_run_batch)
     return {
+        "task_id": task.id,
         "queued": len(found_ids),
         "not_found": not_found,
+        "rate_limit": {
+            "limit": settings.INSIGHT_BATCH_ANALYZE_RATE_LIMIT_PER_MINUTE,
+            "window_seconds": settings.INSIGHT_BATCH_ANALYZE_RATE_LIMIT_WINDOW_SECONDS,
+        },
         "message": f"已将 {len(found_ids)} 条加入后台分析队列",
     }
+
+
+@router.get("/analyze/tasks", response_model=List[InsightAnalyzeBatchTaskResponse])
+def list_analyze_batch_tasks(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=200),
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(InsightCollectTask)
+        .filter(
+            InsightCollectTask.owner_id == current_user["user_id"],
+            InsightCollectTask.collect_mode == "analyze_batch",
+        )
+        .order_by(InsightCollectTask.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/analyze/tasks/{task_id}", response_model=InsightAnalyzeBatchTaskResponse)
+def get_analyze_batch_task(
+    task_id: int,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    task = (
+        db.query(InsightCollectTask)
+        .filter(
+            InsightCollectTask.id == task_id,
+            InsightCollectTask.owner_id == current_user["user_id"],
+            InsightCollectTask.collect_mode == "analyze_batch",
+        )
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Analyze batch task not found")
+    return task
 
 
 # ─────────────────────────────────────────────

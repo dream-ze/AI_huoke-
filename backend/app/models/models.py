@@ -13,12 +13,15 @@ class User(Base):
     username = Column(String(100), unique=True, index=True, nullable=False)
     email = Column(String(100), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
+    role = Column(String(32), default="operator", nullable=False)
     is_active = Column(Boolean, default=True)
+    wecom_userid = Column(String(64), unique=True, index=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     contents = relationship("ContentAsset", back_populates="owner")
+    leads = relationship("Lead", back_populates="owner")
     customers = relationship("Customer", back_populates="owner")
     ark_call_logs = relationship("ArkCallLog", back_populates="user")
 
@@ -125,6 +128,36 @@ class CustomerStatus(str, enum.Enum):
     lost = "lost"
 
 
+class Lead(Base):
+    """Lead pool entity generated from publish tasks and manual operations."""
+    __tablename__ = "leads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    publish_task_id = Column(Integer, ForeignKey("publish_tasks.id"), nullable=True, index=True)
+
+    platform = Column(String(32), nullable=False)
+    source = Column(String(32), default="publish_task")
+    title = Column(String(255), nullable=False)
+    post_url = Column(String(500), nullable=True)
+
+    wechat_adds = Column(Integer, default=0)
+    leads = Column(Integer, default=0)
+    valid_leads = Column(Integer, default=0)
+    conversions = Column(Integer, default=0)
+
+    status = Column(String(32), default="new")  # new, contacted, qualified, converted, lost
+    intention_level = Column(String(16), default="medium")
+    note = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User", back_populates="leads")
+    publish_task = relationship("PublishTask", foreign_keys=[publish_task_id])
+    customer = relationship("Customer", back_populates="lead", uselist=False)
+
+
 class Customer(Base):
     """Customer contact information"""
     __tablename__ = "customers"
@@ -138,6 +171,7 @@ class Customer(Base):
     
     source_platform = Column(String(32), nullable=False)
     source_content_id = Column(Integer, nullable=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True, unique=True)
     
     tags = Column(JSON, default=list)
     intention_level = Column(String(16), default="medium")  # low, medium, high
@@ -151,6 +185,7 @@ class Customer(Base):
 
     # Relationships
     owner = relationship("User", back_populates="customers")
+    lead = relationship("Lead", back_populates="customer")
 
 
 class PublishRecord(Base):
@@ -186,6 +221,65 @@ class PublishRecord(Base):
     content = relationship("RewrittenContent", back_populates="publish_records")
 
 
+class PublishTask(Base):
+    """Publish task workflow entity."""
+    __tablename__ = "publish_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    rewritten_content_id = Column(Integer, ForeignKey("rewritten_contents.id"), nullable=True)
+    publish_record_id = Column(Integer, ForeignKey("publish_records.id"), nullable=True)
+
+    platform = Column(String(32), nullable=False)
+    account_name = Column(String(128), nullable=False)
+    task_title = Column(String(255), nullable=False)
+    content_text = Column(Text, nullable=False)
+
+    status = Column(String(32), default="pending")  # pending, claimed, submitted, rejected, closed
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
+    due_time = Column(DateTime, nullable=True)
+    claimed_at = Column(DateTime, nullable=True)
+    posted_at = Column(DateTime, nullable=True)
+    closed_at = Column(DateTime, nullable=True)
+
+    post_url = Column(String(500), nullable=True)
+    reject_reason = Column(Text, nullable=True)
+    close_reason = Column(Text, nullable=True)
+
+    views = Column(Integer, default=0)
+    likes = Column(Integer, default=0)
+    comments = Column(Integer, default=0)
+    favorites = Column(Integer, default=0)
+    shares = Column(Integer, default=0)
+    private_messages = Column(Integer, default=0)
+    wechat_adds = Column(Integer, default=0)
+    leads = Column(Integer, default=0)
+    valid_leads = Column(Integer, default=0)
+    conversions = Column(Integer, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    rewritten_content = relationship("RewrittenContent", foreign_keys=[rewritten_content_id])
+    publish_record = relationship("PublishRecord", foreign_keys=[publish_record_id])
+    feedbacks = relationship("PublishTaskFeedback", back_populates="task", cascade="all,delete-orphan")
+
+
+class PublishTaskFeedback(Base):
+    """Publish task action log and feedback."""
+    __tablename__ = "publish_task_feedbacks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("publish_tasks.id"), nullable=False, index=True)
+    action = Column(String(32), nullable=False)  # create, claim, submit, reject, close
+    note = Column(Text, nullable=True)
+    payload = Column(JSON, default=dict)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    task = relationship("PublishTask", back_populates="feedbacks")
+
+
 class BrowserPluginCollection(Base):
     """Content collected via browser plugin"""
     __tablename__ = "plugin_collections"
@@ -207,6 +301,45 @@ class BrowserPluginCollection(Base):
     is_viral = Column(Boolean, default=False)
     
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class InboxItem(Base):
+    """Collected content waiting in inbox before being promoted to material library."""
+    __tablename__ = "inbox_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    platform = Column(String(32), nullable=False)
+    source_url = Column(String(500), nullable=True)
+    content_type = Column(String(32), nullable=False, default="post")
+
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    author = Column(String(100), nullable=True)
+    publish_time = Column(DateTime, nullable=True)
+
+    tags = Column(JSON, default=list)
+    metrics = Column(JSON, default=dict)
+    source_type = Column(String(32), default="paste")
+    category = Column(String(64), nullable=True)
+    manual_note = Column(Text, nullable=True)
+
+    heat_score = Column(Float, default=0.0)
+    is_viral = Column(Boolean, default=False)
+    status = Column(String(32), default="pending")
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    assigned_at = Column(DateTime, nullable=True)
+    promoted_content_id = Column(Integer, ForeignKey("content_assets.id"), nullable=True)
+    promoted_insight_item_id = Column(Integer, ForeignKey("insight_content_items.id"), nullable=True)
+    review_note = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User", foreign_keys=[owner_id])
+    assignee = relationship("User", foreign_keys=[assigned_to])
+    promoted_content = relationship("ContentAsset", foreign_keys=[promoted_content_id])
+    promoted_insight_item = relationship("InsightContentItem", foreign_keys=[promoted_insight_item_id])
 
 
 # ─────────────────────────────────────────────────────────────

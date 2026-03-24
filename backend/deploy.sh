@@ -59,6 +59,14 @@ fi
 sed -i 's/\r//' entrypoint.sh
 chmod +x entrypoint.sh
 
+# ── 释放 8000 端口占用（避免宿主机残留 python 进程抢占）────
+PORT_8000_PID=$(ss -lntp 2>/dev/null | awk '/:8000/{print $NF}' | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | head -n1)
+if [ -n "$PORT_8000_PID" ]; then
+    echo "[WARN] 检测到 8000 端口占用，尝试释放（PID=$PORT_8000_PID）..."
+    kill -9 "$PORT_8000_PID" 2>/dev/null || true
+    sleep 1
+fi
+
 # ── 启动服务 ────────────────────────────────────────────
 echo ""
 echo "[1/3] 停止旧容器..."
@@ -68,14 +76,22 @@ echo "[2/3] 构建镜像并启动..."
 docker compose -f docker-compose.prod.yml up -d --build
 
 echo "[3/3] 等待后端就绪..."
+READY=0
 for i in $(seq 1 30); do
     if curl -sf http://localhost:8000/health >/dev/null 2>&1; then
         echo "[OK] 后端已启动！"
+        READY=1
         break
     fi
     echo "  等待中... ($i/30)"
     sleep 3
 done
+
+if [ "$READY" -ne 1 ]; then
+    echo "[ERROR] 后端健康检查超时，输出最近日志："
+    docker compose -f docker-compose.prod.yml logs --tail 120 backend || true
+    exit 1
+fi
 
 # ── 拉取 AI 模型（后台异步）──────────────────────────────
 echo ""

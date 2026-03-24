@@ -2,16 +2,10 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    curl \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies via requirements.txt (faster than poetry in container)
+# Install Python dependencies via requirements.txt.
+# Use a China mirror to speed up downloads on domestic networks.
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # Copy application code
 COPY . .

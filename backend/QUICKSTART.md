@@ -40,11 +40,32 @@ docker run -d --name postgres \
 # 3. 初始化数据库
 python init_db.py
 
+# 3.1（推荐）执行数据库迁移
+alembic upgrade head
+
 # 4. 创建测试用户
 python create_test_user.py
 
 # 5. 启动应用
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+## 数据库迁移常用命令
+
+在 `backend/` 目录执行：
+
+```bash
+# 查看当前版本
+alembic current
+
+# 升级到最新
+alembic upgrade head
+
+# 回滚一个版本
+alembic downgrade -1
+
+# 查看历史
+alembic history --verbose
 ```
 
 ## 📁 项目结构

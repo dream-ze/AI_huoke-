@@ -21,8 +21,18 @@ done
 echo "PostgreSQL is ready!"
 
 # ── 初始化数据库表（幂等）────────────────────────────────────────
-echo "Initializing database tables..."
-python3 init_db.py
+echo "Running Alembic migrations..."
+if python3 -c "import alembic" 2>/dev/null; then
+  if alembic upgrade head; then
+    echo "Alembic migrations applied!"
+  else
+    echo "[WARN] Alembic migrations failed, falling back to create_all..."
+    python3 init_db.py
+  fi
+else
+  echo "[WARN] Alembic not installed, falling back to create_all..."
+  python3 init_db.py
+fi
 
 # ── 可选：创建测试用户（生产默认关闭）─────────────────────────────
 if [ "${ENABLE_BOOTSTRAP_TEST_USER:-False}" = "True" ]; then

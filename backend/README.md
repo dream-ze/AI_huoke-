@@ -47,6 +47,37 @@ cp .env.example .env
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+## 数据库迁移（Alembic）
+
+已补齐最小 Alembic 骨架：
+- `alembic.ini`
+- `alembic/env.py`
+- `alembic/script.py.mako`
+- `alembic/versions/*.py`
+
+在 `backend/` 目录执行：
+
+```bash
+# 查看当前版本
+alembic current
+
+# 升级到最新版本
+alembic upgrade head
+
+# 回滚 1 个版本
+alembic downgrade -1
+
+# 回滚到指定版本
+alembic downgrade 20260323_01
+
+# 查看迁移历史
+alembic history --verbose
+```
+
+说明：
+- Alembic 优先使用环境变量 `DATABASE_URL`。
+- 若未配置，则回退到 `alembic.ini` 里的 `sqlalchemy.url`。
+
 ## API 文档
 
 服务运行后访问：
