@@ -562,6 +562,7 @@ class InsightService:
         """
         给文案生成模块提供结构化参考特征。
         只返回分析结论，不返回原文，防止直接抄写。
+        增强版：引入时效性权重和质量评分综合排序。
         """
         q = (
             db.query(InsightContentItem)
@@ -581,20 +582,39 @@ class InsightService:
             for tag in audience_tags[:3]:
                 q = q.filter(InsightContentItem.audience_tags.cast(str).ilike(f"%{tag}%"))
 
-        items = q.order_by(desc(InsightContentItem.engagement_score)).limit(limit * 3).all()
+        # 拉取更多候选（3x），然后在 Python 层做综合排序
+        candidates = q.order_by(desc(InsightContentItem.engagement_score)).limit(limit * 6).all()
 
-        if not items:
+        if not candidates:
             # 降级：不限平台
-            items = (
+            candidates = (
                 db.query(InsightContentItem)
                 .filter(
                     InsightContentItem.owner_id == owner_id,
                     InsightContentItem.ai_analyzed == True,
                 )
                 .order_by(desc(InsightContentItem.engagement_score))
-                .limit(limit)
+                .limit(limit * 2)
                 .all()
             )
+
+        # ── 综合评分排序：互动分 × 时效权重 ──────────────
+        now = datetime.utcnow()
+
+        def _composite_score(item: InsightContentItem) -> float:
+            eng = float(item.engagement_score or 0)
+            # 时效权重：30天内满分，之后线性衰减至90天归零
+            age_days = 0
+            collect_time = item.collect_time
+            if collect_time is not None:
+                if collect_time.tzinfo is not None:
+                    collect_time = collect_time.replace(tzinfo=None)
+                age_days = max((now - collect_time).days, 0)
+            recency_weight = max(1.0 - age_days / 90.0, 0.1)
+            quality_weight = 1.2 if item.is_hot else 1.0
+            return eng * recency_weight * quality_weight
+
+        items = sorted(candidates, key=_composite_score, reverse=True)[:limit * 3]
 
         title_examples = list({i.title for i in items if i.title})[:limit]
         structure_examples = list({i.structure_type for i in items if i.structure_type})[:5]
@@ -608,7 +628,7 @@ class InsightService:
             if len(pain_examples) >= 10:
                 break
 
-        # 风格汇总
+        # 风格汇总（按频次排序）
         style_counts: Dict[str, int] = {}
         for i in items:
             if i.tone_style:
@@ -616,6 +636,13 @@ class InsightService:
         style_summary = "、".join(
             f"{k}({v}篇)" for k, v in sorted(style_counts.items(), key=lambda x: -x[1])
         ) if style_counts else "暂无风格数据"
+
+        # 质量摘要：爆款率
+        hot_count = sum(1 for i in items if i.is_hot)
+        quality_note = (
+            f"参考素材中有 {hot_count}/{len(items)} 篇爆款，互动质量{'较高' if hot_count >= 2 else '一般'}"
+            if items else "暂无质量数据"
+        )
 
         # 风险提醒
         topic_obj = None
@@ -633,6 +660,7 @@ class InsightService:
             "cta_examples": cta_examples,
             "pain_point_examples": pain_examples[:10],
             "style_summary": style_summary,
+            "quality_note": quality_note,
             "risk_reminder": risk_reminder,
             "reference_count": len(items),
         }

@@ -894,3 +894,77 @@ class InsightRetrieveResponse(BaseModel):
     style_summary: str
     risk_reminder: str
     reference_count: int
+
+
+# ── 多版本改写 ─────────────────────────────────────────────────────────────────
+class MultiVersionRewriteRequest(BaseModel):
+    """多版本改写请求 – 一次生成多个风格版本供 A/B 测试"""
+    content_id: int
+    platform: str                                       # xiaohongshu / douyin / zhihu
+    styles: List[str] = Field(
+        default_factory=lambda: ["aggressive", "mild", "professional"],
+        description="改写风格列表，可选：aggressive / mild / professional",
+    )
+    topic_name: Optional[str] = None
+    audience_tags: List[str] = Field(default_factory=list)
+    save_performance: bool = Field(default=False, description="是否将改写版本存入效果追踪表")
+
+
+class RewriteVersionItem(BaseModel):
+    """单个改写版本"""
+    style: str
+    style_label: str
+    content: str
+    predicted_engagement: float
+    predicted_conversion: float
+
+
+class MultiVersionRewriteResponse(BaseModel):
+    """多版本改写响应"""
+    content_id: int
+    platform: str
+    original: str
+    versions: List[RewriteVersionItem]
+    insight_used: bool
+    insight_reference_count: int
+
+
+# ── 内容去重 ──────────────────────────────────────────────────────────────────
+class DuplicateCheckRequest(BaseModel):
+    """内容去重检查请求"""
+    title: str
+    content: str
+    source_url: Optional[str] = None
+    similarity_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
+class DuplicateCheckResponse(BaseModel):
+    """内容去重检查结果"""
+    is_duplicate: bool
+    duplicate_id: Optional[int]
+    similarity_score: float
+    method: str                                         # url_exact / title_exact / text_similarity / none
+
+
+# ── 改写效果追踪 ────────────────────────────────────────────────────────────────
+class RewritePerformanceCreate(BaseModel):
+    """创建改写效果追踪记录"""
+    source_content_id: Optional[int] = None
+    platform: str
+    rewrite_style: Optional[str] = None
+    rewritten_content: str
+    predicted_engagement: Optional[float] = None
+    predicted_conversion: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class RewritePerformanceUpdate(BaseModel):
+    """更新改写效果追踪 – 发布后真实数据回流"""
+    actual_views: Optional[int] = None
+    actual_likes: Optional[int] = None
+    actual_comments: Optional[int] = None
+    actual_shares: Optional[int] = None
+    actual_conversions: Optional[int] = None
+    effectiveness_score: Optional[float] = None
+    publish_metrics: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None

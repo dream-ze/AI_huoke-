@@ -7,11 +7,12 @@ from app.core.rate_limit import DistributedRateLimiter
 from app.core.security import verify_token
 from app.domains.acquisition.collect_service import CollectService
 from app.domains.ai_workbench.ai_service import AIService
-from app.models import BrowserPluginCollection, ContentAsset
+from app.models import BrowserPluginCollection, ContentAsset, RewritePerformance
 from app.schemas import (
     AIRewriteRequest,
     ArkVisionRequest,
     ArkVisionResponse,
+    MultiVersionRewriteRequest,
     PluginContentCreate,
     PluginContentResponse,
 )
@@ -248,6 +249,66 @@ async def ark_vision_analyze(
         model=request.model,
         user_id=current_user["user_id"],
     )
+
+
+@ai_workbench_routes.post("/rewrite/multi-version")
+async def rewrite_multi_version(
+    request: MultiVersionRewriteRequest,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """一次生成多个风格的改写版本，用于 A/B 测试。"""
+    from fastapi import HTTPException
+
+    ai_service = AIService(db=db)
+
+    content = db.query(ContentAsset).filter(ContentAsset.id == request.content_id).first()
+    if not content:
+        raise HTTPException(status_code=404, detail="Content not found")
+
+    insight_ctx = None
+    if request.topic_name:
+        insight_ctx = InsightService.retrieve_for_generation(
+            db,
+            owner_id=current_user["user_id"],
+            platform=request.platform,
+            topic_name=request.topic_name,
+            audience_tags=request.audience_tags or [],
+            limit=5,
+        )
+
+    versions = await ai_service.rewrite_multi_version(
+        content=content.content,
+        platform=request.platform,
+        user_id=current_user["user_id"],
+        insight_ctx=insight_ctx,
+        styles=request.styles or None,
+    )
+
+    # 可选：将版本记录到效果追踪表
+    if request.save_performance:
+        for v in versions:
+            if v.get("content"):
+                record = RewritePerformance(
+                    owner_id=current_user["user_id"],
+                    source_content_id=content.id,
+                    platform=request.platform,
+                    rewrite_style=v["style"],
+                    rewritten_content=v["content"],
+                    predicted_engagement=v.get("predicted_engagement"),
+                    predicted_conversion=v.get("predicted_conversion"),
+                )
+                db.add(record)
+        db.commit()
+
+    return {
+        "content_id": request.content_id,
+        "platform": request.platform,
+        "original": content.content,
+        "versions": versions,
+        "insight_used": insight_ctx is not None and insight_ctx.get("reference_count", 0) > 0,
+        "insight_reference_count": insight_ctx.get("reference_count", 0) if insight_ctx else 0,
+    }
 
 
 v1_ai_workbench_router = APIRouter(prefix="/ai")
