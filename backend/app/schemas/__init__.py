@@ -73,6 +73,13 @@ from app.schemas.schemas import (
     InsightRetrieveResponse,
     WecomOAuthConfigResponse,
     WecomBindRequest,
+    MultiVersionRewriteRequest,
+    RewriteVersionItem,
+    MultiVersionRewriteResponse,
+    DuplicateCheckRequest,
+    DuplicateCheckResponse,
+    RewritePerformanceCreate,
+    RewritePerformanceUpdate,
 )
 
 __all__ = [
@@ -149,4 +156,11 @@ __all__ = [
     "InsightRetrieveResponse",
     "WecomOAuthConfigResponse",
     "WecomBindRequest",
+    "MultiVersionRewriteRequest",
+    "RewriteVersionItem",
+    "MultiVersionRewriteResponse",
+    "DuplicateCheckRequest",
+    "DuplicateCheckResponse",
+    "RewritePerformanceCreate",
+    "RewritePerformanceUpdate",
 ]

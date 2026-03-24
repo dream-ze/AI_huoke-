@@ -19,6 +19,7 @@ from app.models import ContentAsset
 from app.schemas import (
     CollectSaveRequest,
     CollectUpdateRequest,
+    DuplicateCheckRequest,
     ParseLinkRequest,
     ContentAssetDetailResponse,
 )
@@ -244,3 +245,27 @@ def delete_collect(
     db.delete(item)
     db.commit()
     return {"message": "已删除"}
+
+
+# ──────────────────────────────────────────
+# 内容去重检查
+# ──────────────────────────────────────────
+@router.post("/check-duplicate")
+def check_duplicate(
+    req: DuplicateCheckRequest,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """
+    检查内容是否与素材库中已有内容重复。
+    依次通过 URL 精确匹配、标题精确匹配、文本相似度三层检查。
+    """
+    result = CollectService.check_duplicate(
+        db=db,
+        user_id=current_user["user_id"],
+        title=req.title,
+        content=req.content,
+        source_url=req.source_url,
+        similarity_threshold=req.similarity_threshold,
+    )
+    return result

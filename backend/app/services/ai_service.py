@@ -419,6 +419,86 @@ class AIService:
 - 禁用担保、承诺类违规词语"""
         return await self.call_llm(prompt, system_prompt, user_id=user_id, scene="rewrite_zhihu")
     
+    async def rewrite_multi_version(
+        self,
+        content: str,
+        platform: str,
+        user_id: int | None = None,
+        insight_ctx: dict | None = None,
+        styles: list[str] | None = None,
+    ) -> list[dict]:
+        """
+        Generate multiple rewrite versions for A/B testing.
+        Supports aggressive / mild / professional styles (or custom list).
+        Returns a list of {style, content, predicted_engagement, predicted_conversion}.
+        """
+        if styles is None:
+            styles = ["aggressive", "mild", "professional"]
+
+        style_labels = {
+            "aggressive": "激进型（强情绪、高冲击力、行动导向）",
+            "mild": "温和型（亲切自然、低压力、娓娓道来）",
+            "professional": "专业型（数据支撑、逻辑清晰、权威感强）",
+        }
+
+        platform_names = {
+            "xiaohongshu": "小红书",
+            "douyin": "抖音",
+            "zhihu": "知乎",
+        }
+        platform_label = platform_names.get(platform, platform)
+
+        ctx_block = ""
+        if insight_ctx and insight_ctx.get("reference_count", 0) > 0:
+            parts = []
+            if insight_ctx.get("title_examples"):
+                parts.append("参考标题: " + " / ".join(insight_ctx["title_examples"][:3]))
+            if insight_ctx.get("pain_point_examples"):
+                parts.append("痛点参考: " + "、".join(insight_ctx["pain_point_examples"][:5]))
+            if insight_ctx.get("risk_reminder"):
+                parts.append("风险提醒: " + insight_ctx["risk_reminder"])
+            if parts:
+                ctx_block = "\n\n【洞察库参考（仅供学习风格，不要复制原文）】\n" + "\n".join(parts)
+
+        results = []
+        for style in styles:
+            style_desc = style_labels.get(style, style)
+            system_prompt = f"你是{platform_label}专业内容创作者，擅长贷款/金融业务内容。用中文回复。"
+            prompt = f"""请将以下内容改写为{platform_label}风格，采用【{style_desc}】的写作风格。
+只输出改写后的正文内容，不要包含解释或说明。
+
+【原始内容】
+{content}
+{ctx_block}
+
+【改写要求】
+- 严格采用{style_desc}风格
+- 适合{platform_label}平台发布
+- 禁止使用【一定放款】【100%下款】【保证批】等违规词语
+- 不超过 800 字"""
+
+            try:
+                rewritten = await self.call_llm(
+                    prompt, system_prompt, user_id=user_id, scene=f"rewrite_multi_{style}"
+                )
+            except Exception as e:
+                logger.warning("rewrite_multi_version style=%s failed: %s", style, e)
+                rewritten = ""
+
+            # 预测分 – 根据风格给出启发式估算（可后续替换为模型预测）
+            engagement_hint = {"aggressive": 72.0, "mild": 58.0, "professional": 65.0}.get(style, 60.0)
+            conversion_hint = {"aggressive": 68.0, "mild": 52.0, "professional": 70.0}.get(style, 60.0)
+
+            results.append({
+                "style": style,
+                "style_label": style_labels.get(style, style),
+                "content": rewritten,
+                "predicted_engagement": engagement_hint,
+                "predicted_conversion": conversion_hint,
+            })
+
+        return results
+
     async def generate_comment_reply(self, original_content: str, comment: str) -> str:
         """Generate reply to comments"""
         system_prompt = """You are a social media engagement expert.

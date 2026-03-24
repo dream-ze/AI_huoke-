@@ -20,6 +20,7 @@ from app.models.models import (
     InsightAuthorProfile,
     InsightContentItem,
     InsightCollectTask,
+    RewritePerformance,
 )
 
 __all__ = [
@@ -43,4 +44,5 @@ __all__ = [
     "InsightAuthorProfile",
     "InsightContentItem",
     "InsightCollectTask",
+    "RewritePerformance",
 ]

@@ -245,7 +245,14 @@ class CollectService:
   "is_viral": false,
   "viral_reasons": ["理由1（如：标题情绪强烈）"],
   "key_selling_points": ["卖点1","卖点2"],
-  "rewrite_hints": "简述：该如何改写才能提升转化或降低风险"
+  "rewrite_hints": "简述：该如何改写才能提升转化或降低风险",
+  "viral_potential_score": 68,
+  "spread_potential": "高/中/低",
+  "user_profile": "目标用户画像，如：25-35岁上班族，有贷款需求",
+  "emotion_tone": "情绪调性，如：焦虑共鸣/积极励志/理性分析",
+  "content_structure": ["结构元素1（如：痛点开头）","结构元素2","结构元素3"],
+  "reusable_elements": ["可复用元素1（如：具体数字举例）","可复用元素2"],
+  "risk_warnings": ["风险点1（如：含绝对化承诺）","风险点2"]
 }}"""
 
         try:
@@ -268,6 +275,13 @@ class CollectService:
                     "viral_reasons": [str(reason) for reason in data.get("viral_reasons", [])][:5],
                     "key_selling_points": [str(point) for point in data.get("key_selling_points", [])][:5],
                     "rewrite_hints": str(data.get("rewrite_hints", ""))[:500],
+                    "viral_potential_score": float(data.get("viral_potential_score", 0)),
+                    "spread_potential": str(data.get("spread_potential", ""))[:16],
+                    "user_profile": str(data.get("user_profile", ""))[:200],
+                    "emotion_tone": str(data.get("emotion_tone", ""))[:64],
+                    "content_structure": [str(e) for e in data.get("content_structure", [])][:8],
+                    "reusable_elements": [str(e) for e in data.get("reusable_elements", [])][:8],
+                    "risk_warnings": [str(w) for w in data.get("risk_warnings", [])][:5],
                 }
         except Exception as exc:
             logger.error("AI analyze failed for content_id=%s: %s", content.id, exc)
@@ -281,4 +295,94 @@ class CollectService:
             "viral_reasons": [],
             "key_selling_points": [],
             "rewrite_hints": "",
+            "viral_potential_score": 0.0,
+            "spread_potential": "",
+            "user_profile": "",
+            "emotion_tone": "",
+            "content_structure": [],
+            "reusable_elements": [],
+            "risk_warnings": [],
+        }
+
+    # ── 内容去重 ──────────────────────────────
+    @staticmethod
+    def check_duplicate(
+        db: Session,
+        user_id: int,
+        title: str,
+        content: str,
+        source_url: Optional[str] = None,
+        similarity_threshold: float = 0.8,
+    ) -> Dict[str, Any]:
+        """
+        基于 URL 精确匹配和文本相似度检查内容是否重复。
+        返回 {is_duplicate, duplicate_id, similarity_score, method}。
+        """
+        # 1. URL 精确匹配
+        if source_url:
+            existing = db.query(ContentAsset).filter(
+                ContentAsset.owner_id == user_id,
+                ContentAsset.source_url == source_url,
+            ).first()
+            if existing:
+                return {
+                    "is_duplicate": True,
+                    "duplicate_id": existing.id,
+                    "similarity_score": 1.0,
+                    "method": "url_exact",
+                }
+
+        # 2. 标题完全匹配
+        if title:
+            existing = db.query(ContentAsset).filter(
+                ContentAsset.owner_id == user_id,
+                ContentAsset.title == title,
+            ).first()
+            if existing:
+                return {
+                    "is_duplicate": True,
+                    "duplicate_id": existing.id,
+                    "similarity_score": 1.0,
+                    "method": "title_exact",
+                }
+
+        # 3. 文本相似度（简易 n-gram 特征比对，无需外部库）
+        def _ngram_set(t: str, c: str, n: int = 3) -> set:
+            # 分别限长，确保标题和正文都有代表性
+            combined = t[:200] + " " + c[:300]
+            combined = re.sub(r"\s+", " ", combined).strip()
+            return {combined[i:i + n] for i in range(len(combined) - n + 1)} if len(combined) >= n else set()
+
+        query_ngrams = _ngram_set(title, content)
+        if not query_ngrams:
+            return {"is_duplicate": False, "duplicate_id": None, "similarity_score": 0.0, "method": "none"}
+
+        # 只检查最近 200 条记录，避免全表扫描
+        recent_items = (
+            db.query(ContentAsset)
+            .filter(ContentAsset.owner_id == user_id)
+            .order_by(desc(ContentAsset.created_at))
+            .limit(200)
+            .all()
+        )
+
+        best_match_id = None
+        best_score = 0.0
+        for item in recent_items:
+            item_ngrams = _ngram_set(item.title or "", item.content or "")
+            if not item_ngrams:
+                continue
+            intersection = len(query_ngrams & item_ngrams)
+            union = len(query_ngrams | item_ngrams)
+            score = intersection / union if union > 0 else 0.0
+            if score > best_score:
+                best_score = score
+                best_match_id = item.id
+
+        is_dup = best_score >= similarity_threshold
+        return {
+            "is_duplicate": is_dup,
+            "duplicate_id": best_match_id if is_dup else None,
+            "similarity_score": round(best_score, 4),
+            "method": "text_similarity",
         }

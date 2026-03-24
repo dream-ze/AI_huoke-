@@ -493,6 +493,42 @@ class InsightCollectTask(Base):
     owner = relationship("User")
 
 
+class RewritePerformance(Base):
+    """改写效果追踪 – 记录每次改写的版本、风格及发布后的真实效果"""
+    __tablename__ = "rewrite_performance"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    source_content_id = Column(Integer, ForeignKey("content_assets.id"), nullable=True, index=True)
+
+    platform = Column(String(32), nullable=False)
+    rewrite_style = Column(String(64), nullable=True)   # aggressive/mild/professional/casual/…
+    rewritten_content = Column(Text, nullable=False)
+
+    # 预测分数（改写时由 AI 给出）
+    predicted_engagement = Column(Float, nullable=True)
+    predicted_conversion = Column(Float, nullable=True)
+
+    # 发布后真实数据回流
+    actual_views = Column(Integer, nullable=True)
+    actual_likes = Column(Integer, nullable=True)
+    actual_comments = Column(Integer, nullable=True)
+    actual_shares = Column(Integer, nullable=True)
+    actual_conversions = Column(Integer, nullable=True)
+
+    # 综合效果评分（可由后台计算填入）
+    effectiveness_score = Column(Float, nullable=True)
+
+    publish_metrics = Column(JSON, default=dict)        # 原始发布数据
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User")
+    source_content = relationship("ContentAsset")
+
+
 class ArkCallLog(Base):
     """Ark API call log for observability and analytics"""
     __tablename__ = "ark_call_logs"
