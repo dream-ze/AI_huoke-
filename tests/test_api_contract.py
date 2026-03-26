@@ -14,20 +14,33 @@ client = TestClient(app)
 
 def _build_item(parse_status: str = "detail_success") -> ContentItem:
     return ContentItem(
-        platform="xiaohongshu",
-        keyword="贷款",
+        source_platform="xiaohongshu",
+        source_type="note",
         source_id="note_001",
         url="https://www.xiaohongshu.com/explore/note_001",
+        keyword="贷款",
+        task_id="task_001",
         title="测试标题",
         snippet="测试摘要",
         content_text="测试正文",
-        content_image_urls=["https://img.example.com/1.jpg"],
+        image_urls=["https://img.example.com/1.jpg"],
+        image_count=1,
         cover_url="https://img.example.com/1.jpg",
         like_count=5,
         comment_count=2,
+        parse_stage="detail",
+        detail_attempted=True,
+        detail_error="",
+        field_completeness=0.8,
+        engagement_score=11,
+        quality_score=0.8,
+        lead_score=0.5,
+        risk_level="low",
+        content_length=4,
+        is_detail_complete=True,
         collected_at=datetime.now().astimezone(),
+        updated_at=datetime.now().astimezone(),
         parse_status=parse_status,
-        risk_status="normal",
     )
 
 
@@ -37,9 +50,10 @@ def test_collect_run_contract(monkeypatch):
             success=True,
             platform="xiaohongshu",
             keyword="贷款",
+            task_id="task_001",
             count=1,
             items=[_build_item()],
-            stats=CollectStats(discovered=1, detail_attempted=1, detail_success=1),
+            stats=CollectStats(discovered=1, list_success=1, detail_attempted=1, detail_success=1),
             message="采集完成",
             request_id="req_001",
             cost_ms=12,
@@ -64,9 +78,10 @@ def test_collect_run_contract(monkeypatch):
     assert body["success"] is True
     assert body["platform"] == "xiaohongshu"
     assert body["keyword"] == "贷款"
+    assert body["task_id"] == "task_001"
     assert body["count"] == 1
     assert isinstance(body["items"], list)
-    assert set(["discovered", "detail_attempted", "detail_success", "parse_failed", "risk_blocked", "deduplicated"]).issubset(
+    assert set(["discovered", "list_success", "detail_attempted", "detail_success", "detail_failed", "dropped"]).issubset(
         set(body["stats"].keys())
     )
 

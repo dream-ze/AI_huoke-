@@ -79,20 +79,18 @@ def test_parse_list_card_maps_fields_from_fixture():
     card = FakeCard(fixture_path.read_text(encoding="utf-8"))
     collector = XiaohongshuCollector()
 
-    item = collector._parse_list_card(card, keyword="贷款")
+    item = collector._parse_list_card(card)
 
     assert item is not None
-    assert item.platform == "xiaohongshu"
-    assert item.keyword == "贷款"
-    assert item.source_id == "67f9a8b00000000012012345"
-    assert item.url == "https://www.xiaohongshu.com/explore/67f9a8b00000000012012345"
-    assert item.title == "公积金 贷款 经验 分享"
-    assert item.author_name == "小张同学"
-    assert item.snippet == "真实办理流程，材料清单和避坑建议。"
-    assert item.cover_url == "https://img.example.com/note-cover.jpg"
-    assert item.like_count == 12000
-    assert item.parse_status == "list_only"
-    assert item.field_source["title"] == "list_dom"
+    assert item["source_platform"] == "xiaohongshu"
+    assert item["source_id"] == "67f9a8b00000000012012345"
+    assert item["url"] == "https://www.xiaohongshu.com/explore/67f9a8b00000000012012345"
+    assert item["title"] == "公积金 贷款 经验 分享"
+    assert item["author_name"] == "小张同学"
+    assert item["snippet"] == "真实办理流程，材料清单和避坑建议。"
+    assert item["cover_url"] == "https://img.example.com/note-cover.jpg"
+    assert item["like_count"] == 12000
+    assert item["parse_status"] == "list_only"
 
 
 def test_parse_list_card_returns_none_when_title_and_snippet_missing():
@@ -106,6 +104,6 @@ def test_parse_list_card_returns_none_when_title_and_snippet_missing():
     card = FakeCard(html)
     collector = XiaohongshuCollector()
 
-    item = collector._parse_list_card(card, keyword="贷款")
+    item = collector._parse_list_card(card)
 
     assert item is None

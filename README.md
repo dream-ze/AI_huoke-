@@ -60,22 +60,24 @@ pytest -q tests
   "success": true,
   "platform": "xiaohongshu",
   "keyword": "贷款",
+  "task_id": "collect_20260326_123725_a1b2c3",
   "request_id": "collect_xiaohongshu_20260326_123725_d0eed3",
   "count": 6,
   "cost_ms": 4280,
   "collected_at": "2026-03-26T10:25:30+08:00",
   "stats": {
     "discovered": 20,
+    "list_success": 6,
     "detail_attempted": 6,
     "detail_success": 5,
-    "parse_failed": 1,
-    "risk_blocked": 0,
-    "deduplicated": 10
+    "detail_failed": 1,
+    "dropped": 0
   },
   "items": [
     {
-      "platform": "xiaohongshu",
+      "source_platform": "xiaohongshu",
       "keyword": "贷款",
+      "task_id": "collect_20260326_123725_a1b2c3",
       "source_id": "xxxx",
       "title": "公积金贷款流程",
       "author_name": "小张",
@@ -84,12 +86,18 @@ pytest -q tests
       "url": "https://www.xiaohongshu.com/explore/xxxx",
       "cover_url": "https://...",
       "image_urls": [],
+      "image_count": 0,
       "like_count": 123,
       "comment_count": 8,
-      "engagement_score": 139,
-      "quality_score": 78,
+      "engagement_score": 147,
+      "quality_score": 0.73,
+      "lead_score": 0.4,
       "parse_status": "detail_success",
-      "risk_status": "normal",
+      "parse_stage": "detail",
+      "detail_attempted": true,
+      "detail_error": "",
+      "field_completeness": 0.85,
+      "risk_level": "low",
       "publish_time": "2026-03-25T11:20:00+08:00",
       "raw_data": {}
     }
@@ -114,7 +122,11 @@ POST /api/collect/detail
 
 python browser_collector/run_collect_to_excel.py --keyword 贷款 --max-items 10 --need-detail --need-comments --timeout 180 --output-dir exports
 
-执行成功后会在 `exports/` 目录生成 `.xlsx` 文件。
+执行成功后会在 `exports/` 目录生成 `.xlsx` 文件，包含：
+
+- `items_view`: 业务可读字段
+- `items_raw`: 原始全字段
+- `summary`: 本次任务统计
 
 ## 平台能力接口
 
