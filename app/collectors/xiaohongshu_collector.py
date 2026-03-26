@@ -1,116 +1,85 @@
 import re
-from typing import Tuple
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
 from urllib.parse import quote, urljoin
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Page
 
 from app.collectors.base import BaseCollector
 from app.schemas.detail import CollectDetailRequest
-from app.schemas.result import CollectStats, ContentItem, ContentMeta
+from app.schemas.request import CollectRequest
+from app.schemas.result import CollectStats, ContentItem
 from app.utils.browser import create_browser
 
 
 class XiaohongshuCollector(BaseCollector):
     BASE_URL = "https://www.xiaohongshu.com"
-    COLLECTOR_VERSION = "v1.0"
+    SEARCH_URL = "https://www.xiaohongshu.com/search_result"
 
-    def collect(self, keyword: str, max_items: int) -> Tuple[list[ContentItem], CollectStats, bool]:
+    def __init__(self) -> None:
+        root_dir = Path(__file__).resolve().parents[2]
+        self._artifacts_dir = root_dir / "artifacts"
+        self._screenshots_dir = self._artifacts_dir / "screenshots"
+        self._html_dir = self._artifacts_dir / "html"
+        self._screenshots_dir.mkdir(parents=True, exist_ok=True)
+        self._html_dir.mkdir(parents=True, exist_ok=True)
+
+    def collect(self, req: CollectRequest) -> tuple[list[ContentItem], CollectStats]:
         playwright, browser, context, page = create_browser()
+        page.set_default_timeout(req.timeout_sec * 1000)
 
-        results: list[ContentItem] = []
-        seen_urls: set[str] = set()
-        seen_source_ids: set[str] = set()
+        stats = CollectStats()
+        items: list[ContentItem] = []
+        seen_keys: set[str] = set()
 
-        stats = CollectStats(scanned=0, parsed=0, deduplicated=0, failed=0)
-        has_more = False
-
-        search_url = (
-            f"https://www.xiaohongshu.com/search_result"
-            f"?keyword={quote(keyword)}&source=web_search_result_notes&type=51"
-        )
-
+        search_url = f"{self.SEARCH_URL}?keyword={quote(req.keyword)}&source=web_search_result_notes&type=51"
         try:
             page.goto(search_url, wait_until="domcontentloaded")
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(3000)
 
             scroll_round = 0
-            max_scroll_round = 15
+            max_scroll_round = 12
 
-            while len(results) < max_items and scroll_round < max_scroll_round:
+            while len(items) < req.max_items and scroll_round < max_scroll_round:
                 cards = page.locator("section").all()
-
-                for index, card in enumerate(cards, start=1):
-                    stats.scanned += 1
-
-                    try:
-                        text = card.inner_text(timeout=2000).strip()
-                        if not text:
-                            stats.failed += 1
-                            continue
-
-                        href = self._extract_note_href(card)
-                        if not href:
-                            stats.failed += 1
-                            continue
-
-                        full_url = urljoin(self.BASE_URL, href)
-                        source_id = self._extract_source_id(full_url)
-
-                        if full_url in seen_urls or (source_id and source_id in seen_source_ids):
-                            stats.deduplicated += 1
-                            continue
-
-                        cover_url = self._extract_cover_url(card)
-                        title, author_name, like_count, comment_count, snippet = self._parse_card_text(text)
-
-                        item = self._build_item(
-                            keyword=keyword,
-                            search_url=search_url,
-                            full_url=full_url,
-                            source_id=source_id,
-                            title=title,
-                            author_name=author_name,
-                            snippet=snippet,
-                            cover_url=cover_url,
-                            like_count=like_count,
-                            comment_count=comment_count,
-                            raw_text=text,
-                            href=href,
-                            rank=len(results) + 1,
-                            position=index,
-                        )
-
-                        results.append(item)
-                        seen_urls.add(full_url)
-                        if source_id:
-                            seen_source_ids.add(source_id)
-                        stats.parsed += 1
-
-                        if len(results) >= max_items:
-                            break
-
-                    except Exception as ex:
-                        stats.failed += 1
-                        if len(results) >= max_items:
-                            break
-                        _ = ex
+                for card in cards:
+                    seed = self._parse_list_card(card, req.keyword)
+                    if not seed:
+                        stats.parse_failed += 1
                         continue
 
+                    stats.discovered += 1
+                    dedup_key = f"{seed.platform}:{seed.source_id or seed.url}"
+                    if req.dedup and dedup_key in seen_keys:
+                        stats.deduplicated += 1
+                        continue
+
+                    seen_keys.add(dedup_key)
+                    items.append(seed)
+                    if len(items) >= req.max_items:
+                        break
+
+                if len(items) >= req.max_items:
+                    break
+
                 page.mouse.wheel(0, 2500)
-                page.wait_for_timeout(2500)
+                page.wait_for_timeout(1800)
                 scroll_round += 1
 
-            if len(results) >= max_items:
-                has_more = True
+            if req.need_detail:
+                for idx, item in enumerate(items):
+                    stats.detail_attempted += 1
+                    detail_item = self._enrich_detail(page, item, req.need_comments)
+                    items[idx] = detail_item
+                    if detail_item.parse_status == "detail_success":
+                        stats.detail_success += 1
+                    elif detail_item.parse_status == "risk_blocked":
+                        stats.risk_blocked += 1
+                    elif detail_item.parse_status in ("detail_failed", "parse_failed"):
+                        stats.parse_failed += 1
 
-            return results, stats, has_more
-
-        except PlaywrightTimeoutError:
-            return results, stats, has_more
-
-        except Exception:
-            return results, stats, has_more
-
+            return items, stats
         finally:
             context.close()
             browser.close()
@@ -119,203 +88,226 @@ class XiaohongshuCollector(BaseCollector):
     def fetch_detail(self, req: CollectDetailRequest) -> ContentItem:
         url = req.url or self._build_detail_url(req.source_id or "")
         source_id = req.source_id or self._extract_source_id(url)
-
+        now = datetime.now().astimezone()
         item = ContentItem(
             platform="xiaohongshu",
-            keyword="",
+            keyword=None,
             source_id=source_id,
             url=url,
-            source_type="note",
+            collected_at=now,
+            parse_status="detail_failed",
+            risk_status="normal",
         )
 
         if not url:
-            item.parse_status = "failed"
-            item.error_message = "缺少详情页地址"
+            item.parse_status = "parse_failed"
+            item.raw_data["error"] = "缺少详情页地址"
             return item
 
         playwright, browser, context, page = create_browser()
         try:
             page.goto(url, wait_until="domcontentloaded")
-            page.wait_for_timeout(3500)
-
-            title = ""
-            for selector in ["h1", "#detail-title", "[data-v-6f4f8f9f] h1"]:
-                locator = page.locator(selector)
-                if locator.count() > 0:
-                    value = locator.first.inner_text(timeout=1000).strip()
-                    if value:
-                        title = value
-                        break
-
-            body_text = page.locator("body").inner_text(timeout=2000)
-            snippet = self._build_snippet(body_text)
-            image_urls = self._extract_image_urls(page)
-            cover_url = image_urls[0] if image_urls else ""
-
-            like_count = self._normalize_count(body_text, r"赞\s*(\d+(?:\.\d+)?[万wW]?)")
-            comment_count = self._normalize_count(body_text, r"评论\s*(\d+(?:\.\d+)?[万wW]?)")
-            collect_count = self._normalize_count(body_text, r"收藏\s*(\d+(?:\.\d+)?[万wW]?)")
-
-            item.title = title[:200]
-            item.author_name = ""
-            item.snippet = snippet
-            item.content_text = snippet
-            item.cover_url = cover_url
-            item.image_urls = image_urls
-            item.like_count = like_count
-            item.comment_count = comment_count
-            item.collect_count = collect_count
-            item.share_count = 0
-            item.engagement_score = like_count + comment_count * 2
-            item.topic_tags = self._extract_tags(f"{title}\n{snippet}")
-            item.quality_score = self._build_quality_score(item)
-            item.missing_fields = self._build_missing_fields(item)
-            item.parse_status = self._build_parse_status(item)
-            item.meta = ContentMeta(
-                rank=1,
-                page_no=1,
-                position=1,
-                collector="playwright",
-                collector_version=self.COLLECTOR_VERSION,
-                search_url=url,
-                extracted_from="detail",
-            )
-            item.raw_data = {
-                "detail_url": url,
-            }
-            item.debug_info = {
-                "parse_version": self.COLLECTOR_VERSION,
-            }
-            return item
-
-        except Exception as ex:
-            item.parse_status = "failed"
-            item.error_message = str(ex)
-            item.raw_data = {"detail_url": url}
-            return item
-
+            page.wait_for_timeout(2500)
+            return self._enrich_detail(page, item, need_comments=True)
         finally:
             context.close()
             browser.close()
             playwright.stop()
 
-    def _build_item(
-        self,
-        keyword: str,
-        search_url: str,
-        full_url: str,
-        source_id: str,
-        title: str,
-        author_name: str,
-        snippet: str,
-        cover_url: str,
-        like_count: int,
-        comment_count: int,
-        raw_text: str,
-        href: str,
-        rank: int,
-        position: int,
-    ) -> ContentItem:
-        topic_tags = self._extract_tags(f"{title}\n{snippet}")
+    def _parse_list_card(self, card, keyword: str) -> Optional[ContentItem]:
+        href = self._first_attr(card, 'a[href*="/explore/"]', "href")
+        if not href:
+            return None
+
+        full_url = urljoin(self.BASE_URL, href)
+        source_id = self._extract_source_id(full_url)
+        title = self._first_text(card, [".title", 'a[href*="/explore/"]'])
+        author_name = self._first_text(card, [".author .name", ".name", ".author"])
+        like_text = self._first_text(card, [".like-wrapper .count", ".count", ".like"])
+        snippet = self._first_text(card, [".desc", ".note-text", ".title"])
+        cover_url = self._first_attr(card, "img", "src")
+
+        if not title and not snippet:
+            return None
+
+        like_count = self._to_int_count(like_text)
+        now = datetime.now().astimezone()
         item = ContentItem(
             platform="xiaohongshu",
             keyword=keyword,
             source_id=source_id,
-            source_type="note",
-            title=title[:200],
-            author_name=author_name[:100],
-            snippet=snippet,
-            content_text="",
-            content_html="",
             url=full_url,
-            cover_url=cover_url,
+            title=self._clean_text(title) or None,
+            author_name=self._clean_text(author_name) or None,
+            snippet=self._clean_text(snippet) or None,
+            cover_url=cover_url or None,
             image_urls=[cover_url] if cover_url else [],
-            publish_time="",
             like_count=like_count,
-            comment_count=comment_count,
-            collect_count=0,
-            share_count=0,
-            engagement_score=like_count + comment_count * 2,
-            topic_tags=topic_tags,
-            matched_keyword=keyword,
-            meta=ContentMeta(
-                rank=rank,
-                page_no=1,
-                position=position,
-                collector="playwright",
-                collector_version=self.COLLECTOR_VERSION,
-                search_url=search_url,
-                extracted_from="search_result",
+            comment_count=None,
+            publish_time=None,
+            collected_at=now,
+            parse_status="list_only",
+            risk_status="normal",
+            engagement_score=float(like_count),
+            quality_score=self._compute_quality(
+                title=self._clean_text(title),
+                snippet=self._clean_text(snippet),
+                content_text="",
+                image_count=1 if cover_url else 0,
             ),
-            raw_data={
-                "card_text": raw_text,
-                "href": href,
-            },
-            debug_info={
-                "card_text": raw_text,
-                "parse_version": self.COLLECTOR_VERSION,
-            },
+            raw_data={"stage": "list", "href": href},
         )
-        item.quality_score = self._build_quality_score(item)
-        item.missing_fields = self._build_missing_fields(item)
-        item.parse_status = self._build_parse_status(item)
         return item
 
-    def _extract_note_href(self, card) -> str:
+    def _enrich_detail(self, page: Page, item: ContentItem, need_comments: bool) -> ContentItem:
         try:
-            links = card.locator("a").all()
-            for a in links:
-                href = a.get_attribute("href")
-                if href and "/explore/" in href:
-                    return href
-        except Exception:
-            pass
-        return ""
+            page.goto(item.url, wait_until="domcontentloaded")
+            page.wait_for_timeout(2500)
 
-    def _extract_cover_url(self, card) -> str:
-        try:
-            img = card.locator("img").first
-            if img.count() > 0:
-                src = img.get_attribute("src") or img.get_attribute("data-src")
-                if src:
-                    return src
-        except Exception:
-            pass
-        return ""
+            risk = self._detect_risk(page)
+            if risk != "normal":
+                item.parse_status = "risk_blocked"
+                item.risk_status = risk
+                screenshot, html_file = self._dump_failure_artifacts(page, item.source_id or "unknown", "risk")
+                item.raw_data.update({"stage": "detail", "screenshot": screenshot, "html_dump": html_file})
+                return item
 
-    def _parse_card_text(self, text: str) -> tuple[str, str, int, int, str]:
-        lines = [self._clean_text(line) for line in text.split("\n") if self._clean_text(line)]
-        title = lines[0] if lines else ""
-        author_name = ""
-        if len(lines) >= 2:
-            author_name = lines[-2]
-        snippet_lines = lines[1:4] if len(lines) > 1 else []
-        snippet = " ".join(snippet_lines).strip()[:300]
+            title = self._first_text(page, ["h1", "#detail-title", ".note-title"])
+            content_text = self._first_text(page, ["#detail-desc", ".note-content", "article"])
+            author_name = self._first_text(page, [".author-container .name", ".author .name", ".username"])
+            publish_time = self._extract_publish_time(page)
+            image_urls = self._extract_image_urls(page)
+            like_count = self._extract_metric(page, "点赞")
+            comment_count = self._extract_metric(page, "评论") if need_comments else item.comment_count
 
-        like_source = lines[-1] if lines else text
-        like_count = self._extract_first_count(like_source)
-        comment_count = 0
+            merged_title = self._clean_text(title) or item.title
+            merged_content = self._clean_text(content_text)
+            merged_snippet = (merged_content[:180] if merged_content else item.snippet) or None
 
-        return title, author_name, like_count, comment_count, snippet
+            item.title = merged_title
+            item.author_name = self._clean_text(author_name) or item.author_name
+            item.content_text = merged_content or item.content_text
+            item.snippet = merged_snippet
+            item.image_urls = image_urls
+            item.cover_url = image_urls[0] if image_urls else item.cover_url
+            item.like_count = like_count if like_count is not None else item.like_count
+            item.comment_count = comment_count
+            item.publish_time = publish_time
+            item.risk_status = "normal"
 
-    def _extract_first_count(self, text: str) -> int:
-        match = re.search(r"(\d+(?:\.\d+)?\s*[万wW]?)", text)
+            has_detail = bool(item.content_text) and bool(item.title)
+            item.parse_status = "detail_success" if has_detail else "detail_failed"
+            item.engagement_score = float((item.like_count or 0) + (item.comment_count or 0) * 3)
+            item.quality_score = self._compute_quality(
+                title=item.title or "",
+                snippet=item.snippet or "",
+                content_text=item.content_text or "",
+                image_count=len(item.image_urls),
+            )
+            item.raw_data.update({"stage": "detail"})
+            return item
+        except Exception as ex:
+            item.parse_status = "detail_failed"
+            item.risk_status = "normal"
+            screenshot, html_file = self._dump_failure_artifacts(page, item.source_id or "unknown", "error")
+            item.raw_data.update(
+                {
+                    "stage": "detail",
+                    "error": str(ex),
+                    "screenshot": screenshot,
+                    "html_dump": html_file,
+                }
+            )
+            return item
+
+    def _extract_publish_time(self, page: Page) -> Optional[datetime]:
+        text = self._clean_text(page.locator("body").inner_text(timeout=1200))
+        if not text:
+            return None
+
+        match = re.search(r"(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}))?", text)
         if not match:
-            return 0
-        return self._to_int_count(match.group(1))
+            return None
 
-    def _normalize_count(self, text: str, pattern: str) -> int:
+        year, month, day, hour, minute = match.groups()
+        hh = int(hour) if hour else 0
+        mm = int(minute) if minute else 0
+        try:
+            return datetime(int(year), int(month), int(day), hh, mm).astimezone()
+        except ValueError:
+            return None
+
+    def _extract_metric(self, page: Page, label: str) -> Optional[int]:
+        text = self._clean_text(page.locator("body").inner_text(timeout=1200))
+        if not text:
+            return None
+
+        pattern = rf"{label}\s*(\d+(?:\.\d+)?[万wW]?)"
         match = re.search(pattern, text)
         if not match:
-            return 0
+            return None
         return self._to_int_count(match.group(1))
 
-    def _to_int_count(self, value: str) -> int:
-        if not value:
-            return 0
+    def _extract_image_urls(self, page: Page) -> list[str]:
+        urls: list[str] = []
+        for img in page.locator("img").all():
+            src = img.get_attribute("src") or img.get_attribute("data-src")
+            if not src or src.startswith("data:"):
+                continue
+            urls.append(src)
+        return list(dict.fromkeys(urls))[:20]
 
-        normalized = value.replace(",", "").replace(" ", "").lower()
-        normalized = normalized.replace("w", "万")
+    def _detect_risk(self, page: Page) -> str:
+        text = self._clean_text(page.locator("body").inner_text(timeout=1200))
+        if not text:
+            return "blocked"
+        if "请先登录" in text or "登录后" in text:
+            return "login_required"
+        if "验证码" in text or "安全验证" in text:
+            return "captcha"
+        if "访问受限" in text or "异常请求" in text or "请求过于频繁" in text:
+            return "blocked"
+        return "normal"
+
+    def _dump_failure_artifacts(self, page: Page, source_id: str, tag: str) -> tuple[str, str]:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = f"xhs_{source_id}_{tag}_{stamp}"
+        screenshot = self._screenshots_dir / f"{base}.png"
+        html_file = self._html_dir / f"{base}.html"
+
+        try:
+            page.screenshot(path=str(screenshot), full_page=True)
+        except Exception:
+            pass
+
+        try:
+            html_file.write_text(page.content(), encoding="utf-8")
+        except Exception:
+            pass
+
+        return str(screenshot), str(html_file)
+
+    def _first_text(self, scope, selectors: list[str]) -> str:
+        for selector in selectors:
+            locator = scope.locator(selector)
+            if locator.count() <= 0:
+                continue
+            value = (locator.first.inner_text(timeout=500) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _first_attr(self, scope, selector: str, attr: str) -> str:
+        locator = scope.locator(selector)
+        if locator.count() <= 0:
+            return ""
+        value = locator.first.get_attribute(attr)
+        return (value or "").strip()
+
+    def _to_int_count(self, text: Optional[str]) -> int:
+        if not text:
+            return 0
+        normalized = text.replace(",", "").replace(" ", "").lower().replace("w", "万")
         try:
             if normalized.endswith("万"):
                 return int(float(normalized[:-1]) * 10000)
@@ -323,77 +315,27 @@ class XiaohongshuCollector(BaseCollector):
         except Exception:
             return 0
 
-    def _clean_text(self, text: str) -> str:
-        return re.sub(r"\s+", " ", text or "").strip()
-
-    def _extract_tags(self, text: str) -> list[str]:
-        tags = re.findall(r"#([^#\s]{1,30})", text or "")
-        return list(dict.fromkeys(tags))[:8]
-
-    def _build_snippet(self, text: str) -> str:
-        clean = self._clean_text(text)
-        return clean[:500]
-
-    def _build_quality_score(self, item: ContentItem) -> int:
-        score = 0
-        if item.title:
-            score += 20
-        if item.author_name:
-            score += 10
-        if item.url:
-            score += 20
-        if item.source_id:
-            score += 10
-        if item.like_count > 0:
-            score += 10
-        if item.comment_count > 0:
-            score += 10
-        if item.cover_url:
-            score += 10
-        if item.snippet:
-            score += 10
-        return min(score, 100)
-
-    def _build_missing_fields(self, item: ContentItem) -> list[str]:
-        missing = []
-        if not item.title:
-            missing.append("title")
-        if not item.author_name:
-            missing.append("author_name")
-        if not item.publish_time:
-            missing.append("publish_time")
-        if not item.cover_url:
-            missing.append("cover_url")
-        return missing
-
-    def _build_parse_status(self, item: ContentItem) -> str:
-        if not item.title or not item.url:
-            return "failed"
-        if item.missing_fields:
-            return "partial"
-        return "ok"
-
-    def _extract_image_urls(self, page) -> list[str]:
-        urls = []
-        try:
-            imgs = page.locator("img").all()
-            for img in imgs:
-                src = img.get_attribute("src") or img.get_attribute("data-src")
-                if not src:
-                    continue
-                if src.startswith("data:"):
-                    continue
-                urls.append(src)
-        except Exception:
-            return []
-        return list(dict.fromkeys(urls))[:20]
-
-    def _build_detail_url(self, source_id: str) -> str:
-        if not source_id:
-            return ""
-        return f"https://www.xiaohongshu.com/explore/{source_id}"
-
     def _extract_source_id(self, url: str) -> str:
         if not url:
             return ""
         return url.rstrip("/").split("/")[-1]
+
+    def _build_detail_url(self, source_id: str) -> str:
+        if not source_id:
+            return ""
+        return f"{self.BASE_URL}/explore/{source_id}"
+
+    def _clean_text(self, text: str) -> str:
+        return re.sub(r"\s+", " ", text or "").strip()
+
+    def _compute_quality(self, title: str, snippet: str, content_text: str, image_count: int) -> float:
+        score = 0.0
+        if len(title) >= 8:
+            score += 25
+        if len(snippet) >= 20:
+            score += 20
+        if len(content_text) >= 80:
+            score += 35
+        if image_count > 0:
+            score += 20
+        return min(score, 100.0)

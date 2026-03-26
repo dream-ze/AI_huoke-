@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.schemas.result import ContentItem
 
 
-PlatformType = Literal["xiaohongshu", "douyin", "zhihu", "xianyu"]
+PlatformType = Literal["xiaohongshu"]
 
 
 class CollectDetailRequest(BaseModel):

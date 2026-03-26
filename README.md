@@ -1,13 +1,12 @@
 # browser_collector
 
-基于 FastAPI + Playwright 的浏览器采集服务。
+基于 FastAPI + Playwright 的浏览器采集服务（v2，非兼容旧版）。
 
 ## 功能
 - 小红书关键词搜索
-- 抓取前 N 条搜索结果并标准化输出
-- 支持详情补采接口 `/api/collect/detail`
-- 可选导出 Excel 样例（不影响主 JSON 输出）
-- 多平台可扩展架构（工厂模式）
+- 列表发现 + 详情补采
+- 标准化输出（数值型点赞/评论、时间类型）
+- 失败截图与 HTML 落盘（artifacts）
 
 ## 安装
 
@@ -34,8 +33,10 @@ POST /api/collect/run
   "platform": "xiaohongshu",
   "keyword": "贷款",
   "max_items": 10,
-  "export_sample_excel": true,
-  "sample_size": 10
+  "need_detail": true,
+  "need_comments": false,
+  "dedup": true,
+  "timeout_sec": 120
 }
 ```
 
@@ -47,27 +48,26 @@ POST /api/collect/run
   "platform": "xiaohongshu",
   "keyword": "贷款",
   "request_id": "collect_xiaohongshu_20260326_123725_d0eed3",
-  "task_status": "finished",
   "count": 6,
   "cost_ms": 4280,
   "collected_at": "2026-03-26T10:25:30+08:00",
-  "has_more": true,
   "stats": {
-    "scanned": 20,
-    "parsed": 6,
-    "deduplicated": 10,
-    "failed": 4
+    "discovered": 20,
+    "detail_attempted": 6,
+    "detail_success": 5,
+    "parse_failed": 1,
+    "risk_blocked": 0,
+    "deduplicated": 10
   },
   "items": [
     {
       "platform": "xiaohongshu",
       "keyword": "贷款",
       "source_id": "xxxx",
-      "source_type": "note",
       "title": "公积金贷款流程",
       "author_name": "小张",
       "snippet": "公积金贷款流程分享...",
-      "content_text": "",
+      "content_text": "完整正文...",
       "url": "https://www.xiaohongshu.com/explore/xxxx",
       "cover_url": "https://...",
       "image_urls": [],
@@ -75,16 +75,13 @@ POST /api/collect/run
       "comment_count": 8,
       "engagement_score": 139,
       "quality_score": 78,
-      "parse_status": "partial",
-      "missing_fields": ["publish_time"],
-      "publish_time": "",
-      "meta": {},
-      "raw_data": {},
-      "debug_info": {}
+      "parse_status": "detail_success",
+      "risk_status": "normal",
+      "publish_time": "2026-03-25T11:20:00+08:00",
+      "raw_data": {}
     }
   ],
-  "message": "采集完成",
-  "sample_excel_file": "/www/browser_collector/exports/sample_xiaohongshu_...xlsx"
+  "message": "采集完成"
 }
 ```
 
@@ -98,19 +95,50 @@ POST /api/collect/detail
 }
 ```
 
-`export_sample_excel` 为 `false` 时，不会生成 Excel 文件，`sample_excel_file` 返回 `null`。
+## 一键导出 Excel
+
+在工作区根目录执行：
+
+python browser_collector/run_collect_to_excel.py --keyword 贷款 --max-items 10 --need-detail --need-comments --timeout 180 --output-dir exports
+
+执行成功后会在 `exports/` 目录生成 `.xlsx` 文件。
+
+## 平台能力接口
+
+```
+GET /api/platforms
+```
+
+## 健康检查
+
+```
+GET /health
+```
+
+返回中包含 `browser_ready`、`login_state_ready`、`storage_state_exists`。
 
 ## AI_huoke 接入方式
 
 ```python
 import requests
 
-def collect_content(platform: str, keyword: str, max_items: int = 10):
+def collect_content(keyword: str, max_items: int = 10):
     resp = requests.post(
         "http://127.0.0.1:8005/api/collect/run",
-        json={"platform": platform, "keyword": keyword, "max_items": max_items},
-        timeout=120,
+    json={
+      "platform": "xiaohongshu",
+      "keyword": keyword,
+      "max_items": max_items,
+      "need_detail": True,
+      "need_comments": True,
+      "dedup": True,
+      "timeout_sec": 180,
+    },
+    timeout=240,
     )
     resp.raise_for_status()
-    return resp.json()
+  data = resp.json()
+  print(data["count"])
+  print(data["stats"])
+  return data
 ```

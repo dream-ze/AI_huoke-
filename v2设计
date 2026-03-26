@@ -1,0 +1,589 @@
+下面给你一版采集模块最终优化清单 + v2 代码目录 + 接口设计。
+我按你这个 feature/browser-collector 分支当前状态来收敛：现在仓库已经是 FastAPI + Playwright 的独立采集服务，已有 /api/collect/run、工厂模式、多平台扩展预留，但 README 里展示的返回字段仍偏“列表粗采”，comment_count、publish_time 等还是空值示例，所以 v2 的重点不是再铺新平台，而是把“小红书采集质量、稳定性、可排查性”做扎实。
+
+一、采集模块 v2 的目标
+
+v1 现状
+
+已有独立浏览器采集服务。
+已支持小红书关键词搜索。
+已返回统一 JSON。
+已预留多平台扩展入口。
+
+v2 目标
+
+从“搜索页粗采”升级成“列表发现 + 详情补采 + 可入库标准化”。
+从“脚本式调用”升级成“服务式调用”。
+从“能抓一点”升级成“可稳定进入收件箱 / 改写 / 知识库”。
+二、最终优化清单
+P0：必须先做
+
+这是你现在最该做的一层。
+
+1. 列表采集与详情补采拆开
+
+当前 README 展示的接口主要还是按关键词直接返回结果项，字段里 comment_count、publish_time 仍是空值示例，这说明现阶段更接近“列表级采集”而不是完整详情采集。v2 要拆成两段：先拿链接，再补详情。
+
+改造后流程
+
+关键词搜索
+  -> 列表页采集（只拿轻字段）
+  -> 详情页补采（正文/图片/时间/评论）
+  -> 字段清洗标准化
+  -> 入库 / 返回
+2. 字段解析不要再靠整块文本硬拆
+
+你现在最容易出错的地方，就是从卡片整体文本里“猜”标题、作者、点赞。
+v2 要改成：
+
+优先 selector 精准取值
+取不到再 fallback
+再不行标记 parse_status
+3. 增加 parse_status 细分
+
+不要只用一个模糊状态。建议：
+
+list_only
+detail_success
+detail_failed
+parse_failed
+risk_blocked
+
+这样后面你收件箱里一看就知道是“没补详情”还是“补详情失败”。
+
+4. 数据类型业务化
+
+README 当前示例里 like_count 是字符串，comment_count、publish_time 也是空字符串风格，这更适合演示，不适合后续筛选、排序、爆款计算。v2 要改成数值和时间类型。
+
+P1：很重要，紧接着做
+5. 增加任务模式
+
+现在接口是同步调用 POST /api/collect/run，适合开发调试；v2 建议保留同步接口，同时加异步任务接口，不然后面量一上来会卡住。README 当前示例就是直接同步请求并返回结果。
+
+6. 错误可排查
+
+补这三样：
+
+结构化日志
+失败截图
+失败页面 HTML 保存
+7. 登录态与风控状态可观测
+
+既然项目里已经有 save_login.py，说明你已经在走持久化登录态方案。v2 需要把它产品化：采集前检查登录态、失效时返回明确状态、风控时单独打标。
+
+8. 去重与补采机制
+
+同一篇内容不要重复入库。
+按 platform + source_id 唯一，详情失败的允许重试补采。
+
+P2：做完会明显更稳
+9. 浏览器资源复用
+
+README 当前启动方式是独立 FastAPI 服务，但没有显示任务队列或浏览器池设计。v2 建议做“进程级 browser + 请求级 context/page”，不要每次请求都全量重启浏览器。
+
+10. 指标监控
+
+至少有：
+
+请求数
+成功率
+平均耗时
+详情补采成功率
+单词平均命中量
+风控命中量
+11. 限流与重试
+每个平台独立限流
+页面超时重试 1~2 次
+风控后冷却
+三、v2 最终代码目录
+
+下面这版目录，是为了让你后面继续接抖音、知乎也不乱。
+
+browser_collector/
+├─ app/
+│  ├─ main.py
+│  ├─ core/
+│  │  ├─ config.py                 # 配置
+│  │  ├─ logger.py                 # 日志
+│  │  ├─ exceptions.py             # 自定义异常
+│  │  ├─ enums.py                  # 平台/状态枚举
+│  │  └─ metrics.py                # 指标埋点
+│  │
+│  ├─ api/
+│  │  ├─ routes_collect.py         # 采集接口
+│  │  ├─ routes_tasks.py           # 异步任务接口
+│  │  ├─ routes_platforms.py       # 平台能力说明
+│  │  └─ routes_health.py          # 健康检查
+│  │
+│  ├─ schemas/
+│  │  ├─ collect_request.py
+│  │  ├─ collect_response.py
+│  │  ├─ content_item.py
+│  │  ├─ task.py
+│  │  └─ common.py
+│  │
+│  ├─ collectors/
+│  │  ├─ base.py                   # 采集器抽象类
+│  │  ├─ factory.py                # 工厂
+│  │  └─ xiaohongshu/
+│  │     ├─ collector.py           # 总流程编排
+│  │     ├─ list_parser.py         # 列表页解析
+│  │     ├─ detail_parser.py       # 详情页解析
+│  │     ├─ selectors.py           # 选择器集中管理
+│  │     ├─ normalizers.py         # 点赞/时间/文本清洗
+│  │     └─ anti_risk.py           # 风控判断
+│  │
+│  ├─ browser/
+│  │  ├─ manager.py                # browser/context/page 管理
+│  │  ├─ session.py                # 登录态/存储态
+│  │  ├─ screenshots.py            # 截图
+│  │  └─ html_dump.py              # HTML落盘
+│  │
+│  ├─ services/
+│  │  ├─ collect_service.py        # 同步采集服务
+│  │  ├─ task_service.py           # 任务服务
+│  │  ├─ dedup_service.py          # 去重
+│  │  └─ scoring_service.py        # engagement/quality 评分
+│  │
+│  ├─ repositories/
+│  │  ├─ task_repo.py              # 任务状态存储
+│  │  └─ item_repo.py              # 结果持久化/缓存
+│  │
+│  └─ utils/
+│     ├─ time_utils.py
+│     ├─ text_utils.py
+│     ├─ id_utils.py
+│     └─ retry.py
+│
+├─ tests/
+│  ├─ test_collect_api.py
+│  ├─ test_xhs_list_parser.py
+│  ├─ test_xhs_detail_parser.py
+│  └─ test_normalizers.py
+│
+├─ artifacts/
+│  ├─ screenshots/
+│  ├─ html/
+│  └─ samples/
+│
+├─ save_login.py
+├─ requirements.txt
+├─ deploy.sh
+└─ README.md
+四、核心数据模型设计
+1）ContentItem
+
+这版是你后面最重要的标准结构。
+
+from datetime import datetime
+from pydantic import BaseModel, Field
+from typing import Any
+
+class ContentItem(BaseModel):
+    platform: str
+    keyword: str | None = None
+
+    source_id: str
+    url: str
+
+    title: str | None = None
+    author_name: str | None = None
+    author_id: str | None = None
+
+    snippet: str | None = None
+    content_text: str | None = None
+
+    cover_url: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
+
+    like_count: int | None = None
+    comment_count: int | None = None
+
+    publish_time: datetime | None = None
+    collected_at: datetime
+
+    parse_status: str
+    risk_status: str | None = None
+
+    engagement_score: float | None = None
+    quality_score: float | None = None
+
+    raw_data: dict[str, Any] = Field(default_factory=dict)
+2）为什么这样改
+
+当前 README 返回示例已经有 source_id、url、raw_data 这些基础骨架，所以 v2 不是推翻，而是在这个基础上把字段做实，把类型做正。
+
+五、接口设计
+1）同步采集接口
+
+适合你现在开发联调。
+
+POST /api/collect/run
+
+请求体：
+
+{
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "max_items": 20,
+  "need_detail": true,
+  "need_comments": false,
+  "dedup": true,
+  "timeout_sec": 120
+}
+
+返回：
+
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "count": 18,
+  "items": [
+    {
+      "platform": "xiaohongshu",
+      "source_id": "xxx",
+      "url": "https://www.xiaohongshu.com/explore/xxx",
+      "title": "贷款避坑指南",
+      "author_name": "小王",
+      "snippet": "最近很多人问贷款怎么选...",
+      "content_text": "完整正文...",
+      "cover_url": "https://...",
+      "image_urls": ["https://..."],
+      "like_count": 120,
+      "comment_count": 18,
+      "publish_time": "2026-03-25T11:20:00+08:00",
+      "collected_at": "2026-03-26T12:42:21+08:00",
+      "parse_status": "detail_success",
+      "risk_status": "normal",
+      "engagement_score": 174.0,
+      "quality_score": 86.0,
+      "raw_data": {}
+    }
+  ],
+  "message": "采集完成"
+}
+2）异步任务接口
+
+适合以后正式接主系统。
+
+POST /api/tasks/collect
+
+请求体和同步一致。
+返回：
+
+{
+  "success": true,
+  "task_id": "task_20260326_xxx",
+  "status": "queued"
+}
+GET /api/tasks/{task_id}
+
+返回：
+
+{
+  "task_id": "task_20260326_xxx",
+  "status": "running",
+  "progress": 65,
+  "message": "正在补采详情页",
+  "result": null
+}
+
+完成后：
+
+{
+  "task_id": "task_20260326_xxx",
+  "status": "success",
+  "progress": 100,
+  "result": {
+    "count": 18,
+    "items": [...]
+  }
+}
+3）单条详情补采接口
+
+这个很适合收件箱里“补采详情”按钮。
+
+POST /api/collect/detail
+
+请求体：
+
+{
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/xxx"
+}
+
+返回单条完整 ContentItem。
+
+4）平台能力说明接口
+
+因为你 README 里写了多平台可扩展，但当前已公开说明的功能重点还是小红书关键词搜索，所以 v2 最好把“支持到什么程度”明确暴露出来。
+
+GET /api/platforms
+
+返回：
+
+[
+  {
+    "platform": "xiaohongshu",
+    "enabled": true,
+    "capabilities": ["search", "detail"],
+    "need_login": true
+  },
+  {
+    "platform": "douyin",
+    "enabled": false,
+    "capabilities": [],
+    "need_login": false
+  }
+]
+5）健康检查接口
+GET /health
+
+保留现有健康检查。
+建议补充：
+
+browser ready
+login state ready
+storage state exists
+六、采集流程设计
+阶段 A：列表采集
+
+职责只保留这几个：
+
+找到内容卡片
+提取 url/source_id
+提取轻量字段：title/cover_url/like_count/snippet
+不在这里强行解析复杂字段
+
+返回：
+
+ListSeedItem
+阶段 B：详情补采
+
+进入详情页后补：
+
+content_text
+image_urls
+publish_time
+author_name
+comment_count
+阶段 C：标准化
+
+做：
+
+点赞数转 int
+评论数转 int
+时间转 datetime
+文本清洗
+图片 URL 去重
+阶段 D：打分与去重
+engagement_score = like_count + comment_count * 3
+quality_score 先规则版
+按 platform + source_id 去重
+阶段 E：输出
+返回结果
+或写入收件箱
+七、异常与状态设计
+异常分类
+InvalidPlatformError
+LoginExpiredError
+RiskBlockedError
+ListParseError
+DetailParseError
+TimeoutError
+状态码建议
+0   success
+100 platform_not_supported
+101 login_expired
+102 risk_blocked
+200 list_parse_failed
+201 detail_parse_failed
+500 internal_error
+parse_status 与 risk_status
+parse_status:
+- list_only
+- detail_success
+- detail_failed
+- parse_failed
+
+risk_status:
+- normal
+- login_required
+- captcha
+- blocked
+八、和主系统 AI_huoke 的对接方式
+
+README 里已经给了最基础的 requests.post() 对接示例，说明你当前架构方向是对的：把采集服务独立出来，然后主系统调用。v2 继续保持这个思路，不要把 Playwright 直接塞回主系统里。
+
+推荐链路
+
+AI_huoke 前端点“采集”
+  -> AI_huoke 后端提交采集任务
+  -> browser_collector 执行
+  -> 返回标准 ContentItem
+  -> AI_huoke 收件箱入库
+  -> 后续改写 / 审核 / 知识库沉淀
+九、开发顺序
+第 1 周
+
+先做最值钱的：
+
+拆列表页 / 详情页解析
+改 ContentItem
+加 need_detail
+加 parse_status
+加日志 / 截图 / HTML 落盘
+第 2 周
+增加任务接口
+去重与补采
+浏览器复用
+健康检查增强
+第 3 周
+收件箱联调
+打分规则
+风控状态识别
+为抖音预留 collector 目录骨架
+十、你现在最该落地的最小 v2
+
+如果你不想一次改太多，就先做这版最小闭环：
+
+必做
+POST /api/collect/run 增加 need_detail
+新增 detail_parser.py
+ContentItem 改成业务型字段
+增加 parse_status
+增加错误截图与 HTML 保存
+暂缓
+异步任务
+监控指标
+多平台真正实现
+
+我建议你下一步就直接进入代码层。
+我可以接着给你一版 “browser_collector v2 的目录骨架 + Pydantic 模型 + FastAPI 路由代码”，你基本可以直接往项目里贴。
+
+现在这版是“能抓到基础卡片”，但还不是“高质量可入库结果”。
+
+从这份表里看，主要有这几个问题：
+
+1. 数据量太少
+这次只有 3 条，说明当前采集链路还更像测试通过，不像稳定批量采集。
+如果你后面要做收件箱、爆款筛选、改写，3 条样本根本不够验证。
+
+2. 现在拿到的是“列表卡片信息”，不是“详情内容”
+你表里这些字段有值：
+
+title
+author_name
+snippet
+url
+cover_url
+like_count
+
+但这些字段明显更像搜索页卡片抽出来的，不是详情页真正补采的结果。
+
+3. 关键字段缺失很严重
+这几个字段全空：
+
+content_text
+publish_time
+
+这说明你现在还没有真正进入详情页补正文和发布时间。
+
+4. 评论数还没拿到
+comment_count 现在全是 0。
+这通常不是“真实没有评论”，而是当前代码根本没采评论数，或者没有走详情页解析。
+
+5. author_name 明显解析错位
+比如：
+
+第一条 author_name = 01-03
+第二条 author_name = 2025-03-30
+
+这个一看就不是作者名，而是把日期错当作者了。
+说明你当前的卡片文本拆分逻辑有问题，行号定位不稳定。
+
+6. snippet 里混入了作者/日期/点赞
+比如：
+
+波拉⭐爱提问？ 01-03 122
+广大二 2025-03-30 166
+
+这说明你现在不是在精准取字段，而是在把整块文本抓下来后硬拆，所以字段污染比较严重。
+
+7. engagement_score 其实只是直接等于点赞数
+这 3 条里：
+
+like_count = 122，engagement_score = 122
+like_count = 166，engagement_score = 166
+like_count = 3697，engagement_score = 3697
+
+说明这个“互动分”现在还没有真正设计，只是临时复制点赞数。
+那它就没必要单独叫 engagement_score，容易让人误以为你已经做了综合评分。
+
+8. quality_score 全是固定 90
+这也说明质量评分目前还是占位值，不是真实评估结果。
+
+9. parse_status 全是 partial
+这个状态反而是对的，说明系统自己也知道：
+当前只完成了部分解析，没有完成完整采集。
+
+我给你一句最直接的话：
+
+这份结果说明你的“搜索页粗采”已经通了，但“详情补采”和“字段清洗”还没真正完成。
+
+你现在最该优化的不是继续加新功能，而是先把采集质量做实。
+优先级我建议这样排：
+
+第一步，先修字段解析
+先把这几个字段修准：
+
+author_name
+title
+like_count
+snippet
+
+目标是：不要再出现“作者名变日期”“摘要里混作者和点赞”。
+
+第二步，补详情采集
+根据 url/source_id 进入详情页，补：
+
+content_text
+publish_time
+comment_count
+image_urls
+
+这一步做完，数据质量会直接上一个台阶。
+
+第三步，重做评分字段
+把：
+
+engagement_score
+quality_score
+
+先简化成真实可解释的逻辑，不要先放假分。
+比如：
+
+engagement = 点赞 * 1 + 评论 * 3
+quality = 标题长度、正文长度、图片数、是否有明确主题 这些规则先做一版
+
+第四步，增加采集状态细分
+不要只用 partial，建议改成：
+
+list_only
+detail_success
+detail_failed
+parse_failed
+
+这样后面排查会轻松很多。
+
+我的最终判断是：
+
+这份表证明你的采集模块方向没错，但目前还是“半成品数据”。
+已经够你验证链路了，还不够直接喂给收件箱和改写模块做正式生产。
+
+你下一步最值得做的是：
+
+把“小红书详情补采 + 字段纠偏”这一版彻底补完。
+
+C:\Users\ASUS\miniconda3\python.exe d:\Playwright爬虫\browser_collector\run_collect_to_excel.py --keyword 贷款 --max-items 10 --need-detail --need-comments --timeout 180 --output-dir d:\Playwright爬虫\exports

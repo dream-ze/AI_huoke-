@@ -8,13 +8,14 @@ class DetailService:
         try:
             collector = CollectorFactory.get_collector(req.platform)
             item = collector.fetch_detail(req)
+            is_success = item.parse_status == "detail_success"
             return CollectDetailResponse(
-                success=item.parse_status != "failed",
+                success=is_success,
                 platform=req.platform,
                 url=item.url,
                 source_id=item.source_id,
                 data=item,
-                message="详情补采完成" if item.parse_status != "failed" else item.error_message,
+                message="详情补采完成" if is_success else "详情补采失败",
                 raw_data=item.raw_data,
             )
         except Exception as ex:

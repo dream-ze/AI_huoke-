@@ -1,82 +1,69 @@
-from typing import Any, Dict, List, Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
+ParseStatus = Literal[
+    "list_only",
+    "detail_success",
+    "detail_failed",
+    "parse_failed",
+    "risk_blocked",
+]
+
+RiskStatus = Literal["normal", "login_required", "captcha", "blocked"]
+
+
 class CollectStats(BaseModel):
-    scanned: int = 0
-    parsed: int = 0
+    discovered: int = 0
+    detail_attempted: int = 0
+    detail_success: int = 0
+    parse_failed: int = 0
+    risk_blocked: int = 0
     deduplicated: int = 0
-    failed: int = 0
-
-
-class ContentMeta(BaseModel):
-    rank: int = 0
-    page_no: int = 1
-    position: int = 0
-    collector: str = "playwright"
-    collector_version: str = "v1.0"
-    search_url: str = ""
-    extracted_from: str = "search_result"
 
 
 class ContentItem(BaseModel):
     platform: str
-    keyword: str
-    source_id: str = ""
-    source_type: str = "note"
+    keyword: str | None = None
 
-    title: str = ""
-    author_name: str = ""
-    author_id: str = ""
-    author_profile_url: str = ""
+    source_id: str
+    url: str
 
-    snippet: str = ""
-    content_text: str = ""
-    content_html: str = ""
+    title: str | None = None
+    author_name: str | None = None
+    author_id: str | None = None
 
-    url: str = ""
-    cover_url: str = ""
-    image_urls: List[str] = Field(default_factory=list)
-    video_url: str = ""
-    publish_time: str = ""
+    snippet: str | None = None
+    content_text: str | None = None
 
-    like_count: int = 0
-    comment_count: int = 0
-    collect_count: int = 0
-    share_count: int = 0
-    engagement_score: int = 0
+    cover_url: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
 
-    is_ad: bool = False
-    is_deleted: bool = False
-    lang: str = "zh-CN"
-    topic_tags: List[str] = Field(default_factory=list)
-    matched_keyword: str = ""
+    like_count: int | None = None
+    comment_count: int | None = None
 
-    quality_score: int = 0
-    parse_status: Literal["ok", "partial", "failed"] = "partial"
-    missing_fields: List[str] = Field(default_factory=list)
-    error_message: str = ""
+    publish_time: datetime | None = None
+    collected_at: datetime
 
-    meta: ContentMeta = Field(default_factory=ContentMeta)
-    raw_data: Dict[str, Any] = Field(default_factory=dict)
-    debug_info: Dict[str, Any] = Field(default_factory=dict)
+    parse_status: ParseStatus
+    risk_status: RiskStatus | None = None
+
+    engagement_score: float | None = None
+    quality_score: float | None = None
+
+    raw_data: dict[str, Any] = Field(default_factory=dict)
 
 
 class CollectResponse(BaseModel):
     success: bool
     platform: str
     keyword: str
-
-    request_id: str
-    task_status: Literal["finished", "partial", "failed"]
-
     count: int
-    cost_ms: int
-    collected_at: str
-    has_more: bool = False
+    items: list[ContentItem]
     stats: CollectStats
-
-    items: List[ContentItem]
     message: str = ""
-    sample_excel_file: str | None = None
+    request_id: str
+    cost_ms: int
+    collected_at: datetime

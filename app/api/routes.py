@@ -1,4 +1,6 @@
 from fastapi import APIRouter
+from pathlib import Path
+
 from app.schemas.detail import CollectDetailRequest, CollectDetailResponse
 from app.schemas.request import CollectRequest
 from app.schemas.result import CollectResponse
@@ -10,7 +12,26 @@ router = APIRouter()
 
 @router.get("/health")
 def health():
-    return {"success": True, "message": "ok"}
+    state_path = Path(__file__).resolve().parents[2] / "xiaohongshu_state.json"
+    return {
+        "success": True,
+        "message": "ok",
+        "browser_ready": True,
+        "login_state_ready": state_path.exists(),
+        "storage_state_exists": state_path.exists(),
+    }
+
+
+@router.get("/api/platforms")
+def platforms():
+    return [
+        {
+            "platform": "xiaohongshu",
+            "enabled": True,
+            "capabilities": ["search", "detail"],
+            "need_login": True,
+        }
+    ]
 
 
 @router.post("/api/collect/run", response_model=CollectResponse)
