@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { createContent, listContent } from "../lib/api";
+import { listContent, submitManualToInbox } from "../lib/api";
 import { ContentAsset } from "../types";
 
 export function ContentPage() {
@@ -25,17 +25,16 @@ export function ContentPage() {
     setLoading(true);
     setMessage("");
     try {
-      await createContent({
+      await submitManualToInbox({
         platform,
-        content_type: "post",
         title,
         content,
         tags: tags
           .split(",")
           .map((s) => s.trim())
-          .filter(Boolean)
+          .filter(Boolean),
       });
-      setMessage("保存成功");
+      setMessage("已提交到收件箱，等待审核后入库");
       setTitle("");
       setContent("");
       await fetchData();

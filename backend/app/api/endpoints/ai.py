@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.config import settings
@@ -153,15 +153,16 @@ def collect_via_plugin(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db)
 ):
-    """Collect content via browser plugin"""
-    collection = BrowserPluginCollection(
-        user_id=current_user["user_id"],
-        **plugin_data.model_dump()
+    _ = plugin_data
+    _ = current_user
+    _ = db
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "message": "旧插件采集接口已下线，请迁移到 /api/v2/collect/ingest-page",
+            "replacement": "/api/v2/collect/ingest-page",
+        },
     )
-    db.add(collection)
-    db.commit()
-    db.refresh(collection)
-    return collection
 
 
 @router.post("/ark/vision", response_model=ArkVisionResponse)

@@ -1,0 +1,499 @@
+乱，也不会走偏。
+
+我不会再讲概念，只讲👇
+👉 你下一步具体要做什么（按顺序）
+
+🎯 一句话总结你现在的阶段
+
+你已经完成了：
+
+👉 ✅ 采集服务（browser-collector）部署成功
+
+你现在要做的是：
+
+👉 把采集能力接入主系统，跑通“内容进入系统”的闭环
+
+🧭 一、你当前的目标（非常清晰）
+
+先实现这个闭环：
+
+员工贴链接
+→ AI_huoke 后端
+→ 调用采集服务（8005）
+→ 数据进入收件箱
+→ 页面能看到
+
+⚠️ 只要这个通了，你项目就进入“能用阶段”
+
+🧱 二、你现在必须做的 5 件事（核心）
+✅ 1. 建三张核心表（最优先）
+
+你现在第一件事不是写接口，是先把数据结构定死。
+
+必做：
+collect_tasks（自动采集）
+employee_link_submissions（员工/微信提交）
+material_inbox（收件箱🔥）
+
+👉 这是你系统的“入口三件套”
+
+✅ 2. 写采集服务客户端（非常关键）
+
+建文件：
+
+backend/app/services/collector/browser_collector_client.py
+
+作用：
+ 
+👉 所有采集都统一走这里
+
+封两个方法：
+
+关键词采集
+单链接采集（重点）
+✅ 3. 做第一个接口（最重要）
+
+👉 员工贴链接接口（先做这个）
+
+POST /api/v1/employee-submissions/link
+
+流程：
+
+1. 写 employee_link_submissions
+2. 调 browser-collector（8005）
+3. 拿到解析结果
+4. 写入 material_inbox
+
+👉 这一步是你整个系统第一个“真实入口”
+
+✅ 4. 做收件箱查询接口
+GET /api/v1/material/inbox
+
+先不做复杂操作，只做：
+
+👉 能看到数据
+
+字段：
+
+标题
+平台
+来源（员工/采集）
+点赞评论
+状态
+✅ 5. 做最简单收件箱页面（或接口验证）
+
+哪怕你不写前端，也要做到：
+
+👉 Postman / curl 能看到收件箱数据
+
+🧪 三、第一阶段完成标准（你必须达到）
+
+你可以用这 4 条自测：
+
+✔ 测试 1：员工贴链接
+POST /employee-submissions/link
+
+👉 成功返回 submission_id
+
+✔ 测试 2：采集成功
+
+后端成功调用：
+
+http://127.0.0.1:8005
+
+👉 返回标题 / 内容 / 作者
+
+✔ 测试 3：数据入库
+
+数据库里有：
+
+employee_link_submissions ✔
+material_inbox ✔
+✔ 测试 4：收件箱能查
+GET /material/inbox
+
+👉 能看到刚刚那条内容
+
+👉 到这里，你就已经跑通“内容进入系统”
+
+🚀 四、第二阶段再做什么（不要现在做）
+
+等第一阶段通了，再做👇
+
+➕ 自动采集链路
+POST /collector/tasks/keyword
+
+👉 批量采集 → 入收件箱
+
+➕ 微信机器人接入
+POST /integrations/wechat/callback
+
+👉 群里发链接 → 自动进系统
+
+➕ 收件箱操作
+通过 → 入素材库
+丢弃
+转选题池
+转反例库
+❌ 五、你现在不要做的事（非常重要）
+
+你现在千万别做这些：
+
+❌ 不要再改采集服务（已经完成）
+❌ 不要搞插件
+❌ 不要做复杂AI流程
+❌ 不要做客户系统细节
+❌ 不要优化UI
+
+👉 你现在只做一件事：
+
+让数据“进来”
+
+🧠 六、你现在的系统结构（帮你定型）
+
+你现在已经是这个架构了👇
+
+[浏览器采集服务] 8005
+        ↓
+[AI_huoke 后端]
+        ↓
+employee_link_submissions（记录谁提交）
+        ↓
+material_inbox（统一入口🔥）
+        ↓
+后面再流向：
+- 素材库
+- AI改写
+- 发布
+- 客户
+📅 七、你今天可以完成的版本
+
+如果你按我这个来，你今天可以做到：
+
+👉 ✅ 员工贴链接
+👉 ✅ 自动解析
+👉 ✅ 数据进收件箱
+👉 ✅ 接口能查
+
+这已经是一个可以演示的版本了
+
+💥 最后一段很关键
+
+你现在不是缺功能，你是缺：
+
+👉 一个跑通的主链路
+
+而这个主链路就是：
+
+链接 → 采集 → 收件箱
+
+只要这一步通了：
+
+AI可以接
+客户可以接
+发布可以接
+看板可以接
+👉 下一步我可以直接帮你
+
+如果你想更快，我可以直接给你：
+
+👉 三张表的 SQLAlchemy 模型代码
+👉 employee-submissions 接口完整代码
+👉 browser_collector_client 封装代码
+
+
+自动采集链路 → 收件箱
+员工贴链接链路 → 收件箱
+微信机器人链路 → 收件箱
+
+然后再从收件箱流向：
+
+素材库
+选题池
+反例库
+后续 AI 改写 / 发布 / 客户归因
+
+这版比“直接进素材库”更适合你现在的系统。
+
+一、你现在的最终结构
+总流转图
+自动采集（关键词）
+        ┐
+员工贴链接
+        ├──→ 收件箱 material_inbox
+微信机器人链接
+        ┘
+                ↓
+        人工筛选 / AI初判
+                ↓
+     素材库 / 选题池 / 反例库 / 丢弃
+
+也就是：
+
+前面多入口，后面一个统一入口。
+
+二、为什么这版更合理
+
+因为你现在已经明确有两类来源：
+
+1. 自动采集
+
+量大，但杂
+
+2. 员工提交 / 微信机器人
+
+量小，但往往更精准
+
+这两类内容虽然价值不同，但有一个共同点：
+
+都属于“外部输入”，不能直接进正式业务库。
+
+所以统一先放收件箱最合理。
+
+三、你现在建议保留的 3 张表
+
+我帮你收成最关键的三层：
+
+表 1：collect_tasks
+
+自动采集任务表
+
+CREATE TABLE collect_tasks (
+    id BIGSERIAL PRIMARY KEY,
+    task_type VARCHAR(30) NOT NULL DEFAULT 'keyword',
+    platform VARCHAR(30) NOT NULL,
+    keyword VARCHAR(255) NOT NULL,
+    max_items INT NOT NULL DEFAULT 20,
+
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    result_count INT NOT NULL DEFAULT 0,
+    error_message TEXT,
+
+    created_by BIGINT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+这个只给自动采集链路用。
+
+表 2：employee_link_submissions
+
+员工提交 / 微信机器人提交表
+
+CREATE TABLE employee_link_submissions (
+    id BIGSERIAL PRIMARY KEY,
+
+    employee_id BIGINT,
+    source_type VARCHAR(30) NOT NULL,   -- manual_link / wechat_robot
+    platform VARCHAR(30),
+    url TEXT NOT NULL,
+    note TEXT,
+
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    error_message TEXT,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+这个表只负责记“谁提交了什么链接”。
+
+表 3：material_inbox
+
+统一收件箱表
+
+这个现在变成核心表。
+
+CREATE TABLE material_inbox (
+    id BIGSERIAL PRIMARY KEY,
+
+    source_channel VARCHAR(30) NOT NULL,   -- collect_task / employee_submission / wechat_robot
+    source_task_id BIGINT,
+    source_submission_id BIGINT,
+
+    platform VARCHAR(30) NOT NULL,
+    title VARCHAR(255),
+    author VARCHAR(255),
+    content TEXT,
+    url TEXT,
+    cover_url TEXT,
+
+    like_count INT DEFAULT 0,
+    comment_count INT DEFAULT 0,
+    collect_count INT DEFAULT 0,
+    share_count INT DEFAULT 0,
+    publish_time TIMESTAMP,
+
+    raw_data JSONB,
+
+    status VARCHAR(20) NOT NULL DEFAULT 'pending', 
+    -- pending / approved / discarded / topic / negative_case
+
+    submitted_by_employee_id BIGINT,
+    remark TEXT,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+四、三条链路怎么进收件箱
+链路 A：自动采集 → 收件箱
+关键词采集任务
+→ collect_tasks
+→ 调 browser-collector
+→ 返回多条内容
+→ 每条内容写入 material_inbox
+
+此时：
+
+source_channel = collect_task
+source_task_id = collect_tasks.id
+链路 B：员工贴链接 → 收件箱
+员工提交链接
+→ employee_link_submissions
+→ 调 browser-collector 单链接解析
+→ 解析结果写入 material_inbox
+
+此时：
+
+source_channel = employee_submission
+source_submission_id = employee_link_submissions.id
+submitted_by_employee_id = 员工ID
+链路 C：微信机器人 → 收件箱
+微信群消息中的链接
+→ 写入 employee_link_submissions
+→ source_type = wechat_robot
+→ 调 browser-collector 单链接解析
+→ 写入 material_inbox
+
+此时：
+
+source_channel = wechat_robot
+source_submission_id = employee_link_submissions.id
+五、API 应该怎么改
+1）自动采集任务接口
+创建任务
+POST /api/v1/collector/tasks/keyword
+
+作用：
+
+建立 collect_tasks
+调用采集服务
+采回结果后入 material_inbox
+
+返回里最好带：
+
+task_id
+result_count
+inbox_count
+2）员工提交链接接口
+员工贴链接
+POST /api/v1/employee-submissions/link
+
+作用：
+
+建立 employee_link_submissions
+调用采集服务单链接解析
+解析结果入 material_inbox
+3）微信机器人回调接口
+POST /api/v1/integrations/wechat/callback
+
+作用：
+
+从消息里提取链接
+建立 employee_link_submissions
+调用采集服务
+入 material_inbox
+4）收件箱接口
+
+这块现在要补全。
+
+收件箱列表
+GET /api/v1/material/inbox
+
+支持筛选：
+
+GET /api/v1/material/inbox?status=pending
+GET /api/v1/material/inbox?platform=xhs
+GET /api/v1/material/inbox?source_channel=employee_submission
+收件箱详情
+GET /api/v1/material/inbox/{id}
+审核通过
+POST /api/v1/material/inbox/{id}/approve
+
+作用：
+
+从收件箱转入正式素材库 material_items
+转选题池
+POST /api/v1/material/inbox/{id}/to-topic
+转反例库
+POST /api/v1/material/inbox/{id}/to-negative-case
+丢弃
+POST /api/v1/material/inbox/{id}/discard
+六、收件箱状态建议这样定义
+
+你不用一开始搞很复杂，但状态要清楚。
+
+推荐状态
+pending         待处理
+approved        已转素材库
+topic           已转选题池
+negative_case   已转反例库
+discarded       已丢弃
+
+这样后面很好筛选。
+
+七、收件箱页面怎么设计
+
+这个页面会变成你系统里很重要的页面。
+
+列表展示字段建议
+标题
+平台
+作者
+来源渠道
+提交人
+点赞 / 评论 / 收藏
+状态
+创建时间
+操作按钮
+查看详情
+通过入素材库
+转选题池
+转反例库
+丢弃
+筛选条件
+平台
+来源渠道
+状态
+提交员工
+时间范围
+八、服务层职责怎么分
+1）自动采集服务
+
+task_service.py
+
+负责：
+
+创建任务
+调 browser-collector
+把结果写入 material_inbox
+2）员工提交服务
+
+submission_service.py
+
+负责：
+
+记录员工提交
+调 browser-collector
+把解析结果写入 material_inbox
+3）收件箱服务
+
+inbox_service.py
+
+负责：
+
+查询收件箱
+审核通过
+转素材库
+转选题池
+丢弃

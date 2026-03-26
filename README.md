@@ -117,14 +117,17 @@ POST   /api/auth/login         # 登录
 GET    /api/auth/me            # 获取当前用户
 ```
 
-### 📝 内容管理 (6 个)
+### 📝 采集与素材 (9 个)
 ```
-POST   /api/content/create     # 创建内容
-GET    /api/content/list       # 内容列表
-GET    /api/content/{id}       # 获取内容
-PUT    /api/content/{id}       # 编辑内容
-DELETE /api/content/{id}       # 删除内容
-GET    /api/content/search/topic # 搜索
+POST   /api/v2/collect/extract-from-url # 链接预提取
+POST   /api/v2/collect/ingest-page      # 统一入库
+GET    /api/v2/collect/logs             # 采集日志
+GET    /api/v2/materials                # 素材列表
+GET    /api/v2/materials/{id}           # 素材详情
+PATCH  /api/v2/materials/{id}           # 编辑内容
+DELETE /api/v2/materials/{id}           # 删除内容
+POST   /api/v2/materials/{id}/analyze   # AI分析
+POST   /api/v2/materials/{id}/rewrite   # AI改写
 ```
 
 ### ✅ 合规审核 (1 个)
@@ -165,7 +168,6 @@ GET    /api/dashboard/high-quality-content # 高质量内容
 POST   /api/ai/rewrite/xiaohongshu  # 小红书改写
 POST   /api/ai/rewrite/douyin       # 抖音改写
 POST   /api/ai/rewrite/zhihu        # 知乎改写
-POST   /api/ai/plugin/collect       # 插件采集
 ```
 
 ---
@@ -194,16 +196,17 @@ curl -X POST http://localhost:8000/api/auth/login \
 # 返回: {"access_token": "...", "token_type": "bearer"}
 ```
 
-### 2. 创建内容
+### 2. 采集入库
 ```bash
-curl -X POST http://localhost:8000/api/content/create \
+curl -X POST http://localhost:8000/api/v2/collect/ingest-page \
   -H "Authorization: Bearer {token}" \
   -H "Content-Type: application/json" \
   -d '{
+    "source_type": "manual_link",
     "platform": "xiaohongshu",
     "content_type": "post",
     "title": "如何提升销售业绩",
-    "content": "这是内容正文...",
+    "content_text": "这是内容正文...",
     "tags": ["销售", "技巧"]
   }'
 ```

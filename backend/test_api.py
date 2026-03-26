@@ -58,13 +58,14 @@ def get_headers():
 def create_content(title: str, content: str, platform: str = "xiaohongshu"):
     """Create content asset"""
     response = requests.post(
-        f"{BASE_URL}/api/content/create",
+        f"{BASE_URL}/api/v2/collect/ingest-page",
         headers=get_headers(),
         json={
+            "source_type": "manual_link",
             "platform": platform,
             "content_type": "post",
             "title": title,
-            "content": content,
+            "content_text": content,
             "tags": ["marketing", "content"],
         }
     )
@@ -91,7 +92,7 @@ def check_compliance(content: str):
 def list_contents():
     """List user's contents"""
     response = requests.get(
-        f"{BASE_URL}/api/content/list",
+        f"{BASE_URL}/api/v2/materials",
         headers=get_headers()
     )
     print(f"List Contents: {response.status_code}")

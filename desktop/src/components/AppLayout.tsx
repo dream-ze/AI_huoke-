@@ -5,7 +5,7 @@ import { getSystemVersion } from "../lib/api";
 const navItems = [
   { to: "/dashboard", label: "数据看板" },
   { to: "/collect-center", label: "采集中心" },
-  { to: "/inbox", label: "素材收件箱" },
+  { to: "/inbox", label: "收件箱" },
   { to: "/materials", label: "素材中心" },
   { to: "/insight", label: "爆款洞察" },
   { to: "/ai-workbench", label: "AI工作台" },

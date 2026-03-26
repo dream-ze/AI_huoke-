@@ -2,9 +2,11 @@ import axios from "axios";
 import { clearToken, getToken } from "./auth";
 
 function resolveApiBaseUrl(): string {
+  const isElectron = typeof window !== "undefined" && !!(window as any).desktop?.isElectron;
   if (typeof window !== "undefined") {
     const runtimeBase = localStorage.getItem("zhk_api_base_url");
-    if (runtimeBase) return runtimeBase;
+    // Only Electron desktop should honor runtime localhost overrides.
+    if (isElectron && runtimeBase) return runtimeBase;
   }
   return import.meta.env.VITE_API_BASE_URL || "";
 }
@@ -78,19 +80,25 @@ export async function getAICallStats(days = 7, scope: "me" | "all" = "me") {
 }
 
 export async function listContent() {
-  const { data } = await api.get("/api/content/list");
+  const { data } = await api.get("/api/v2/materials");
   return data;
 }
 
-export async function createContent(payload: {
+export async function submitManualToInbox(payload: {
   platform: string;
-  content_type: string;
   title: string;
   content: string;
-  tags: string[];
+  tags?: string[];
+  note?: string;
 }) {
-  const { data } = await api.post("/api/content/create", payload);
-  return data;
+  const { data } = await api.post("/api/v1/material/inbox/manual", {
+    platform: payload.platform,
+    title: payload.title,
+    content: payload.content,
+    tags: payload.tags || [],
+    note: payload.note,
+  });
+  return data as { inbox_id: number; status: string };
 }
 
 export async function rewriteContent(payload: {
@@ -115,39 +123,8 @@ export async function rewriteContent(payload: {
 }
 
 // ── 素材中台 ──────────────────────────────────────────
-export async function parseLink(url: string) {
-  const { data } = await api.post("/api/v1/collect/parse-link", { url });
-  return data;
-}
-
-export async function saveCollect(payload: {
-  platform: string;
-  source_url?: string;
-  content_type?: string;
-  title: string;
-  content: string;
-  author?: string;
-  tags?: string[];
-  manual_note?: string;
-  source_type?: string;
-  category?: string;
-  metrics?: Record<string, number>;
-}) {
-  const { data } = await api.post("/api/v1/collect/save", {
-    content_type: "post",
-    tags: [],
-    comments_keywords: [],
-    metrics: {},
-    source_type: "paste",
-    ...payload,
-  });
-  return data;
-}
-
 export async function analyzeCollect(contentId: number, forceCloud = false) {
-  const { data } = await api.post(
-    `/api/v1/collect/analyze/${contentId}?force_cloud=${forceCloud}`
-  );
+  const { data } = await api.post(`/api/v2/materials/${contentId}/analyze?force_cloud=${forceCloud}`);
   return data;
 }
 
@@ -159,12 +136,35 @@ export async function listCollect(params?: {
   skip?: number;
   limit?: number;
 }) {
-  const { data } = await api.get("/api/v1/collect/list", { params });
+  const { data } = await api.get("/api/v2/materials", { params });
+  return (data || []).map((item: any) => ({
+    id: item.id,
+    platform: item.platform,
+    source_url: item.source_url,
+    content_type: item.content_type,
+    title: item.title,
+    content: item.content_text || "",
+    author: item.author_name,
+    tags: item.tags || [],
+    heat_score: item.heat_score || 0,
+    is_viral: !!item.is_viral,
+    source_type: item.source_type,
+    category: item.category,
+    manual_note: item.manual_note,
+    metrics: item.metrics || {},
+    created_at: item.created_at,
+  }));
+}
+
+export async function getCollectDetail(id: number) {
+  const { data } = await api.get(`/api/v2/materials/${id}`);
   return data;
 }
 
-export async function collectStats() {
-  const { data } = await api.get("/api/v1/collect/stats");
+export async function rewriteCollect(id: number, targetPlatform: "xiaohongshu" | "douyin" | "zhihu") {
+  const { data } = await api.post(`/api/v2/materials/${id}/rewrite`, {
+    target_platform: targetPlatform,
+  });
   return data;
 }
 
@@ -172,74 +172,33 @@ export async function updateCollect(
   id: number,
   payload: { tags?: string[]; manual_note?: string; category?: string; title?: string; content?: string }
 ) {
-  const { data } = await api.put(`/api/v1/collect/${id}`, payload);
+  const { data } = await api.patch(`/api/v2/materials/${id}`, {
+    title: payload.title,
+    content_text: payload.content,
+    tags: payload.tags,
+    manual_note: payload.manual_note,
+    category: payload.category,
+  });
   return data;
 }
 
 export async function deleteCollect(id: number) {
-  const { data } = await api.delete(`/api/v1/collect/${id}`);
+  const { data } = await api.delete(`/api/v2/materials/${id}`);
   return data;
 }
 
 export async function collectMetaOptions() {
-  const { data } = await api.get("/api/v1/collect/meta/options");
-  return data;
-}
-
-export async function createInboxItem(payload: {
-  platform: string;
-  source_url?: string;
-  content_type?: string;
-  title: string;
-  content: string;
-  author?: string;
-  tags?: string[];
-  manual_note?: string;
-  source_type?: string;
-  category?: string;
-  metrics?: Record<string, number>;
-}) {
-  const { data } = await api.post("/api/v1/inbox/create", {
-    content_type: "post",
-    tags: [],
-    metrics: {},
-    source_type: "paste",
-    ...payload,
-  });
-  return data;
-}
-
-export async function listInboxItems(params?: {
-  status?: string;
-  platform?: string;
-  search?: string;
-  skip?: number;
-  limit?: number;
-}) {
-  const { data } = await api.get("/api/v1/inbox/list", { params });
-  return data;
-}
-
-export async function getInboxStats() {
-  const { data } = await api.get("/api/v1/inbox/stats");
-  return data;
-}
-
-export async function analyzeInboxItem(inboxId: number, forceCloud = false) {
-  const { data } = await api.post(`/api/v1/inbox/${inboxId}/analyze?force_cloud=${forceCloud}`);
-  return data;
-}
-
-export async function promoteInboxItem(inboxId: number) {
-  const { data } = await api.post(`/api/v1/inbox/${inboxId}/promote`);
-  return data;
-}
-
-export async function discardInboxItem(inboxId: number, reviewNote?: string) {
-  const { data } = await api.post(`/api/v1/inbox/${inboxId}/discard`, null, {
-    params: reviewNote ? { review_note: reviewNote } : undefined,
-  });
-  return data;
+  return {
+    platforms: [
+      ["xiaohongshu", "小红书"],
+      ["douyin", "抖音"],
+      ["zhihu", "知乎"],
+      ["xianyu", "咸鱼"],
+      ["wechat", "微信"],
+      ["other", "其他"],
+    ],
+    categories: ["额度提升", "征信修复", "负债优化", "职业认证", "房贷公积金", "车贷", "企业贷款", "引流获客", "客户话术", "爆款参考", "其他"],
+  };
 }
 
 export async function analyzeArkVision(payload: {
@@ -538,5 +497,82 @@ export async function retrieveInsightContext(payload: {
     limit: 5,
     ...payload,
   });
+  return data;
+}
+
+// ── 新采集链路（v1 pipeline）────────────────────────────────────
+
+export async function createKeywordCollectTask(payload: {
+  platform: string;
+  keyword: string;
+  max_items?: number;
+}) {
+  const { data } = await api.post("/api/v1/collector/tasks/keyword", {
+    platform: payload.platform,
+    keyword: payload.keyword,
+    max_items: payload.max_items ?? 20,
+  });
+  return data as { task_id: number; status: string; result_count: number; inbox_count: number };
+}
+
+export async function submitEmployeeLink(payload: { url: string; note?: string }) {
+  const { data } = await api.post("/api/v1/employee-submissions/link", {
+    url: payload.url,
+    note: payload.note,
+  });
+  return data as { submission_id: number; status: string };
+}
+
+export async function listMaterialInbox(params?: {
+  status?: string;
+  platform?: string;
+  source_channel?: string;
+  skip?: number;
+  limit?: number;
+}) {
+  const { data } = await api.get("/api/v1/material/inbox", { params });
+  return data as Array<{
+    id: number;
+    source_channel: string;
+    source_task_id?: number | null;
+    source_submission_id?: number | null;
+    platform: string;
+    title?: string | null;
+    author?: string | null;
+    content?: string | null;
+    url?: string | null;
+    like_count: number;
+    comment_count: number;
+    collect_count: number;
+    share_count: number;
+    status: string;
+    submitted_by_employee_id?: number | null;
+    remark?: string | null;
+    created_at?: string | null;
+  }>;
+}
+
+export async function getMaterialInboxItem(id: number) {
+  const { data } = await api.get(`/api/v1/material/inbox/${id}`);
+  return data;
+}
+
+export async function approveInboxItem(id: number, remark?: string) {
+  const { data } = await api.post(`/api/v1/material/inbox/${id}/approve`, { remark });
+  return data;
+}
+
+export async function discardInboxItem(id: number, remark?: string) {
+  const { data } = await api.post(`/api/v1/material/inbox/${id}/discard`, { remark });
+  return data;
+}
+
+export async function toTopicInboxItem(id: number, topic_id: number, remark?: string) {
+  const { data } = await api.post(`/api/v1/material/inbox/${id}/to-topic`, { topic_id, remark });
+  return data;
+}
+
+export async function toNegativeCaseInboxItem(id: number, remark?: string) {
+  const { data } = await api.post(`/api/v1/material/inbox/${id}/to-negative-case`, { remark });
   return data;
 }

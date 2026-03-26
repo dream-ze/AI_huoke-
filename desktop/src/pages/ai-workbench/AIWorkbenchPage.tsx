@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
   analyzeArkVision,
-  createContent,
   listContent,
   listInsightTopics,
   rewriteContent,
+  submitManualToInbox,
 } from "../../lib/api";
 import { ContentAsset } from "../../types";
 
@@ -96,33 +96,15 @@ export function AIWorkbenchPage() {
     setError("");
     setResult("");
     try {
-      const created = await createContent({
+      await submitManualToInbox({
         platform: "ark_vision",
-        content_type: "post",
         title: `图片理解_${new Date().toLocaleString()}`,
         content: visionResult.trim(),
-        tags: ["火山图片理解", "自动入库"],
+        tags: ["火山图片理解"],
       });
-
-      const newContentId = created?.id;
-      if (!newContentId) {
-        throw new Error("素材创建失败");
-      }
-
-      const rewritten = await rewriteContent({
-        content_id: Number(newContentId),
-        target_platform: targetPlatform,
-        topic_name: topicName || undefined,
-      });
-      setResult(rewritten?.rewritten || "未返回内容");
-      setInsightRefCount(rewritten?.insight_reference_count ?? null);
-
-      const list = await listContent();
-      setContentList(list || []);
-      setContentId(Number(newContentId));
-      setVisionToRewriteMessage("已将识别结果入库并完成改写");
+      setVisionToRewriteMessage("已将识别结果提交到收件箱，审核通过后可在左侧选择该素材进行改写");
     } catch (err: any) {
-      setVisionError(err?.response?.data?.detail || err?.message || "一键改写失败");
+      setVisionError(err?.response?.data?.detail || err?.message || "提交失败");
     } finally {
       setVisionToRewriteLoading(false);
     }

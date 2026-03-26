@@ -77,6 +77,74 @@ class ContentAsset(Base):
     # Relationships
     owner = relationship("User", back_populates="contents")
     rewrites = relationship("RewrittenContent", back_populates="source_content")
+    blocks = relationship("ContentBlock", back_populates="content", cascade="all,delete-orphan")
+    comments = relationship("ContentComment", back_populates="content", cascade="all,delete-orphan")
+    snapshots = relationship("ContentSnapshot", back_populates="content", cascade="all,delete-orphan")
+    insights = relationship("ContentInsight", back_populates="content", cascade="all,delete-orphan")
+
+
+class ContentBlock(Base):
+    """Structured body blocks for a collected content item."""
+
+    __tablename__ = "content_blocks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    content_id = Column(Integer, ForeignKey("content_assets.id", ondelete="CASCADE"), nullable=False, index=True)
+    block_type = Column(String(32), nullable=False, default="paragraph")
+    block_order = Column(Integer, nullable=False, default=0)
+    block_text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    content = relationship("ContentAsset", back_populates="blocks")
+
+
+class ContentComment(Base):
+    """Structured comments for a collected content item."""
+
+    __tablename__ = "content_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    content_id = Column(Integer, ForeignKey("content_assets.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_comment_id = Column(Integer, ForeignKey("content_comments.id", ondelete="SET NULL"), nullable=True)
+    commenter_name = Column(String(100), nullable=True)
+    comment_text = Column(Text, nullable=False)
+    like_count = Column(Integer, default=0)
+    is_pinned = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    content = relationship("ContentAsset", back_populates="comments")
+
+
+class ContentSnapshot(Base):
+    """Page snapshots captured at collect time."""
+
+    __tablename__ = "content_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    content_id = Column(Integer, ForeignKey("content_assets.id", ondelete="CASCADE"), nullable=False, index=True)
+    raw_html = Column(Text, nullable=True)
+    screenshot_url = Column(String(500), nullable=True)
+    page_meta_json = Column(JSON, default=dict)
+    collected_at = Column(DateTime, default=datetime.utcnow)
+
+    content = relationship("ContentAsset", back_populates="snapshots")
+
+
+class ContentInsight(Base):
+    """Asynchronous insight results for a content item."""
+
+    __tablename__ = "content_insights"
+
+    id = Column(Integer, primary_key=True, index=True)
+    content_id = Column(Integer, ForeignKey("content_assets.id", ondelete="CASCADE"), nullable=False, index=True)
+    high_freq_questions_json = Column(JSON, default=list)
+    key_sentences_json = Column(JSON, default=list)
+    title_pattern = Column(String(128), nullable=True)
+    suggested_topics_json = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    content = relationship("ContentAsset", back_populates="insights")
 
 
 class RiskLevel(str, enum.Enum):
@@ -340,6 +408,81 @@ class InboxItem(Base):
     assignee = relationship("User", foreign_keys=[assigned_to])
     promoted_content = relationship("ContentAsset", foreign_keys=[promoted_content_id])
     promoted_insight_item = relationship("InsightContentItem", foreign_keys=[promoted_insight_item_id])
+
+
+class CollectTask(Base):
+    """Keyword based browser collection task."""
+
+    __tablename__ = "collect_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    task_type = Column(String(30), nullable=False, default="keyword")
+    platform = Column(String(30), nullable=False)
+    keyword = Column(String(255), nullable=False)
+    max_items = Column(Integer, nullable=False, default=20)
+
+    status = Column(String(20), nullable=False, default="pending")
+    result_count = Column(Integer, nullable=False, default=0)
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class EmployeeLinkSubmission(Base):
+    """Employee/manual/wechat link submissions before parsing."""
+
+    __tablename__ = "employee_link_submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    source_type = Column(String(30), nullable=False)  # manual_link / wechat_robot
+    platform = Column(String(30), nullable=True)
+    url = Column(String(500), nullable=False)
+    note = Column(Text, nullable=True)
+
+    status = Column(String(20), nullable=False, default="pending")
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MaterialInbox(Base):
+    """Unified intake inbox for all external content inputs."""
+
+    __tablename__ = "material_inbox"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    source_channel = Column(String(30), nullable=False)  # collect_task / employee_submission / wechat_robot
+    source_task_id = Column(Integer, ForeignKey("collect_tasks.id"), nullable=True, index=True)
+    source_submission_id = Column(Integer, ForeignKey("employee_link_submissions.id"), nullable=True, index=True)
+
+    platform = Column(String(30), nullable=False)
+    title = Column(String(255), nullable=True)
+    author = Column(String(255), nullable=True)
+    content = Column(Text, nullable=True)
+    url = Column(String(500), nullable=True)
+    cover_url = Column(String(500), nullable=True)
+
+    like_count = Column(Integer, default=0)
+    comment_count = Column(Integer, default=0)
+    collect_count = Column(Integer, default=0)
+    share_count = Column(Integer, default=0)
+    publish_time = Column(DateTime, nullable=True)
+
+    raw_data = Column(JSON, default=dict)
+
+    status = Column(String(20), nullable=False, default="pending")
+    submitted_by_employee_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    remark = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 # ─────────────────────────────────────────────────────────────

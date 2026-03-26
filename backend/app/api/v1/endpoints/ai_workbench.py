@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -194,43 +194,16 @@ def collect_via_plugin(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    collection = BrowserPluginCollection(
-        user_id=current_user["user_id"],
-        **plugin_data.model_dump(),
+    _ = plugin_data
+    _ = current_user
+    _ = db
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "message": "旧插件采集接口已下线，请迁移到 /api/v2/collect/ingest-page",
+            "replacement": "/api/v2/collect/ingest-page",
+        },
     )
-    db.add(collection)
-    db.commit()
-    db.refresh(collection)
-
-    asset = _sync_plugin_content_asset(db, current_user["user_id"], plugin_data)
-    insight_item = InsightService.ingest_item(
-        db,
-        owner_id=current_user["user_id"],
-        platform=plugin_data.platform,
-        title=plugin_data.title,
-        body_text=plugin_data.content,
-        source_url=plugin_data.url,
-        content_type="post",
-        author_name=plugin_data.author,
-        publish_time=plugin_data.publish_time,
-        comment_count=len(plugin_data.comments_json or []),
-        manual_note="浏览器插件采集自动同步到洞察库",
-        source_type="plugin",
-        raw_payload=plugin_data.model_dump(),
-    )
-
-    return {
-        "id": collection.id,
-        "platform": collection.platform,
-        "title": collection.title,
-        "author": collection.author,
-        "url": collection.url,
-        "heat_score": collection.heat_score,
-        "is_viral": collection.is_viral,
-        "synced_content_asset_id": asset.id,
-        "synced_insight_item_id": insight_item.id,
-        "created_at": collection.created_at,
-    }
 
 
 @ai_workbench_routes.post("/ark/vision", response_model=ArkVisionResponse)

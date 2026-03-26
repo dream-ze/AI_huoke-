@@ -74,6 +74,76 @@ export type CollectItem = {
   created_at: string;
 };
 
+export type CollectBlock = {
+  id?: number;
+  block_type: string;
+  block_order: number;
+  block_text: string;
+};
+
+export type CollectComment = {
+  id?: number;
+  parent_comment_id?: number | null;
+  commenter_name?: string;
+  comment_text: string;
+  like_count?: number;
+  is_pinned?: boolean;
+};
+
+export type CollectSnapshot = {
+  raw_html?: string | null;
+  screenshot_url?: string | null;
+  page_meta_json?: Record<string, any>;
+  raw_payload?: Record<string, any>;
+};
+
+export type CollectInsight = {
+  high_freq_questions_json: string[];
+  key_sentences_json: string[];
+  title_pattern?: string | null;
+  suggested_topics_json: string[];
+};
+
+export type CollectDetail = {
+  id: number;
+  platform: string;
+  source_type?: string;
+  source_url?: string;
+  content_type: string;
+  title: string;
+  content_text: string;
+  author_name?: string;
+  publish_time?: string;
+  tags: string[];
+  metrics: Record<string, any>;
+  category?: string;
+  manual_note?: string;
+  heat_score: number;
+  is_viral: boolean;
+  blocks: CollectBlock[];
+  comments: CollectComment[];
+  snapshot: CollectSnapshot;
+  insight: CollectInsight;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SpiderXHSBatchRow = {
+  note_id: string;
+  content_id?: number;
+  dedupe_hit?: boolean;
+  status: "ok" | "failed";
+  error?: string;
+};
+
+export type SpiderXHSBatchResult = {
+  total: number;
+  ok: number;
+  dedupe: number;
+  failed: number;
+  rows: SpiderXHSBatchRow[];
+};
+
 export type ParsedLinkMeta = {
   platform: string;
   platform_label: string;

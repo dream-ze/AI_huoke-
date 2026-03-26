@@ -1,166 +1,233 @@
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import verify_token
-from app.domains.acquisition.inbox_service import InboxService
-from app.domains.ai_workbench.ai_service import AIService
-from app.schemas import (
-    InboxAutoMergeRequest,
-    InboxBatchActionResponse,
-    InboxBatchAssignRequest,
-    InboxBatchDiscardRequest,
-    InboxBatchPromoteRequest,
-    InboxCreateRequest,
-    InboxDedupePreviewResponse,
-    InboxPromoteResponse,
-    InboxResponse,
-    InboxStatsResponse,
-    InboxUpdateRequest,
+from app.models import MaterialInbox
+from app.services.collector import AcquisitionIntakeService
+
+v1_inbox_router = APIRouter(prefix="/material", tags=["material-inbox-v1"])
+
+
+# ─────────────────────────────────────────
+# 请求 / 响应 Schema
+# ─────────────────────────────────────────
+
+class ApproveRequest(BaseModel):
+    remark: Optional[str] = None
+
+
+class ManualInboxRequest(BaseModel):
+    platform: str
+    title: str
+    content: str
+    tags: list[str] = []
+    note: Optional[str] = None
+
+
+class ToTopicRequest(BaseModel):
+    topic_id: int
+    remark: Optional[str] = None
+
+
+class NegativeCaseRequest(BaseModel):
+    remark: Optional[str] = None
+
+
+class DiscardRequest(BaseModel):
+    remark: Optional[str] = None
+
+
+# ─────────────────────────────────────────
+# 工具
+# ─────────────────────────────────────────
+
+def _to_row(item: MaterialInbox) -> dict[str, Any]:
+    created_at = getattr(item, "created_at", None)
+    updated_at = getattr(item, "updated_at", None)
+    publish_time = getattr(item, "publish_time", None)
+    return {
+        "id": item.id,
+        "source_channel": item.source_channel,
+        "source_task_id": item.source_task_id,
+        "source_submission_id": item.source_submission_id,
+        "platform": item.platform,
+        "title": item.title,
+        "author": item.author,
+        "content": item.content,
+        "url": item.url,
+        "cover_url": item.cover_url,
+        "like_count": item.like_count,
+        "comment_count": item.comment_count,
+        "collect_count": item.collect_count,
+        "share_count": item.share_count,
+        "publish_time": publish_time.isoformat() if publish_time else None,
+        "raw_data": item.raw_data or {},
+        "status": item.status,
+        "submitted_by_employee_id": item.submitted_by_employee_id,
+        "remark": item.remark,
+        "created_at": created_at.isoformat() if created_at else None,
+        "updated_at": updated_at.isoformat() if updated_at else None,
+    }
+
+
+# ─────────────────────────────────────────
+# 列表查询（静态路由必须在动态路由之前）
+# ─────────────────────────────────────────
+
+@v1_inbox_router.get(
+    "/inbox",
+    summary="收件箱列表",
+    description="查询当前用户的收件箱条目，支持按 status / platform / source_channel 过滤。",
 )
-
-inbox_routes = APIRouter(tags=["inbox"])
-
-
-@inbox_routes.post("/create", response_model=InboxResponse)
-def create_inbox_item(
-    req: InboxCreateRequest,
+def list_material_inbox(
+    status: Optional[str] = Query(default=None, description="pending / approved / negative_case / discarded"),
+    platform: Optional[str] = Query(default=None),
+    source_channel: Optional[str] = Query(default=None, description="collect_task / employee_submission / wechat_robot"),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    return InboxService.create_item(db, current_user["user_id"], req.model_dump())
+    items = AcquisitionIntakeService.list_inbox(
+        db=db,
+        owner_id=current_user["user_id"],
+        status=status,
+        platform=platform,
+        source_channel=source_channel,
+        skip=skip,
+        limit=limit,
+    )
+    return [_to_row(item) for item in items]
 
 
-@inbox_routes.get("/list", response_model=list[InboxResponse])
-def list_inbox_items(
-    status: Optional[str] = Query(None),
-    platform: Optional[str] = Query(None),
-    search: Optional[str] = Query(None),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+@v1_inbox_router.post(
+    "/inbox/manual",
+    summary="手动录入内容到收件箱",
+    description="将手动填写的标题/正文直接提交到收件箱，状态为 pending，等待人工审核。",
+)
+def submit_manual_to_inbox(
+    req: ManualInboxRequest,
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    return InboxService.list_items(db, current_user["user_id"], status, platform, search, skip, limit)
-
-
-@inbox_routes.get("/stats", response_model=InboxStatsResponse)
-def inbox_stats(
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
-):
-    return InboxService.get_stats(db, current_user["user_id"])
-
-
-@inbox_routes.post("/batch-actions/assign", response_model=InboxBatchActionResponse)
-def batch_assign_inbox_items(
-    req: InboxBatchAssignRequest,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
-):
-    return InboxService.batch_assign(
-        db,
-        user_id=current_user["user_id"],
-        inbox_ids=req.inbox_ids,
-        assignee_user_id=req.assignee_user_id,
-        note_template=req.note_template,
+    return AcquisitionIntakeService.submit_manual(
+        db=db,
+        owner_id=current_user["user_id"],
+        platform=req.platform,
+        title=req.title,
+        content=req.content,
+        tags=req.tags,
+        note=req.note,
     )
 
 
-@inbox_routes.post("/batch-actions/discard", response_model=InboxBatchActionResponse)
-def batch_discard_inbox_items(
-    req: InboxBatchDiscardRequest,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
-):
-    return InboxService.batch_discard(
-        db,
-        user_id=current_user["user_id"],
-        inbox_ids=req.inbox_ids,
-        review_note=req.review_note,
-    )
+# ─────────────────────────────────────────
+# 分拣动作（POST /inbox/{id}/动作）
+# 必须注册在 GET /inbox/{inbox_id} 之前，
+# 以防动态路由抢先匹配。
+# ─────────────────────────────────────────
 
-
-@inbox_routes.post("/batch-actions/promote", response_model=InboxBatchActionResponse)
-def batch_promote_inbox_items(
-    req: InboxBatchPromoteRequest,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
-):
-    return InboxService.batch_promote(
-        db,
-        user_id=current_user["user_id"],
-        inbox_ids=req.inbox_ids,
-    )
-
-
-@inbox_routes.post("/dedupe/auto-merge", response_model=InboxBatchActionResponse)
-def dedupe_auto_merge(
-    req: InboxAutoMergeRequest,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
-):
-    return InboxService.auto_merge_duplicates(
-        db,
-        user_id=current_user["user_id"],
-        keep_strategy=req.keep_strategy,
-        dry_run=req.dry_run,
-    )
-
-
-@inbox_routes.get("/dedupe/preview", response_model=InboxDedupePreviewResponse)
-def dedupe_preview(
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
-):
-    return InboxService.dedupe_preview(db, user_id=current_user["user_id"])
-
-
-@inbox_routes.put("/{inbox_id}", response_model=InboxResponse)
-def update_inbox_item(
+@v1_inbox_router.post(
+    "/inbox/{inbox_id}/approve",
+    summary="审核通过 – 入素材库与洞察库",
+    description=(
+        "将 pending 状态的收件箱条目提升到 ContentAsset（素材库）和 InsightContentItem（洞察库）。"
+        "操作幂等保护：非 pending 状态的条目返回 409。"
+    ),
+)
+def approve_inbox_item(
     inbox_id: int,
-    req: InboxUpdateRequest,
+    req: ApproveRequest,
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    item = InboxService.get_item(db, current_user["user_id"], inbox_id)
-    return InboxService.update_item(db, item, req.model_dump(exclude_unset=True))
+    try:
+        return AcquisitionIntakeService.approve_item(db, current_user["user_id"], inbox_id, req.remark)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
-@inbox_routes.post("/{inbox_id}/analyze", response_model=InboxResponse)
-async def analyze_inbox_item(
+@v1_inbox_router.post(
+    "/inbox/{inbox_id}/to-topic",
+    summary="挂主题 – 入洞察库并关联指定主题",
+    description=(
+        "将 pending 收件箱条目提升到 ContentAsset 和 InsightContentItem，并绑定 topic_id 对应的主题。"
+        "若 topic_id 不存在返回 404；非 pending 状态返回 409。"
+    ),
+)
+def to_topic_inbox_item(
     inbox_id: int,
-    force_cloud: bool = Query(False, description="强制使用云端模型"),
+    req: ToTopicRequest,
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    item = InboxService.get_item(db, current_user["user_id"], inbox_id)
-    ai_service = AIService(db=db)
-    return await InboxService.analyze_item(db, item, ai_service, force_cloud, current_user["user_id"])
+    try:
+        return AcquisitionIntakeService.to_topic_item(
+            db, current_user["user_id"], inbox_id, req.topic_id, req.remark
+        )
+    except ValueError as exc:
+        status_code = 404 if "不存在" in str(exc) and "主题" in str(exc) else 409
+        raise HTTPException(status_code=status_code, detail=str(exc))
 
 
-@inbox_routes.post("/{inbox_id}/promote", response_model=InboxPromoteResponse)
-def promote_inbox_item(
+@v1_inbox_router.post(
+    "/inbox/{inbox_id}/to-negative-case",
+    summary="标记为反案例 – 入洞察库",
+    description=(
+        "将 pending 收件箱条目标记为反案例并写入 InsightContentItem（manual_note 前缀 [反案例]），"
+        "不创建 ContentAsset。非 pending 状态返回 409。"
+    ),
+)
+def to_negative_case_inbox_item(
     inbox_id: int,
+    req: NegativeCaseRequest,
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    item = InboxService.get_item(db, current_user["user_id"], inbox_id)
-    return InboxService.promote_item(db, item)
+    try:
+        return AcquisitionIntakeService.to_negative_case_item(
+            db, current_user["user_id"], inbox_id, req.remark
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
-@inbox_routes.post("/{inbox_id}/discard", response_model=InboxResponse)
+@v1_inbox_router.post(
+    "/inbox/{inbox_id}/discard",
+    summary="丢弃收件箱条目",
+    description="将 pending 条目状态置为 discarded，不创建任何下游记录。非 pending 状态返回 409。",
+)
 def discard_inbox_item(
     inbox_id: int,
-    review_note: Optional[str] = Query(None),
+    req: DiscardRequest,
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    item = InboxService.get_item(db, current_user["user_id"], inbox_id)
-    return InboxService.discard_item(db, item, review_note)
+    try:
+        return AcquisitionIntakeService.discard_item(db, current_user["user_id"], inbox_id, req.remark)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
-v1_inbox_router = APIRouter(prefix="/inbox")
-v1_inbox_router.include_router(inbox_routes)
+# ─────────────────────────────────────────
+# 单条详情（动态路由放最后）
+# ─────────────────────────────────────────
+
+@v1_inbox_router.get(
+    "/inbox/{inbox_id}",
+    summary="收件箱条目详情",
+)
+def get_material_inbox_detail(
+    inbox_id: int,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    item = AcquisitionIntakeService.get_inbox_item(db, current_user["user_id"], inbox_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="收件箱内容不存在")
+    return _to_row(item)
+

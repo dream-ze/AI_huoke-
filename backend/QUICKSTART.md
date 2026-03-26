@@ -113,14 +113,17 @@ POST   /api/auth/login       - 登录
 GET    /api/auth/me          - 获取当前用户
 ```
 
-### 内容管理
+### 采集与素材（v2）
 ```
-POST   /api/content/create   - 创建内容
-GET    /api/content/list     - 内容列表
-GET    /api/content/{id}     - 获取具体内容
-PUT    /api/content/{id}     - 更新内容
-DELETE /api/content/{id}     - 删除内容
-GET    /api/content/search/topic - 按主题搜索
+POST   /api/v2/collect/extract-from-url - 链接预提取
+POST   /api/v2/collect/ingest-page      - 统一入库
+GET    /api/v2/collect/logs             - 采集日志
+GET    /api/v2/materials                - 素材列表
+GET    /api/v2/materials/{id}           - 素材详情
+PATCH  /api/v2/materials/{id}           - 更新素材
+DELETE /api/v2/materials/{id}           - 删除素材
+POST   /api/v2/materials/{id}/analyze   - AI 分析
+POST   /api/v2/materials/{id}/rewrite   - AI 改写
 ```
 
 ### 合规审核
@@ -160,7 +163,6 @@ GET    /api/dashboard/high-quality-content - 高质量内容
 POST   /api/ai/rewrite/xiaohongshu - 小红书改写
 POST   /api/ai/rewrite/douyin      - 抖音改写
 POST   /api/ai/rewrite/zhihu       - 知乎改写
-POST   /api/ai/plugin/collect      - 插件采集
 ```
 
 ## 🧪 测试 API
@@ -180,15 +182,16 @@ curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"testuser","password":"YOUR_STRONG_PASSWORD"}'
 
-# 创建内容
-curl -X POST http://localhost:8000/api/content/create \
+# 统一入库
+curl -X POST http://localhost:8000/api/v2/collect/ingest-page \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
+    "source_type": "manual_link",
     "platform":"xiaohongshu",
     "content_type":"post",
     "title":"Test",
-    "content":"Test content"
+    "content_text":"Test content"
   }'
 ```
 

@@ -97,7 +97,7 @@ export function DashboardPage() {
             <h3 style={{ marginBottom: 12 }}>快捷入口</h3>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button className="secondary" type="button" onClick={() => navigate("/collect-center")}>去采集中心</button>
-              <button className="secondary" type="button" onClick={() => navigate("/inbox")}>去收件箱分拣</button>
+              <button className="secondary" type="button" onClick={() => navigate("/materials")}>去素材中心</button>
               <button className="secondary" type="button" onClick={() => navigate("/materials")}>去素材编辑</button>
               <button className="secondary" type="button" onClick={() => navigate("/publish")}>去发布任务</button>
               <button className="secondary" type="button" onClick={() => navigate("/leads")}>去线索池</button>

@@ -94,4 +94,8 @@ class Settings(BaseSettings):
     # WeCom
     WECOM_WEBHOOK_URL: str = ""
 
+    # Browser collector service
+    BROWSER_COLLECTOR_BASE_URL: str = "http://127.0.0.1:8005"
+    BROWSER_COLLECTOR_TIMEOUT_SECONDS: int = 180
+
 settings = Settings()

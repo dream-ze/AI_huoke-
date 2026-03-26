@@ -11,6 +11,7 @@ from app.api.endpoints.insight import router as insight_router
 from app.api.endpoints.system import router as system_router
 from app.api.endpoints.wecom import router as wecom_router
 from app.api.v1 import api_v1_router
+from app.api.v2 import api_v2_router
 
 ALL_ROUTERS = (
     auth_router,
@@ -24,6 +25,7 @@ ALL_ROUTERS = (
     system_router,
     wecom_router,
     api_v1_router,
+    api_v2_router,
 )
 
 
