@@ -1,0 +1,1191 @@
+我看了你这次的结果表，也顺手对了下你这个 feature/browser-collector 分支现在公开出来的结构和文档。整体上说：
+
+这版已经比“只能抓标题”前进很多了，已经有收件箱接入价值。
+但如果你问我“现在还值不值得再优化一轮”，答案是：值得，而且重点不是再多写功能，而是把字段质量先收紧。
+
+你这个分支目前已经是 FastAPI + Playwright 的独立采集服务，目录也拆成了 api / collectors / factories / schemas / services 这种可扩展结构，这个方向是对的。README 和接入说明里也明确了现在主要通过 POST /api/collect/run 给 AI_huoke 调用。
+
+我先给你结论：
+
+当前最该优化的，不是“能不能采到”，而是“采出来的字段是否可信”
+
+从你这次表格结果看，我觉得有 6 个很明显的问题。
+
+1）cover_url 基本采错了
+
+你这 10 条数据里，cover_url 看起来几乎都是同一个头像链接，不像帖子封面，更像页面公共头像资源。
+这会直接影响后面收件箱列表展示，因为前端会以为这是帖子封面，结果全是同一张图。
+
+这个问题和你文档里的返回示例也不一致。文档里虽然保留了 cover_url，但没有说明它到底是“帖子首图”还是“作者头像”，接口定义太松了。
+
+建议：
+
+cover_url 明确定义为：帖子首张正文图
+新增 author_avatar_url
+如果没拿到正文图，cover_url = null，不要拿头像顶上
+2）image_urls 污染很重
+
+你表里的 image_urls 里混进了很多：
+
+avatar 链接
+picasso-static 这种平台静态资源
+甚至同一资源的 http/https 双版本
+
+这说明你现在不是在“提取帖子图片”，而是在“扫页面所有图片节点”。
+
+这会带来两个后果：
+
+后续知识库入库会把脏图一起存进去
+前端详情页会显示一堆无关图片
+
+建议直接改规则：
+
+只保留帖子正文图片区块里的图片
+过滤域名或路径里包含 avatar、picasso-static、logo、icon 的资源
+全部做 https 规范化
+去重后再存
+image_urls 改成数组，不要存成换行字符串
+3）snippet 和 content_text 大量重复
+
+你前面也发现了，这次表里多数行 snippet 和 content_text 是一样的。
+这说明你现在没有形成“列表摘要”和“详情正文”的分层。
+
+而你当前接入说明和 README 里的接口示例，还停留在比较早期的 content 字段，没有把 snippet / content_text / image_urls / parse_status / risk_status / engagement_score / quality_score 这些现在结果表里已经存在的字段反映出来。
+
+建议最终定义成：
+
+snippet：列表页摘要，80~160 字
+content_text：详情正文全文
+content_text_preview：可选，前 300~500 字
+列表采集只保 snippet
+详情补采再填 content_text
+
+这样你后面做收件箱会顺很多。
+
+4）comment_count 明显不稳定，甚至疑似错位
+
+这次 10 条里，comment_count 大部分为空。
+更关键的是，有两条 comment_count = 2025，这个值非常可疑，像是把年份错抓成评论数了。
+
+这通常意味着你的解析逻辑用了“按文本行位置取值”：
+
+最后一行当点赞数
+倒数第二行当作者
+某一行当评论数/发布时间
+
+这种写法一旦页面卡片结构变一下，就会串位。
+
+从 README 里的返回示例看，like_count / comment_count / publish_time 目前本来也还是比较“占位字段”的状态。
+
+建议：
+
+不要再靠纯文本行号取字段
+优先抓 DOM 上带语义的节点
+实在没有就加字段来源标记：
+comment_count_source = dom | text_guess | missing
+publish_time_source = dom | text_guess | missing
+解析失败时返回 null，不要硬猜
+5）publish_time 覆盖率太低
+
+这次表里发布时间缺失很多，只少量有值。
+对你后面“收件箱排序 / 爆款筛选 / 近7天内容分析”影响会很大。
+
+建议：
+
+采集阶段先拿列表页能拿到的相对时间
+详情页补采绝对时间
+同时保存：
+publish_time_raw
+publish_time
+publish_time_precision（day / minute / unknown）
+
+这样后续数据清洗会容易很多。
+
+6）评分字段现在还不够“可运营”
+
+你现在已经有：
+
+engagement_score
+quality_score
+risk_status
+
+这个思路是好的。
+但从结果看：
+
+engagement_score 基本接近 like_count
+少数因为 comment_count=2025 直接飙到 6000+
+quality_score 目前只有 65 / 100 两档，颗粒度太粗
+
+所以现在这些字段更像占位字段，不适合直接给业务用。
+
+建议改成明确公式：
+
+engagement_score
+
+like_count * 1 + comment_count * 3 + collect_content_bonus
+
+quality_score
+
+标题长度
+正文长度
+是否有图片
+是否有发布时间
+是否采集成功
+是否命中关键词
+是否疑似广告/违规
+
+risk_status
+
+normal / warning / reject
+
+这样后面你姐用的时候，才真的能筛。
+
+从仓库本身看，还要补 3 个工程级优化
+A. 文档和真实返回结构要同步
+
+你现在 README 和接入说明里展示的返回结构，还是偏早期版本；但你表格实际已经跑出了更多字段。
+这会导致后面主系统接入时，前后端对字段理解不一致。
+
+建议：
+
+README 更新为“当前真实响应”
+Swagger 响应示例同步更新
+schemas 里把字段分成：
+基础字段
+详情字段
+质量字段
+调试字段
+B. 采集结果里要保留“解析痕迹”
+
+你现在只有 parse_status，不够排错。
+
+建议新增：
+
+parse_stage: list | detail
+parse_version: v1 / v2
+parse_error: 失败原因
+field_sources: 每个字段来源
+raw_text_excerpt: 原始片段前 300 字
+
+这样以后你一看表就知道错在哪，不用反复猜。
+
+C. 接口层建议拆成“列表采集 + 详情补采”
+
+你之前问过“详情补采要不要单独接口”，我还是维持那个判断：
+
+要拆。
+
+因为你现在已经进入“收件箱优先”的阶段了，最顺的链路是：
+
+关键词搜索，先快速拿列表
+列表入收件箱
+用户点开或系统异步补采详情
+详情补齐正文、图片、发布时间、评论数
+再走评分、改写、知识库沉淀
+
+而且你接入说明里现在只有一个 POST /api/collect/run。这对于 v1 可以，但对你后面做稳定系统不够。
+
+建议最终接口：
+
+POST /api/collect/search
+POST /api/collect/detail
+POST /api/collect/batch-detail
+GET /api/collect/task/{id}
+我给你的最终优化优先级
+P0，马上改
+修 cover_url 误抓头像
+清洗 image_urls
+修 comment_count / publish_time 错位解析
+区分 snippet 和 content_text
+README / 接入说明 / schema 同步真实字段
+P1，这周内做
+拆 search 和 detail 两类接口
+加字段来源和解析日志
+评分公式改成稳定版
+image_urls 改数组存储
+P2，后续再做
+评论采集
+登录失效监控
+任务队列 / 重试机制
+多平台 collector 统一基类增强
+现在这版能不能继续做收件箱？
+
+能。
+
+但前提是你先把上面 P0 处理掉。
+因为现在最危险的不是“抓不到”，而是抓到了但字段不准。
+收件箱一旦基于脏字段往后走，后面改写、评分、知识库都会被带歪。
+
+所以我对你的判断是：
+
+可以进入收件箱开发，但要把采集字段质量先收口到“可信可用”的程度。
+
+你要的话，我下一条可以直接给你一版：
+
+“采集模块最终优化清单 v2 + 字段标准定义 + search/detail 接口最终版”
+我会按你这个项目现在的状态，直接写成你能照着改代码的版本。
+
+采集模块最终优化清单 v2 + 字段标准定义 + search/detail 接口最终版”
+已思考 10s
+
+可以，我直接给你一版可落地的最终版。
+这版是按你现在这个 browser_collector 分支现状来收口的：目前仓库还是以 FastAPI + Playwright 的独立采集服务为主，README 和接入说明里对外暴露的核心接口仍然是 POST /api/collect/run，返回字段还偏早期，只覆盖了 title / author / content / url / cover_url / like_count / comment_count / publish_time / source_id / raw_data 这一层。
+
+一、采集模块最终优化清单 v2
+目标
+
+把采集模块从“能抓到数据”升级成“能稳定进入收件箱”。
+
+也就是：
+
+列表页先快
+详情页再补
+字段定义稳定
+脏数据可识别
+后续收件箱、改写、知识库都能直接接
+P0：必须先做完
+1）把采集拆成两阶段
+
+你现在公开文档里还是单接口 POST /api/collect/run。这适合演示，不适合系统化接入。
+
+改成：
+
+search：列表采集
+detail：详情补采
+
+原因：
+
+列表页速度快，适合先进入收件箱
+详情页慢，但字段更完整
+这样你后面“先入收件箱，再补全文”会很顺
+2）统一字段语义，禁止混用
+
+你现在文档里的 content 字段语义太模糊，既像摘要又像正文。
+
+改成：
+
+snippet：列表摘要
+content_text：详情正文
+cover_url：帖子首图
+author_avatar_url：作者头像
+
+禁止：
+
+头像塞进 cover_url
+页面所有图片塞进 image_urls
+摘要和全文复用同一个字段
+3）所有图片字段都做清洗
+
+规则：
+
+只保留正文图片区块
+去掉 avatar / logo / icon / static 资源
+统一成 https
+去重
+image_urls 必须是数组，不是
+P2，后续再做
+评论采集
+登录失效监控
+任务队列 / 重试机制
+多平台 collector 统一基类增强 优化到这步
+已思考 17s
+
+可以，到了 P2 这一步，就不是“能不能采到”了，而是把采集模块做成 真正可长期跑的服务。
+
+结合你当前这个分支现状：现在已经是一个独立的 FastAPI + Playwright 浏览器采集服务，支持“小红书关键词搜索、抓取前 N 条结果、统一 JSON 输出”，并且 README 明确写了“多平台可扩展架构（工厂模式）”，当前对外主入口还是 POST /api/collect/run。
+
+所以 P2 的目标，我建议你直接定成一句话：
+
+把 browser_collector 从“采集脚本服务”升级成“生产可运维的采集中台”。
+
+下面我直接给你一版 P2 最终优化方案。
+
+一、P2 最终目标
+
+做到这 4 件事：
+
+评论采集可控接入
+登录状态可监控、可恢复
+任务异步化，失败可重试
+多平台采集器真正统一成标准框架
+
+这样后面你接收件箱、知识库、改写模块时，采集层就不会反复返工。
+
+二、P2 优化清单（最终版）
+1）评论采集
+
+你现在 README 里的能力还停留在“关键词搜索 + 返回统一 JSON”，没有把评论采集当成正式能力挂出来。
+
+所以评论采集不要直接硬塞进现有 run 流程里，最稳的做法是：
+
+最终设计
+
+拆成 3 类能力：
+
+search：搜索列表
+detail：帖子详情
+comments：评论采集
+为什么要单独拆 comments
+
+因为评论采集天然有这些特点：
+
+更慢
+更容易触发风控
+分页更深
+对登录态依赖更强
+不适合每条搜索结果都默认执行
+
+所以评论一定要做成 按需采集，不能默认全开。
+
+建议字段
+
+评论返回统一成：
+
+{
+  "note_id": "xxx",
+  "comments": [
+    {
+      "comment_id": "c1",
+      "user_name": "用户A",
+      "user_id": "u1",
+      "content": "这条贷款内容有帮助",
+      "like_count": 12,
+      "reply_count": 2,
+      "publish_time": "2026-03-26 13:20:00",
+      "parent_comment_id": null,
+      "is_author": false,
+      "raw_data": {}
+    }
+  ],
+  "has_more": true,
+  "next_cursor": "xxx"
+}
+评论采集策略
+
+建议分 3 档：
+
+lite
+只抓前 10~20 条一级评论
+默认模式
+standard
+抓前 50 条一级评论
+带基础分页
+deep
+抓更多评论，必要时抓部分二级回复
+只给后台管理员或离线任务用
+你现在最适合的实现方式
+
+先只做：
+
+一级评论
+前 20 条
+不抓回复详情
+不默认触发
+
+这就够你后面做：
+
+评论关键词分析
+用户痛点提取
+爆款互动分析
+API 最终建议
+POST /api/collect/comments
+
+请求：
+
+{
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/xxx",
+  "max_comments": 20
+}
+2）登录失效监控
+
+你这个采集服务基于 Playwright，而仓库里已经有 save_login.py，这说明你当前方案本质上已经依赖“登录态保存再复用”这一套。
+
+这一步非常关键。因为后面真正把采集跑起来，最常见的问题不是代码报错，而是：
+
+cookie 失效
+登录过期
+页面跳登录
+验证弹窗
+风控页
+最终目标
+
+做到：
+
+系统能识别“这是采集失败”还是“这是登录失效”。
+
+建议新增状态模型
+
+定义登录状态：
+
+valid
+expiring
+invalid
+risk_challenge
+建议落地方式
+方案 1：健康检查接口
+
+新增：
+
+GET /api/system/login-status
+
+返回：
+
+{
+  "platform": "xiaohongshu",
+  "status": "valid",
+  "last_check_time": "2026-03-26 14:00:00",
+  "message": "登录正常"
+}
+方案 2：每次采集前做轻量校验
+
+采集任务开始前先执行：
+
+打开首页或用户页
+判断是否跳登录页
+判断是否出现“请登录/验证码/异常访问”等关键词
+如果异常，直接标记任务失败原因为 login_invalid
+方案 3：增加失败原因分类
+
+你后面任务表里一定要有：
+
+error_code
+error_message
+error_stage
+
+建议枚举：
+
+LOGIN_INVALID
+LOGIN_REQUIRED
+RISK_CONTROL
+NETWORK_ERROR
+PARSE_ERROR
+EMPTY_RESULT
+TIMEOUT
+建议你再加一个后台检查任务
+
+每隔 10~30 分钟做一次：
+
+登录态探测
+如果失效，写入告警表或日志
+主系统管理后台显示“采集账号失效，请重新登录”
+最实用的一点
+
+别一开始做短信、邮件、企业微信通知。
+先做：
+
+后台红色状态提示
+接口返回明确错误码
+日志记录清楚
+
+这样就够用了。
+
+3）任务队列 / 重试机制
+
+现在从 README 看，你的服务主入口还是同步调用式的 POST /api/collect/run。调用方直接请求，然后等待结果返回。
+
+这在 P0/P1 阶段可以，但到 P2 必须升级，不然会出现：
+
+请求超时
+页面慢导致接口卡死
+批量采集把服务拖挂
+评论采集一开更慢
+无法管理失败重试
+最终目标
+
+把采集改成：
+
+提交任务 → 后台执行 → 查询结果
+
+最终接口建议
+1. 创建任务
+POST /api/tasks/collect
+
+请求：
+
+{
+  "platform": "xiaohongshu",
+  "task_type": "search",
+  "keyword": "贷款",
+  "max_items": 20,
+  "priority": "normal"
+}
+
+返回：
+
+{
+  "task_id": "task_123",
+  "status": "queued"
+}
+2. 查询任务
+GET /api/tasks/{task_id}
+3. 获取任务结果
+GET /api/tasks/{task_id}/result
+4. 重试任务
+POST /api/tasks/{task_id}/retry
+任务状态建议
+queued
+running
+success
+partial_success
+failed
+retrying
+cancelled
+重试机制建议
+
+不是所有错误都重试。
+
+可以重试
+网络波动
+页面加载超时
+临时空白页
+轻微解析失败
+不要自动重试
+登录失效
+风控验证
+参数错误
+URL 不合法
+推荐重试规则
+最大重试次数：2~3
+重试间隔：指数退避
+第 1 次：30 秒
+第 2 次：2 分钟
+第 3 次：5 分钟
+队列实现建议
+
+你现在最适合的路线是：
+
+v1 简版
+FastAPI
+数据库存任务表
+BackgroundTasks 或单独 worker 进程
+够你当前先跑起来
+v2 稳定版
+Celery / RQ / Dramatiq 三选一
+Redis 做 broker
+worker 单独部署
+
+对你现在阶段来说，优先 Redis + Celery 或 Redis + RQ。
+原因很简单：
+
+易理解
+易部署
+方便做重试
+方便做并发控制
+你现在别做太重
+
+先别上：
+
+分布式优先级调度
+多 worker 自动扩缩容
+复杂 DAG
+
+你现在只要做到：
+
+任务入库
+worker 拉任务
+失败可重试
+结果可查询
+
+就已经很强了。
+
+4）多平台 collector 统一基类增强
+
+README 里已经写了“多平台可扩展架构（工厂模式）”，这说明你已经有这个意识了。
+但很多项目到这一步只是“有工厂”，并没有“统一标准”。
+
+P2 真正要做的是：
+
+把不同平台采集器变成同一套协议。
+
+最终目标
+
+无论后面接：
+
+小红书
+抖音
+快手
+视频号
+微博
+网页内容页
+
+它们都要实现同一套接口。
+
+建议基类定义
+class BaseCollector(ABC):
+    platform: str
+
+    @abstractmethod
+    async def search(self, keyword: str, max_items: int, **kwargs) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def detail(self, url: str | None = None, source_id: str | None = None, **kwargs) -> dict:
+        pass
+
+    async def comments(self, url: str | None = None, source_id: str | None = None, max_comments: int = 20, **kwargs) -> list[dict]:
+        raise NotImplementedError
+
+    async def health_check(self) -> dict:
+        return {"platform": self.platform, "status": "unknown"}
+
+    async def close(self):
+        pass
+每个平台都要输出统一结构
+
+比如 search 必须返回统一字段：
+
+{
+  "platform": "xiaohongshu",
+  "source_id": "xxx",
+  "title": "标题",
+  "author_name": "作者",
+  "author_id": "uid",
+  "snippet": "摘要",
+  "url": "https://...",
+  "cover_url": "https://...",
+  "publish_time": null,
+  "like_count": null,
+  "comment_count": null,
+  "collect_status": "success",
+  "raw_data": {}
+}
+
+这样你的收件箱层、知识库层、改写层就不需要区分平台。
+
+基类还要统一哪些能力
+
+除了 search/detail/comments，还要统一这些能力：
+
+浏览器初始化
+上下文创建
+登录态加载
+错误包装
+截图留证
+页面等待策略
+日志埋点
+结果清洗
+建议增加的公共能力
+1. 标准异常
+class CollectorError(Exception): ...
+class LoginInvalidError(CollectorError): ...
+class RiskControlError(CollectorError): ...
+class ParseError(CollectorError): ...
+class EmptyResultError(CollectorError): ...
+2. 标准结果包装
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "task_type": "detail",
+  "data": {},
+  "error": null,
+  "meta": {}
+}
+3. 标准日志字段
+
+每个平台日志都统一带：
+
+platform
+task_type
+task_id
+keyword
+source_id
+step
+duration_ms
+三、P2 做完后的最终目录建议
+
+你现在仓库根目录已经有 app/、README.md、save_login.py、deploy.sh、browser_collector.service 这些基础文件。
+
+P2 后我建议目录收成这样：
+
+browser_collector/
+├── app/
+│   ├── api/
+│   │   ├── collect.py
+│   │   ├── comments.py
+│   │   ├── tasks.py
+│   │   └── system.py
+│   ├── collectors/
+│   │   ├── base.py
+│   │   ├── xiaohongshu.py
+│   │   ├── douyin.py
+│   │   └── factory.py
+│   ├── core/
+│   │   ├── browser.py
+│   │   ├── config.py
+│   │   ├── exceptions.py
+│   │   ├── logging.py
+│   │   └── security.py
+│   ├── models/
+│   │   ├── collect_task.py
+│   │   ├── collect_result.py
+│   │   └── login_status.py
+│   ├── schemas/
+│   │   ├── collect.py
+│   │   ├── comment.py
+│   │   ├── task.py
+│   │   └── system.py
+│   ├── services/
+│   │   ├── collect_service.py
+│   │   ├── comment_service.py
+│   │   ├── task_service.py
+│   │   └── monitor_service.py
+│   ├── workers/
+│   │   ├── collect_worker.py
+│   │   └── retry_worker.py
+│   └── main.py
+├── data/
+│   ├── storage_state/
+│   ├── screenshots/
+│   └── exports/
+├── deploy.sh
+├── browser_collector.service
+├── save_login.py
+└── README.md
+四、你现在这一步最推荐的开发顺序
+
+不要 4 个一起上。
+按这个顺序最稳：
+
+第一阶段
+
+先做 任务队列 / 重试
+因为它是底座。
+
+先有任务机制，后面评论采集、登录监控都能挂进去。
+
+第二阶段
+
+做 登录失效监控
+因为采集最容易死在这。
+
+第三阶段
+
+做 统一基类增强
+因为这一步会让后面接抖音、快手轻松很多。
+
+第四阶段
+
+最后做 评论采集
+因为它最重，也最依赖前 3 个能力。
+
+五、我给你的最终判断
+
+如果你要把采集模块优化到 P2 可交付，那最终标准不是“又多抓了几个字段”，而是这 4 句话：
+
+任务不会长时间卡死
+失败知道为什么失败
+登录过期能被发现
+后面新平台能按模板接入
+
+做到这一步，你这个采集模块就不再只是“小红书抓取服务”，而是真正能支撑你整个获客系统的 内容采集中台。
+
+接下来最适合你的不是再聊概念，而是直接落代码。
+我可以下一条直接给你：
+
+“P2 最终版代码目录 + 数据表设计 + task/comments/system 三套接口定义 + BaseCollector 抽象类代码骨架”
+
+基于上面给出一版开发详细方案和设计等等 你是一个20年的资深程序员 
+
+好，这一版我不再讲概念，直接按“一个20年工程师会怎么带你把它做成能长期跑、能卖钱的系统”来给你完整方案。
+
+我会帮你把 P2 全部落成一个“采集中台 v2”，你照这个做，基本就是一套可以支撑你整个 AI获客系统的底座。
+
+一、整体定位（你现在在做什么）
+
+你现在这个模块，本质不是“采集工具”，而是：
+
+✅ 内容采集中台（Content Ingestion Platform）
+
+它的职责是：
+
+多平台内容 → 标准化 → 入收件箱 → 后续改写 / 知识库 / 客户跟进
+
+所以我们要保证 4 件事：
+
+稳定（不会动不动挂）
+可扩展（多平台接入）
+可观测（知道哪里出问题）
+可控制（任务、登录、频率）
+二、系统架构（最终版）
+1️⃣ 总体架构
+                ┌────────────────────┐
+                │   AI_huoke 主系统   │
+                │ (收件箱 / 改写 / CRM) │
+                └─────────┬──────────┘
+                          │ API 调用
+                          ↓
+┌────────────────────────────────────────┐
+│        browser_collector（采集中台）     │
+│                                        │
+│  ┌──────────────┐   ┌──────────────┐   │
+│  │ Task API     │   │ Collect API  │   │
+│  └──────┬───────┘   └──────┬───────┘   │
+│         ↓                  ↓           │
+│     Task Service     Collect Service  │
+│         ↓                  ↓           │
+│     Task Queue       Collector Factory│
+│         ↓                  ↓           │
+│     Worker          BaseCollector     │
+│                         ↓             │
+│                  XHS / 抖音 / etc     │
+│                         ↓             │
+│                   Playwright          │
+│                                        │
+└────────────────────────────────────────┘
+2️⃣ 核心模块
+模块划分（必须按这个来）
+API 层        → 只负责接收请求
+Service 层    → 业务逻辑
+Worker 层     → 执行任务
+Collector 层  → 平台采集
+Core 层       → 浏览器/异常/日志
+Models 层     → 数据存储
+三、数据库设计（核心）
+
+你现在最大的问题不是代码，而是：
+
+👉 没有“任务 + 状态 + 可追踪”的数据模型
+
+我直接给你最终表结构（PostgreSQL）
+
+1️⃣ 采集任务表（核心）
+CREATE TABLE collect_tasks (
+    id BIGSERIAL PRIMARY KEY,
+    task_id VARCHAR(64) UNIQUE,
+
+    platform VARCHAR(32),
+    task_type VARCHAR(32), -- search/detail/comments
+
+    keyword VARCHAR(255),
+    url TEXT,
+
+    status VARCHAR(32), -- queued/running/success/failed/retrying
+
+    priority VARCHAR(16) DEFAULT 'normal',
+
+    retry_count INT DEFAULT 0,
+    max_retries INT DEFAULT 2,
+
+    error_code VARCHAR(64),
+    error_message TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    finished_at TIMESTAMP
+);
+2️⃣ 采集结果表
+CREATE TABLE collect_results (
+    id BIGSERIAL PRIMARY KEY,
+    task_id VARCHAR(64),
+
+    platform VARCHAR(32),
+    source_id VARCHAR(128),
+
+    title TEXT,
+    author_name VARCHAR(255),
+    author_id VARCHAR(128),
+
+    snippet TEXT,
+    content_text TEXT,
+
+    url TEXT,
+    cover_url TEXT,
+    image_urls JSONB,
+
+    like_count INT,
+    comment_count INT,
+
+    publish_time TIMESTAMP,
+
+    engagement_score FLOAT,
+    quality_score FLOAT,
+    risk_status VARCHAR(32),
+
+    parse_status VARCHAR(32),
+    raw_data JSONB,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+3️⃣ 登录状态表（关键）
+CREATE TABLE login_status (
+    id SERIAL PRIMARY KEY,
+    platform VARCHAR(32),
+
+    status VARCHAR(32), -- valid/invalid/risk
+    last_check_time TIMESTAMP,
+    message TEXT
+);
+四、核心设计（最关键）
+1️⃣ BaseCollector（统一基类）
+
+这是你整个系统“能不能扩展”的核心。
+
+from abc import ABC, abstractmethod
+
+class BaseCollector(ABC):
+
+    platform: str
+
+    @abstractmethod
+    async def search(self, keyword: str, max_items: int):
+        pass
+
+    @abstractmethod
+    async def detail(self, url: str):
+        pass
+
+    async def comments(self, url: str, max_comments: int = 20):
+        raise NotImplementedError
+
+    async def health_check(self):
+        return {"platform": self.platform, "status": "unknown"}
+2️⃣ Collector Factory
+class CollectorFactory:
+
+    @staticmethod
+    def get_collector(platform: str):
+        if platform == "xiaohongshu":
+            return XHSCollector()
+        elif platform == "douyin":
+            return DouyinCollector()
+        else:
+            raise ValueError("Unsupported platform")
+3️⃣ 任务执行流程（核心链路）
+API 创建任务
+   ↓
+写入 DB
+   ↓
+Worker 拉任务
+   ↓
+执行 collector.search/detail/comments
+   ↓
+写入结果表
+   ↓
+更新任务状态
+五、任务队列设计（重点）
+
+你现在最该上的是：
+
+👉 Redis + RQ（轻量版） 或 Celery（标准版）
+
+Worker 核心代码（简化版）
+async def run_task(task):
+    try:
+        collector = CollectorFactory.get_collector(task.platform)
+
+        if task.task_type == "search":
+            data = await collector.search(task.keyword, 20)
+
+        elif task.task_type == "detail":
+            data = await collector.detail(task.url)
+
+        elif task.task_type == "comments":
+            data = await collector.comments(task.url, 20)
+
+        save_results(task.task_id, data)
+
+        update_task_status(task.task_id, "success")
+
+    except Exception as e:
+        handle_task_error(task, e)
+重试机制（必须有）
+def handle_task_error(task, error):
+    if task.retry_count < task.max_retries:
+        task.retry_count += 1
+        task.status = "retrying"
+    else:
+        task.status = "failed"
+六、登录监控设计（关键）
+判断登录失效
+async def check_login(page):
+    content = await page.content()
+
+    if "登录" in content or "验证码" in content:
+        raise LoginInvalidError()
+每次任务前检查
+await collector.health_check()
+系统接口
+GET /api/system/login-status
+七、评论采集设计
+不要默认开启！！！
+
+只在需要时调用：
+
+POST /api/collect/comments
+执行逻辑
+打开详情页
+↓
+滚动加载评论
+↓
+提取前 N 条
+↓
+返回
+八、接口设计（最终版）
+1️⃣ 创建任务
+POST /api/tasks/collect
+{
+  "platform": "xiaohongshu",
+  "task_type": "search",
+  "keyword": "贷款",
+  "max_items": 20
+}
+2️⃣ 查询任务
+GET /api/tasks/{task_id}
+3️⃣ 获取结果
+GET /api/tasks/{task_id}/result
+4️⃣ 评论采集
+POST /api/collect/comments
+5️⃣ 登录状态
+GET /api/system/login-status
+九、你现在最该怎么做（非常关键）
+
+我给你一个最正确的执行顺序：
+
+第一步（今天必须做）
+
+✅ 上任务表
+✅ 改成任务执行模式
+✅ worker 跑起来
+
+第二步（明天）
+
+✅ 登录检测
+✅ 错误码体系
+
+第三步
+
+✅ BaseCollector 重构
+✅ factory 统一
+
+第四步
+
+✅ 评论采集
+
+十、我给你的最终判断（很重要）
+
+你现在已经过了最难的一步：
+
+👉 你已经能采到数据了
+
+接下来真正决定你这个项目能不能卖钱的，不是：
+
+再多抓几个字段 ❌
+再多接几个平台 ❌
+
+而是：
+
+✅ 稳定性 + 可控性 + 可扩展性
+
+最后一句（很实在）
+
+如果你把这套 P2 全部做完：
+
+👉 你的系统就从「AI拼出来的项目」
+变成「真正工程化的产品」
+
+如果你下一步想继续，我可以直接帮你：
+
+👉 把这一套变成“完整可运行代码骨架（FastAPI + Redis + Worker）”
+👉 你直接 copy 就能跑，不再卡在细节上
+
+目前我在优化采集部分
+
+那你现在先别再扩太多功能，就盯着采集质量做收口。
+
+你当前最对的策略是：
+
+现在采集部分只做三件事
+1. 先把“列表采集”做稳
+
+目标不是抓很多字段，而是让这几个字段稳定、可信：
+
+source_id
+title
+author_name
+url
+snippet
+cover_url
+like_count
+comment_count
+publish_time
+
+这一层要保证：
+
+不串字段
+不乱抓图片
+不重复
+不因为页面轻微变化就全挂
+2. 再把“详情补采”做好
+
+详情补采重点补这几个：
+
+content_text
+image_urls
+publish_time
+author_id
+author_avatar_url
+
+这里核心不是快，而是准。
+尤其你前面已经发现了：
+
+snippet 和 content_text 重复
+cover_url 抓成头像
+image_urls 混进无关图片
+comment_count 可能错位
+
+这些都属于详情层和字段定义没分清。
+
+3. 最后做“采集质量控制”
+
+你现在最需要补的是这一层：
+
+parse_status
+parse_error
+field_sources
+raw_data
+collected_at
+
+这样你每次跑完表格，一眼就知道：
+
+是没抓到
+还是抓错了
+还是页面结构变了
+还是登录失效了
+你当前阶段不要做的事
+
+先别急着上这些：
+
+评论深采
+多平台一起接
+复杂队列
+很重的调度系统
+太早做知识库联动
+
+因为你现在的瓶颈不是“功能不够多”，而是：
+
+采集结果还没有稳定到能放心喂给收件箱
+
+你现在最应该盯的优化顺序
+第一优先级：字段正确性
+
+先解决：
+
+cover_url 误抓
+image_urls 污染
+snippet/content_text 重复
+comment_count/publish_time 错位
+第二优先级：结构分层
+
+把接口明确拆成：
+
+search
+detail
+第三优先级：结果可排错
+
+加：
+
+日志
+解析状态
+错误码
+原始片段留存

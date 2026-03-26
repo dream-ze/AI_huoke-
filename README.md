@@ -40,6 +40,19 @@ POST /api/collect/run
 }
 ```
 
+## 运行测试
+
+在 `browser_collector/` 根目录执行：
+
+```bash
+pytest -q tests
+```
+
+当前已包含三类测试：
+- normalizer 纯函数单元测试
+- parser/collector 字段映射测试（固定 HTML 夹具）
+- API 层契约测试（`/api/collect/run`、`/api/collect/detail`）
+
 ## 接口返回示例
 
 ```json

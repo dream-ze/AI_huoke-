@@ -1,0 +1,2368 @@
+我看了你这版代码思路，方向是对的，已经从“能跑”走到“有分层了”。但如果你问我一句实话：
+
+还能优化，而且现在最该优化的不是继续加功能，而是把“数据质量”再收紧一轮。
+
+先说结论。
+
+这版里，最大的问题不是接口层，而是采集结果的“字段纯度”和“字段语义稳定性”。从你上传的执行结果看，当前已经能稳定拿到结果，但还有几个明显信号：
+
+snippet 和 content_text 有大量重复。我看了表格，10 条里有 7 条两列完全相同。
+comment_count 大部分为空，10 条里 8 条为空。
+publish_time 缺失比较多，10 条里 6 条为空。
+cover_url 全部都出现在 image_urls 里，而且 image_urls 明显混进了很多头像、站点图标、装饰图，不像“正文图片列表”。
+
+这说明你现在已经完成了“抓到页面”，但还没完全完成“抓到干净的业务字段”。
+
+结合你仓库这版代码，我建议你按下面这个优先级继续改。
+
+一、最优先优化：image_urls 质量
+
+这是当前最明显的问题。
+
+你现在详情页里是直接遍历页面全部 img 标签，然后去重后最多取 20 张。代码就是这种思路：_extract_image_urls() 里遍历所有 img，拿 src/data-src，最后去重截断。这样会把头像、icon、推荐流图片、页面装饰图一起收进去。
+
+而你表格里很多 image_urls 一条数据有 18 到 20 个 URL，这对“小红书正文图”来说非常可疑，基本可以判断混入了大量噪音。
+
+建议改法
+
+把图片抽取改成“正文图片区选择器优先 + 黑名单过滤”：
+
+先只抓正文容器下的图片
+
+例如优先从详情主内容区域抓，而不是全页 img
+
+再过滤掉这些
+
+包含 avatar
+包含 fe-platform
+平台 logo / icon
+小尺寸头像图
+重复 query 参数不同但本体相同的 URL
+建议增加一个字段
+
+你现在最好直接拆成：
+
+cover_url
+content_image_urls
+author_avatar_url
+
+不要再让一个 image_urls 承担多个语义，不然后面入库、审核、改写都会脏。
+
+二、publish_time 抽取方式要改，不要全页正则扫
+
+你现在的 _extract_publish_time() 是对 body.inner_text() 全文跑正则，遇到像 2025-12-27 这种日期就直接当发布时间。
+
+这个方式有两个风险：
+
+风险 1：误命中正文日期
+
+如果用户正文里自己写了日期，或者评论区、推荐内容里带日期，就会被你当成发布时间。
+
+风险 2：发布时间缺失率高
+
+你表格里 publish_time 缺失 6/10，说明现在这个提取方式并不稳定。
+
+建议改法
+
+优先级应该这样：
+
+先找发布时间专属 DOM
+找不到再看页面内 script/json 数据
+最后才用全文正则兜底
+
+也就是说：
+
+def _extract_publish_time(page):
+    # 1. 专属 selector
+    # 2. script/json
+    # 3. body 正则兜底
+
+这一条很重要，因为发布时间后面会直接影响：
+
+爆款新鲜度判断
+收件箱排序
+知识库入库时效
+去重与补采策略
+三、snippet 和 content_text 不要再重叠
+
+你现在详情补采时，snippet = merged_content[:180]，所以一旦正文不长，snippet 和 content_text 就会变成一样。
+
+这也是你表格里大量重复的直接原因。
+
+建议语义重新定义
+
+你现在应该把字段定义固定下来：
+
+title：标题
+snippet：列表摘要，给收件箱预览用，60~100 字
+content_text：详情正文全文
+content_preview：正文前 120 字，可选
+更合理的做法
+如果列表页已经有 snippet，优先保留列表摘要
+详情页回来后只更新 content_text
+snippet 只在列表没有时，才从正文截前 80~120 字生成
+
+这样后面你的收件箱会更清晰：
+
+列表卡片显示 snippet
+点进去看 content_text
+四、评论数现在不是“采不到”，而是“策略还不够清楚”
+
+你请求模型里有 need_comments，默认是 False。
+所以你表格里 comment_count 大部分为空，其实是符合当前逻辑的。
+
+这块我建议你不要现在就做“评论内容采集”，但要把评论数采集稳定住，因为它对爆款判断很有价值。
+
+建议
+
+当前阶段分两层：
+
+P1：先做评论数
+
+comment_count
+成功率统计
+是否需要登录
+是否被风控
+
+P2：以后再做评论内容
+
+/api/collect/comments
+分页
+条数限制
+失败重试
+
+别把评论正文采集现在就塞进主流程，不然会把整体时延和风控都拉高。
+
+五、image_urls / publish_time / metric 都不该用“全页 body 文本”做主逻辑
+
+你现在详情页里有两个比较危险的实现：
+
+_extract_publish_time() 直接扫整页文本
+_extract_metric() 也是整页文本正则扫 “点赞/评论” 后面的数字
+
+这会导致两个问题：
+
+页面结构稍微变一下就失效
+推荐内容、浮层、按钮文案也可能被误识别
+建议
+
+把详情页解析拆成 3 层：
+
+parse_by_dom()
+parse_by_embedded_data()
+parse_by_text_fallback()
+
+并且把每个字段的来源记录到 raw_data：
+
+raw_data["field_source"] = {
+    "publish_time": "dom",
+    "like_count": "text_fallback",
+    "image_urls": "dom_gallery"
+}
+
+这样你后面一看表格，就知道哪个字段是“高可信”，哪个是“兜底值”。
+
+六、接口设计已经够用了，但还差“质量元信息”
+
+你这版接口已经有：
+
+/health
+/api/platforms
+/api/collect/run
+/api/collect/detail
+
+够做 v1 了。
+
+但我建议你现在马上补两个字段到返回里：
+
+1. data_quality
+
+例如每条内容返回：
+
+{
+  "data_quality": {
+    "title": true,
+    "content_text": true,
+    "publish_time": false,
+    "comment_count": false,
+    "content_image_count": 3
+  }
+}
+2. field_source
+
+告诉你字段从哪来：
+
+{
+  "field_source": {
+    "title": "detail_dom",
+    "snippet": "list_dom",
+    "publish_time": "regex_fallback"
+  }
+}
+
+这两个字段会让你后面做收件箱特别顺手，因为你能直接筛：
+
+只看高质量内容
+只入库 publish_time 完整的内容
+只展示图片干净的内容
+七、代码结构上，再补一个“标准化层”
+
+你现在分层已经有了：
+
+collectors
+services
+schemas
+factories
+api
+
+这个结构是可以继续走的。
+
+但我建议再加一层：
+
+app/normalizers/
+    content_normalizer.py
+
+专门做这些事：
+
+清洗空白字符
+去重图片
+过滤头像/icon
+规范发布时间
+规范计数字段
+生成 snippet
+
+这样 collector 只负责“拿数据”，
+normalizer 负责“变干净”，
+以后多平台扩展会轻松很多。
+
+八、健康检查还可以更真实一点
+
+你现在 /health 只是看 xiaohongshu_state.json 是否存在，同时返回 browser_ready: True。
+
+这对外部系统来说有点“看起来健康，但不一定真能采”。
+
+建议
+
+健康检查拆成：
+
+service_status
+browser_launchable
+storage_state_exists
+login_state_ready
+platforms_enabled
+
+最好还能加一个轻量自检：
+
+浏览器能否启动
+state 文件能否读取
+九、我给你的最终优化优先级
+P0，马上做
+重构 image_urls 提取
+重构 publish_time 提取
+让 snippet 和 content_text 分离
+把字段来源写进 raw_data
+补一个 normalizer 层
+P1，这轮做完就够接收件箱
+comment_count 稳定提取
+质量评分改成更业务化
+健康检查增强
+补 /api/platforms 返回更完整能力描述
+P2，后面再做
+评论正文采集
+任务队列
+重试机制
+多平台统一基类增强
+详情补采批量接口
+十、我对这版的最终判断
+
+这版不是“不能用”，而是：
+
+已经能进入收件箱联调阶段，但前提是先把数据字段再清洗一轮。
+
+也就是说：
+
+可以开始接收件箱
+但接之前最好先把
+图片字段
+时间字段
+摘要字段
+评论数字段
+这四块整理好
+
+不然你后面收件箱、改写、知识库都会被脏数据拖慢。
+
+你这一步最该做的，不是再加一堆新功能，而是把采集模块做成：
+
+“返回的数据一眼能看懂、字段语义稳定、后面模块直接敢用”
+
+这才算采集模块真正定版。
+
+如果你愿意，我下一条可以直接给你一版：
+
+《采集模块最终优化清单 v3（按开发顺序）》
+会直接写成你可以照着改代码的那种。
+
+好的
+
+好，我直接给你一版可落地的最终版。
+目标不是“再改一点点”，而是把采集模块真正定成一个后面收件箱 / 改写 / 知识库都能直接接的稳定版本。
+
+采集模块最终优化清单 v3
+一、这轮改造的总目标
+
+把采集模块从“能抓到内容”升级为：
+
+能稳定返回结构化、干净、可入库、可继续处理的数据。
+
+这轮改完后，采集模块应该满足 4 个标准：
+
+字段语义稳定
+脏数据明显减少
+列表采集和详情补采职责清晰
+后续收件箱可以直接接
+二、最终字段定义
+
+先把字段定死，不然后面越改越乱。
+
+1）统一内容模型 CollectedContent
+{
+  "source": "xiaohongshu",
+  "source_id": "xxx",
+  "platform_content_id": "xxx",
+  "url": "https://...",
+  "title": "标题",
+  "author_name": "作者名",
+  "author_id": "作者ID或空",
+  "author_avatar_url": "作者头像",
+  "snippet": "列表摘要，适合收件箱预览",
+  "content_text": "正文全文",
+  "content_preview": "正文前120字，可选",
+  "cover_url": "封面图",
+  "content_image_urls": [],
+  "publish_time": "2026-03-26 13:20:00",
+  "like_count": 123,
+  "comment_count": 20,
+  "favorite_count": None,
+  "share_count": None,
+  "tags": [],
+  "quality_score": 0.0,
+  "status": "success",
+  "field_source": {},
+  "data_quality": {},
+  "raw_data": {}
+}
+2）字段语义最终版
+snippet
+
+只用于列表预览，不是正文全文。
+
+规则：
+
+优先使用搜索列表页的摘要
+没有才从详情正文截 80~120 字
+不要和 content_text 完全一样
+content_text
+
+正文全文，用于：
+
+收件箱详情
+改写输入
+知识库沉淀
+cover_url
+
+封面图，单图
+
+content_image_urls
+
+正文图片列表，不含头像、icon、装饰图
+
+publish_time
+
+发布时间，必须标准化
+
+field_source
+
+记录字段来自哪里
+
+data_quality
+
+记录字段质量情况
+
+三、最终处理链路
+1）搜索采集 /api/collect/run
+
+职责：
+
+按关键词抓列表
+拿到基础卡片信息
+可选触发详情补采
+返回标准化结果
+运行模式建议
+
+支持两种：
+
+模式 A：快速模式
+
+只抓列表，快
+适合：
+
+搜索看板
+初筛内容
+模式 B：增强模式
+
+列表 + 详情补采
+适合：
+
+入收件箱
+后续改写
+知识库入库
+2）详情补采 /api/collect/detail
+
+职责：
+
+传入 url 或 source_id
+补正文
+补发布时间
+补图片
+补互动数
+
+这个接口一定要保留。
+不要把所有事情都强塞到 run 里，不然后面不好控制速度和失败重试。
+
+四、最重要的 5 个优化项
+优化 1：重构图片抽取
+
+你现在最大的问题之一就是图片太脏。
+
+目标
+
+让 content_image_urls 尽量只保留正文图。
+
+改造方案
+第一步：选择器优先
+
+优先从正文容器抓图片，不要从全页 img 抓。
+
+第二步：黑名单过滤
+
+过滤 URL 中包含这些关键词的图片：
+
+BAD_IMAGE_KEYWORDS = [
+    "avatar",
+    "icon",
+    "logo",
+    "emoji",
+    "badge",
+    "fe-platform",
+    "profile",
+]
+第三步：尺寸过滤
+
+如果能拿到宽高，过滤特别小的图片，比如：
+
+width < 120
+height < 120
+第四步：URL 归一化
+
+去掉无意义 query 参数，减少重复。
+
+第五步：封面图与正文图分离
+第一张高质量图可作为 cover_url
+全部正文图放 content_image_urls
+优化 2：重构发布时间抽取
+
+你现在不能再靠全文正则当主逻辑。
+
+正确优先级
+一级：DOM 专属字段
+
+优先找发布时间对应节点
+
+二级：script/json 数据
+
+从页面内嵌数据里找
+
+三级：全文兜底
+
+最后才用正则扫文本
+
+最终输出规则
+
+统一成标准时间字符串：
+
+YYYY-MM-DD HH:MM:SS
+
+如果只有日期没有时间，也统一补：
+
+YYYY-MM-DD 00:00:00
+同时加一个来源标记
+field_source["publish_time"] = "dom"
+# 或 script
+# 或 text_fallback
+优化 3：分离 snippet 和 content_text
+
+这个必须改，不然收件箱看起来会很怪。
+
+规则
+列表采集时
+snippet = 搜索结果摘要
+详情补采时
+content_text = 正文全文
+不覆盖已有 snippet，除非 snippet 为空
+如果 snippet 为空
+
+才用：
+
+snippet = content_text[:100]
+再加一个
+content_preview = content_text[:120]
+
+这样以后：
+
+收件箱卡片看 snippet
+详情页看 content_text
+改写前预览看 content_preview
+优化 4：加标准化层 normalizer
+
+这个很关键。
+
+你现在 collector 里面既做采集，又做清洗，后面会越来越乱。
+
+建议目录
+app/
+  collectors/
+  normalizers/
+    content_normalizer.py
+  parsers/
+  services/
+  schemas/
+content_normalizer.py 负责
+去空格、换行、特殊字符
+统一计数值
+统一时间格式
+过滤图片
+生成 snippet
+生成 content_preview
+打质量分
+填充 field_source
+填充 data_quality
+
+这样职责就清楚了：
+
+collector：负责拿原始数据
+parser：负责页面字段提取
+normalizer：负责清洗和标准化
+service：负责流程编排
+优化 5：加质量元信息
+
+这一步对你后面特别有用。
+
+data_quality 示例
+{
+  "has_title": True,
+  "has_snippet": True,
+  "has_content_text": True,
+  "has_publish_time": False,
+  "has_cover_url": True,
+  "content_image_count": 3,
+  "has_like_count": True,
+  "has_comment_count": False
+}
+field_source 示例
+{
+  "title": "list_dom",
+  "snippet": "list_dom",
+  "content_text": "detail_dom",
+  "publish_time": "script",
+  "cover_url": "detail_dom",
+  "content_image_urls": "detail_gallery",
+  "like_count": "text_fallback"
+}
+quality_score 建议规则
+
+简单先够用：
+
+score = 0
+if title: score += 0.15
+if snippet: score += 0.1
+if content_text: score += 0.25
+if publish_time: score += 0.15
+if cover_url: score += 0.1
+if len(content_image_urls) > 0: score += 0.1
+if like_count is not None: score += 0.1
+if comment_count is not None: score += 0.05
+
+最后限制到 0~1
+
+五、推荐的最终目录结构
+app/
+  api/
+    routes.py
+
+  collectors/
+    base.py
+    xiaohongshu_collector.py
+
+  parsers/
+    xiaohongshu_parser.py
+
+  normalizers/
+    content_normalizer.py
+
+  services/
+    collect_service.py
+    detail_service.py
+
+  schemas/
+    request.py
+    response.py
+    content.py
+
+  utils/
+    time_util.py
+    text_util.py
+    url_util.py
+    metric_util.py
+六、模块职责最终版
+xiaohongshu_collector.py
+
+只负责：
+
+打开页面
+搜索
+翻页
+打开详情页
+返回原始节点信息 / 原始字段
+
+不要在这里塞太多清洗逻辑。
+
+xiaohongshu_parser.py
+
+负责：
+
+从列表页解析卡片字段
+从详情页解析正文字段
+从页面结构中找时间、图片、互动数
+content_normalizer.py
+
+负责：
+
+字段清洗
+图片过滤
+字段合并
+生成 snippet / preview
+质量打分
+collect_service.py
+
+负责：
+
+协调搜索 + 详情
+决定是否补采
+调用 normalizer
+组装接口返回
+七、接口最终版建议
+1）搜索采集接口
+POST /api/collect/run
+
+请求体建议：
+
+{
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "page_count": 1,
+  "page_size": 10,
+  "need_detail": true,
+  "need_comments": false,
+  "mode": "enhanced"
+}
+返回建议
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "total": 10,
+  "items": [],
+  "meta": {
+    "mode": "enhanced",
+    "detail_success_count": 8,
+    "detail_fail_count": 2
+  }
+}
+2）详情补采接口
+POST /api/collect/detail
+
+请求体：
+
+{
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/xxx"
+}
+
+或者：
+
+{
+  "platform": "xiaohongshu",
+  "source_id": "xxx"
+}
+返回
+
+返回一条完整标准化内容。
+
+3）平台能力接口
+GET /api/platforms
+
+建议返回更清楚：
+
+[
+  {
+    "platform": "xiaohongshu",
+    "enabled": true,
+    "capabilities": {
+      "search": true,
+      "detail": true,
+      "comments": false,
+      "author_profile": false
+    }
+  }
+]
+4）健康检查接口
+GET /health
+
+建议返回：
+
+{
+  "status": "ok",
+  "browser_launchable": true,
+  "login_state_ready": true,
+  "storage_state_exists": true,
+  "platforms_enabled": ["xiaohongshu"]
+}
+八、开发顺序建议
+
+这个顺序最稳，不容易乱。
+
+P0：这两天先做完
+1. 定字段模型
+
+先把 CollectedContent 定好
+
+2. 拆 snippet / content_text
+
+彻底分离
+
+3. 做 normalizer
+
+哪怕先简单版也行
+
+4. 重构图片抽取
+
+改成正文优先 + 黑名单过滤
+
+5. 重构发布时间抽取
+
+改成 dom/script/fallback 三层
+
+P1：随后继续
+6. 增加 field_source
+7. 增加 data_quality
+8. 优化 quality_score
+9. 健康检查增强
+P2：后续再做
+10. 评论数稳定提取
+11. 评论内容采集
+12. 批量详情补采
+13. 任务队列
+14. 重试机制
+15. 多平台统一基类
+九、这轮改完后的验收标准
+
+你可以直接按这个验收。
+
+数据层验收
+
+抽样 20 条数据，至少满足：
+
+title 有值率 > 95%
+snippet 有值率 > 90%
+content_text 有值率 > 85%
+publish_time 有值率 > 70%
+cover_url 有值率 > 80%
+content_image_urls 平均张数合理，不再普遍 15~20 张脏图
+snippet 与 content_text 完全相同的比例 < 20%
+业务层验收
+收件箱卡片能直接展示
+点详情能看到正文
+能按发布时间排序
+能按点赞评论做简单筛选
+后面改写模块可直接读取 content_text
+十、我给你的最终判断
+
+你现在这版已经不是“从零开始”了，
+而是到了一个很关键的节点：
+
+再往前一步，就是能接业务；再乱改一步，就会越做越散。
+
+所以这轮不要再东一块西一块加功能。
+就盯住这 5 件事：
+
+字段定义定死
+snippet / content_text 分开
+图片清洗
+发布时间稳定提取
+normalizer + 质量元信息
+
+这 5 件做完，你的采集模块基本就能定版了。
+
+然后下一步就很顺：
+
+采集 → 收件箱 → 改写 → 审核 → 出稿
+
+这是你现在最应该走的主线。
+
+下一条我可以直接继续给你一版
+“采集模块详细开发方案（按文件拆分到函数级别）”。
+
+你是一个有20年经验的资深程序员 给出最终版
+已思考 43s
+
+可以，我直接按“20年资深程序员给项目定版”的方式，给你一版最终版结论。
+
+先说判断：
+
+你这版 browser-collector 已经能用，但还不能叫“定版”。
+原因不是“采不到”，而是采到了但数据层还不够稳、字段语义还不够硬、代码职责还没彻底拉开。你当前仓库已经有 /health、/api/platforms、/api/collect/run、/api/collect/detail 这些接口，也已经把采集、详情补采、工厂模式、Playwright 浏览器上下文这些基本骨架搭起来了。
+
+结合你现在的代码和这次执行结果，我给你的最终判断是：
+
+这轮不要再加新功能了。直接把采集模块定成“标准采集内核 v1”。
+也就是：先把数据质量、模型定义、解析分层、详情补采稳定性，做到后面收件箱能直接接。
+
+最终版总思路
+
+你现在的采集模块，后面应该承担的是这四件事：
+
+稳定拿数据
+返回统一标准结构
+把脏数据尽量挡在采集层
+给收件箱 / 改写 / 知识库直接供数
+
+所以最终版不是“再继续修几个 if”，而是要把它定成：
+
+Collector + Parser + Normalizer + Service 的标准结构。
+
+你现在代码里主要逻辑还集中在 XiaohongshuCollector 里，里面同时做了搜索、列表卡片解析、详情解析、发布时间提取、图片提取、互动数提取、风控判断、失败落盘，这样短期能跑，长期一定会越来越乱。
+
+我给你的最终版结论
+一、先定目标：采集模块只做“内容标准化输入”
+
+从现在开始，采集模块不要再背太多业务逻辑。
+
+它的职责只做 3 件事：
+
+采集
+清洗
+标准化返回
+
+不要把“收件箱状态”“改写策略”“知识库标签”“客户业务规则”继续塞进采集服务里。
+
+采集模块输出的最终标准
+
+每条内容都应该是一个统一内容对象，字段语义固定，不再漂移。
+
+建议你定成这个最终模型：
+
+class ContentItemV2(BaseModel):
+    source: str                      # xiaohongshu
+    source_id: str
+    platform_content_id: str | None = None
+    url: str
+
+    title: str | None = None
+    author_name: str | None = None
+    author_id: str | None = None
+    author_avatar_url: str | None = None
+
+    snippet: str | None = None
+    content_text: str | None = None
+    content_preview: str | None = None
+
+    cover_url: str | None = None
+    content_image_urls: list[str] = []
+
+    publish_time: datetime | None = None
+
+    like_count: int | None = None
+    comment_count: int | None = None
+    favorite_count: int | None = None
+    share_count: int | None = None
+
+    tags: list[str] = []
+
+    parse_status: str
+    risk_status: str | None = None
+
+    field_source: dict = {}
+    data_quality: dict = {}
+    raw_data: dict = {}
+
+    engagement_score: float | None = None
+    quality_score: float | None = None
+    collected_at: datetime
+
+这里最关键的是：
+
+snippet：只做列表预览
+content_text：只做正文全文
+cover_url：只做封面
+content_image_urls：只做正文图片
+field_source：记录字段从哪来
+data_quality：记录字段质量
+
+你现在仓库里的 ContentItem 还比较薄，只有 image_urls 这一类“语义混合字段”，没有 field_source、data_quality，这会让后面的调试、入库、筛选都变难。
+
+二、你当前最核心的问题，不是抓不到，而是“字段不干净”
+
+你这次表格里已经把问题暴露得很清楚了：
+
+一共 10 条数据里，snippet 和 content_text 有 7 条完全相同
+comment_count 8 条为空
+publish_time 6 条为空
+cover_url 10 条全部命中头像/平台类图片特征
+image_urls 平均大约 17.1 张
+image_urls >= 10 的有 8 条
+
+这说明现在的问题不是“接口没跑通”，而是列表字段、详情字段、正文图片、封面图、发布时间这些语义都还混着。
+
+而且这和代码是对应得上的：
+
+你详情里 snippet 是直接从 content_text[:180] 生成的，所以正文短一点时两列天然重复。
+你图片提取是直接扫全页 img，所以头像、平台 icon、装饰图全进来了。
+你发布时间提取是直接扫 body.inner_text() 跑日期正则，所以既容易漏，也容易误命中正文里的日期。
+你互动数提取同样是扫整页文本匹配“点赞/评论”，稳定性也不够。
+
+所以最终版一定要把这四块彻底改掉。
+
+三、最终版架构
+
+我建议你直接定成下面这个目录，不要犹豫了：
+
+app/
+  api/
+    routes.py
+
+  collectors/
+    base.py
+    xiaohongshu_collector.py
+
+  parsers/
+    xiaohongshu_list_parser.py
+    xiaohongshu_detail_parser.py
+
+  normalizers/
+    content_normalizer.py
+
+  services/
+    collect_service.py
+    detail_service.py
+
+  schemas/
+    request.py
+    detail.py
+    result.py
+    content.py
+
+  utils/
+    browser.py
+    time_util.py
+    text_util.py
+    image_util.py
+    metric_util.py
+各层职责最终版
+
+collector
+只负责：
+
+打开浏览器
+搜索
+翻页
+打开详情页
+拿原始节点
+
+parser
+只负责：
+
+从 DOM / script / 页面文本提字段
+
+normalizer
+只负责：
+
+清洗空白
+图片过滤
+时间标准化
+生成 snippet
+生成 content_preview
+打质量分
+生成 field_source / data_quality
+
+service
+只负责：
+
+协调 run/detail 流程
+组装接口响应
+统计耗时和结果数
+
+你现在 CollectService 已经在做“请求包装 + collector 调用 + stats 汇总”这件事，这个方向是对的，但还需要把解析和清洗真正拆出去。
+
+四、最终版必须落实的 6 个改造
+1）彻底拆开 snippet 和 content_text
+
+这是必须马上改的。
+
+你当前详情逻辑里：
+
+merged_snippet = (merged_content[:180] if merged_content else item.snippet) or None
+
+这会直接导致 snippet 和 content_text 高度重复。
+
+最终版规则
+列表页抓到的摘要，存 snippet
+详情页抓到的正文，存 content_text
+只有 snippet 为空时，才从正文生成一个 80~100 字预览
+再额外补一个 content_preview
+正确写法
+if not item.snippet and content_text:
+    item.snippet = build_snippet(content_text, max_len=100)
+
+item.content_text = normalized_content
+item.content_preview = build_preview(normalized_content, max_len=120)
+
+这样后面：
+
+收件箱卡片看 snippet
+详情页看 content_text
+预览弹窗看 content_preview
+2）image_urls 改成 content_image_urls，并加过滤器
+
+你现在 _extract_image_urls() 是遍历全页 img，这在工程上只能算临时版。
+
+最终版规则
+
+先从详情主内容区域取图，再做 3 层过滤：
+
+第一层：范围过滤
+
+只抓正文区域图片
+不抓全局导航、推荐、评论头像
+
+第二层：关键词过滤
+过滤 URL 命中：
+
+avatar
+icon
+logo
+fe-platform
+profile
+emoji
+badge
+
+第三层：尺寸过滤
+如果拿得到尺寸：
+
+width < 120 或 height < 120 直接过滤
+最终字段
+author_avatar_url
+cover_url
+content_image_urls
+
+不要再让 image_urls 一列把三种语义混在一起。
+
+3）发布时间提取改成三级策略
+
+现在 _extract_publish_time() 全页扫正则，这种写法不是不能用，但只能当兜底。
+
+最终版优先级
+DOM 专属节点
+页面 script/json
+全文正则兜底
+标准化输出
+
+统一转成：
+
+YYYY-MM-DD HH:MM:SS
+同时记来源
+field_source["publish_time"] = "dom"
+# 或 script
+# 或 text_fallback
+
+这样你后面就知道：
+
+哪些时间是高可信
+哪些只是兜底猜出来的
+4）互动数字段不要再只靠全文正则
+
+你现在 _extract_metric(page, "点赞") 也是扫全文文本。
+
+最终版思路
+
+优先从：
+
+互动区域 DOM
+内嵌 script 数据
+
+拿不到再全文兜底。
+
+而且建议字段扩一下：
+
+like_count
+comment_count
+favorite_count
+share_count
+
+没有就允许为空，但来源要记录。
+
+5）增加 field_source 和 data_quality
+
+这个是你后面能不能轻松调试的关键。
+
+field_source 示例
+{
+  "title": "list_dom",
+  "snippet": "list_dom",
+  "content_text": "detail_dom",
+  "cover_url": "detail_gallery",
+  "content_image_urls": "detail_gallery",
+  "publish_time": "script",
+  "like_count": "detail_dom",
+  "comment_count": "text_fallback"
+}
+data_quality 示例
+{
+  "has_title": True,
+  "has_snippet": True,
+  "has_content_text": True,
+  "has_publish_time": False,
+  "has_cover_url": True,
+  "content_image_count": 3,
+  "has_like_count": True,
+  "has_comment_count": False
+}
+
+你现在 raw_data 已经在用了，比如会写 stage、error、screenshot、html_dump，这个方向很好，但还差标准化元信息。
+
+6）健康检查别再只返回“看起来健康”
+
+你当前 /health 是看状态文件存不存在，然后返回 browser_ready: True。
+
+这在工程上不够。
+
+最终版 /health
+
+应该返回：
+
+{
+  "success": true,
+  "message": "ok",
+  "browser_launchable": true,
+  "playwright_ready": true,
+  "login_state_ready": true,
+  "storage_state_exists": true,
+  "platforms_enabled": ["xiaohongshu"]
+}
+
+最好增加一次轻量自检：
+
+Playwright 能否启动
+state 文件能否读取
+关键 platform 是否启用
+五、接口最终版
+
+你现在的接口骨架保留，别大改。
+
+POST /api/collect/run
+
+最终职责：
+
+关键词搜索
+列表采集
+可选详情补采
+返回标准化内容列表
+请求体建议升级为
+{
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "max_items": 10,
+  "need_detail": true,
+  "need_comments": false,
+  "mode": "enhanced",
+  "dedup": true,
+  "timeout_sec": 120
+}
+POST /api/collect/detail
+
+最终职责：
+
+补正文
+补图片
+补时间
+补互动数
+
+这个接口必须保留，不要和 run 强耦合。
+
+GET /api/platforms
+
+现在已经有平台能力返回，这个可以继续扩成更明确的结构。
+
+比如：
+
+[
+  {
+    "platform": "xiaohongshu",
+    "enabled": true,
+    "capabilities": {
+      "search": true,
+      "detail": true,
+      "comments": false
+    },
+    "need_login": true
+  }
+]
+六、代码层面的最终定版建议
+BaseCollector 接口要修正
+
+你现在 BaseCollector.collect() 的抽象签名还是：
+
+def collect(self, keyword: str, max_items: int) -> Tuple[list[ContentItem], CollectStats, bool]
+
+但 XiaohongshuCollector.collect() 实际已经是：
+
+def collect(self, req: CollectRequest) -> tuple[list[ContentItem], CollectStats]
+
+这说明抽象层已经和实现层不一致了。
+
+最终版
+
+统一成：
+
+class BaseCollector(ABC):
+    @abstractmethod
+    def collect(self, req: CollectRequest) -> tuple[list[ContentItem], CollectStats]:
+        ...
+
+    @abstractmethod
+    def fetch_detail(self, req: CollectDetailRequest) -> ContentItem:
+        ...
+
+这是必须改的，不然后面多平台一接就乱。
+
+browser.py 保持，但加 context 配置工厂
+
+你现在 create_browser() 已经做了：
+
+headless
+user_agent
+locale
+storage_state
+viewport
+
+这块是对的。
+
+下一步建议加：
+
+new_context_with_state()
+new_context_without_state()
+
+这样后面：
+
+登录态采集
+无登录兜底
+调试模式
+
+更容易切换。
+
+失败落盘要保留，但要规范
+
+你现在 _dump_failure_artifacts() 会存 screenshot 和 html，这个非常好，必须保留。
+
+我建议再加：
+
+request_id
+keyword
+platform
+parse_stage
+
+统一命名，方便排查。
+
+七、这轮开发优先级，我替你定死
+P0：本轮必须完成
+修 BaseCollector 抽象签名
+拆 parser 层
+拆 normalizer 层
+snippet / content_text 分离
+图片过滤重构
+发布时间三级提取
+加 field_source / data_quality
+P1：这轮后半段完成
+优化互动数提取
+健康检查增强
+/api/platforms 能力结构升级
+quality_score 改成更贴业务
+P2：后续再做
+评论正文采集
+任务队列
+重试机制
+多平台 collector 基类扩展
+批量详情补采
+八、最终一句话判断
+
+你现在这版，不要再把它当“试验性采集脚本”了。
+从现在开始，它要升级成：
+
+内容中台的标准采集内核。
+
+所以最终版不是继续到处补 patch，
+而是做这件事：
+
+定模型、拆职责、净字段、稳详情。
+
+你按我上面这版收完以后，这个模块就可以正式定版，然后下一步直接接：
+
+采集 → 收件箱 → 改写 → 审核 → 出稿
+
+这才是你现在最正确的主线。
+
+我下一条可以直接继续给你：
+“最终版代码目录 + 每个文件该写什么 + 关键代码骨架”。
+
+好的
+
+好，我直接接着给你最终版落地方案。
+这次不讲泛泛思路，直接给你一版：
+
+最终版代码目录 + 每个文件职责 + 关键代码骨架 + 开发顺序
+
+你可以按这版直接开干。
+
+一、最终版目标
+
+你这套 browser-collector 现在不要再当“采集脚本”做了，直接按标准采集服务定版。
+
+这版的目标很明确：
+
+对外提供稳定接口
+对内有清晰分层
+返回统一内容结构
+能直接接收件箱
+
+所以这次最终版只做一件事：
+
+把采集模块做成可长期维护的 v1 内核。
+
+二、最终版代码目录
+
+我建议你直接定成这样：
+
+app/
+├── api/
+│   └── routes.py
+│
+├── collectors/
+│   ├── base.py
+│   └── xiaohongshu_collector.py
+│
+├── parsers/
+│   ├── xiaohongshu_list_parser.py
+│   └── xiaohongshu_detail_parser.py
+│
+├── normalizers/
+│   └── content_normalizer.py
+│
+├── services/
+│   ├── collect_service.py
+│   └── detail_service.py
+│
+├── schemas/
+│   ├── request.py
+│   ├── result.py
+│   ├── content.py
+│   └── enums.py
+│
+├── utils/
+│   ├── browser.py
+│   ├── text_util.py
+│   ├── time_util.py
+│   ├── image_util.py
+│   ├── metric_util.py
+│   └── url_util.py
+│
+├── factories/
+│   └── collector_factory.py
+│
+├── core/
+│   ├── config.py
+│   └── logger.py
+│
+└── main.py
+三、每层职责，彻底定死
+
+这个很重要。
+你后面不要再混。
+
+1. api
+
+只负责：
+
+接请求
+参数校验
+调 service
+返回 response
+
+不能在这里写采集细节。
+
+2. collectors
+
+只负责：
+
+打开页面
+搜索
+翻页
+点进详情
+把原始 DOM / 原始字段拿回来
+
+不能在这里写太多清洗逻辑。
+
+3. parsers
+
+只负责：
+
+从列表页抽字段
+从详情页抽字段
+尽量基于 DOM / script / 页面数据提取
+
+parser 是“提取器”，不是“业务处理器”。
+
+4. normalizers
+
+只负责：
+
+清洗文本
+规范时间
+过滤图片
+统一计数格式
+生成 snippet / preview
+打质量分
+生成 field_source
+生成 data_quality
+5. services
+
+只负责：
+
+编排流程
+决定是否详情补采
+汇总 stats
+组装最终返回
+6. schemas
+
+只负责：
+
+请求模型
+返回模型
+内容模型
+枚举
+四、最终版内容模型
+
+这个模型你必须先定死。
+一旦定好，后面所有代码都围绕它来。
+
+app/schemas/content.py
+from __future__ import annotations
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field
+
+
+class ContentItem(BaseModel):
+    source: str
+    source_id: str
+    platform_content_id: Optional[str] = None
+    url: str
+
+    title: Optional[str] = None
+    author_name: Optional[str] = None
+    author_id: Optional[str] = None
+    author_avatar_url: Optional[str] = None
+
+    snippet: Optional[str] = None
+    content_text: Optional[str] = None
+    content_preview: Optional[str] = None
+
+    cover_url: Optional[str] = None
+    content_image_urls: List[str] = Field(default_factory=list)
+
+    publish_time: Optional[datetime] = None
+
+    like_count: Optional[int] = None
+    comment_count: Optional[int] = None
+    favorite_count: Optional[int] = None
+    share_count: Optional[int] = None
+
+    tags: List[str] = Field(default_factory=list)
+
+    parse_status: str = "success"
+    risk_status: Optional[str] = None
+
+    field_source: Dict[str, str] = Field(default_factory=dict)
+    data_quality: Dict[str, Any] = Field(default_factory=dict)
+    raw_data: Dict[str, Any] = Field(default_factory=dict)
+
+    engagement_score: Optional[float] = None
+    quality_score: Optional[float] = None
+    collected_at: datetime = Field(default_factory=datetime.utcnow)
+五、请求模型最终版
+app/schemas/request.py
+from typing import Optional
+from pydantic import BaseModel, Field
+
+
+class CollectRequest(BaseModel):
+    platform: str = Field(..., description="平台，如 xiaohongshu")
+    keyword: str = Field(..., description="搜索关键词")
+    max_items: int = Field(default=10, ge=1, le=100)
+    need_detail: bool = Field(default=True)
+    need_comments: bool = Field(default=False)
+    mode: str = Field(default="enhanced", description="quick/enhanced")
+    dedup: bool = Field(default=True)
+    timeout_sec: int = Field(default=120, ge=30, le=600)
+
+
+class CollectDetailRequest(BaseModel):
+    platform: str
+    url: Optional[str] = None
+    source_id: Optional[str] = None
+    timeout_sec: int = Field(default=120, ge=30, le=600)
+六、返回模型最终版
+app/schemas/result.py
+from typing import List, Optional
+from pydantic import BaseModel, Field
+from .content import ContentItem
+
+
+class CollectStats(BaseModel):
+    total: int = 0
+    success: int = 0
+    failed: int = 0
+    detail_success: int = 0
+    detail_failed: int = 0
+    duration_ms: int = 0
+
+
+class CollectResponse(BaseModel):
+    success: bool
+    platform: str
+    keyword: str
+    total: int
+    items: List[ContentItem] = Field(default_factory=list)
+    stats: CollectStats
+
+
+class DetailResponse(BaseModel):
+    success: bool
+    item: Optional[ContentItem] = None
+    message: Optional[str] = None
+七、抽象基类最终版
+
+这个你一定要改。
+你现在最大的问题之一，就是抽象定义和实际实现不完全一致。
+
+app/collectors/base.py
+from __future__ import annotations
+from abc import ABC, abstractmethod
+from typing import List, Tuple
+
+from app.schemas.content import ContentItem
+from app.schemas.request import CollectRequest, CollectDetailRequest
+from app.schemas.result import CollectStats
+
+
+class BaseCollector(ABC):
+
+    @abstractmethod
+    def collect(self, req: CollectRequest) -> Tuple[List[ContentItem], CollectStats]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_detail(self, req: CollectDetailRequest) -> ContentItem:
+        raise NotImplementedError
+八、列表解析器最终版
+app/parsers/xiaohongshu_list_parser.py
+
+职责：
+
+从列表卡片里提：
+title
+snippet
+cover_url
+author_name
+source_id
+url
+from app.schemas.content import ContentItem
+from app.utils.text_util import clean_text
+from app.utils.url_util import normalize_url
+
+
+class XiaohongshuListParser:
+
+    def parse_card(self, card) -> ContentItem:
+        title = self._safe_text(card, ".title")
+        snippet = self._safe_text(card, ".desc")
+        author_name = self._safe_text(card, ".author")
+        cover_url = self._safe_attr(card, "img", "src")
+        detail_url = self._safe_attr(card, "a", "href")
+
+        source_id = self._extract_source_id(detail_url)
+
+        return ContentItem(
+            source="xiaohongshu",
+            source_id=source_id or "",
+            url=normalize_url(detail_url),
+            title=clean_text(title),
+            snippet=clean_text(snippet),
+            author_name=clean_text(author_name),
+            cover_url=normalize_url(cover_url),
+            field_source={
+                "title": "list_dom",
+                "snippet": "list_dom",
+                "author_name": "list_dom",
+                "cover_url": "list_dom",
+            },
+            raw_data={}
+        )
+
+    def _safe_text(self, card, selector: str) -> str:
+        try:
+            el = card.locator(selector).first
+            return el.inner_text(timeout=1000).strip()
+        except Exception:
+            return ""
+
+    def _safe_attr(self, card, selector: str, attr: str) -> str:
+        try:
+            el = card.locator(selector).first
+            return (el.get_attribute(attr, timeout=1000) or "").strip()
+        except Exception:
+            return ""
+
+    def _extract_source_id(self, url: str) -> str:
+        if not url:
+            return ""
+        parts = url.rstrip("/").split("/")
+        return parts[-1] if parts else ""
+九、详情解析器最终版
+
+这是核心。
+
+app/parsers/xiaohongshu_detail_parser.py
+
+职责：
+
+正文
+发布时间
+图片
+互动数
+作者头像
+
+而且必须按三级策略：
+
+DOM
+script/json
+text fallback
+from typing import Dict, Any
+from app.utils.text_util import clean_text
+from app.utils.time_util import parse_publish_time
+from app.utils.image_util import filter_content_images
+from app.utils.metric_util import parse_metric_text
+
+
+class XiaohongshuDetailParser:
+
+    def parse(self, page) -> Dict[str, Any]:
+        result = {
+            "content_text": None,
+            "publish_time": None,
+            "author_avatar_url": None,
+            "content_image_urls": [],
+            "like_count": None,
+            "comment_count": None,
+            "favorite_count": None,
+            "share_count": None,
+            "field_source": {}
+        }
+
+        content_text = self._extract_content_text(page)
+        if content_text:
+            result["content_text"] = clean_text(content_text)
+            result["field_source"]["content_text"] = "detail_dom"
+
+        publish_time, publish_source = self._extract_publish_time(page)
+        if publish_time:
+            result["publish_time"] = publish_time
+            result["field_source"]["publish_time"] = publish_source
+
+        avatar = self._extract_author_avatar(page)
+        if avatar:
+            result["author_avatar_url"] = avatar
+            result["field_source"]["author_avatar_url"] = "detail_dom"
+
+        image_urls = self._extract_content_images(page)
+        if image_urls:
+            result["content_image_urls"] = image_urls
+            result["field_source"]["content_image_urls"] = "detail_dom"
+
+        metrics = self._extract_metrics(page)
+        result.update(metrics)
+        result["field_source"].update({
+            k: v for k, v in metrics.pop("field_source", {}).items()
+        })
+
+        return result
+
+    def _extract_content_text(self, page) -> str:
+        selectors = [
+            ".note-content",
+            ".desc",
+            "[class*=content]",
+            "[class*=desc]",
+        ]
+        for selector in selectors:
+            try:
+                text = page.locator(selector).first.inner_text(timeout=1500).strip()
+                if text:
+                    return text
+            except Exception:
+                continue
+        return ""
+
+    def _extract_publish_time(self, page):
+        # 1. DOM 优先
+        dom_selectors = [
+            ".publish-time",
+            "[class*=publish]",
+            "[class*=time]",
+        ]
+        for selector in dom_selectors:
+            try:
+                text = page.locator(selector).first.inner_text(timeout=1000).strip()
+                dt = parse_publish_time(text)
+                if dt:
+                    return dt, "dom"
+            except Exception:
+                pass
+
+        # 2. script/json
+        try:
+            content = page.content()
+            dt = parse_publish_time(content)
+            if dt:
+                return dt, "script"
+        except Exception:
+            pass
+
+        # 3. 全文兜底
+        try:
+            body_text = page.locator("body").inner_text(timeout=1500)
+            dt = parse_publish_time(body_text)
+            if dt:
+                return dt, "text_fallback"
+        except Exception:
+            pass
+
+        return None, ""
+
+    def _extract_author_avatar(self, page) -> str:
+        selectors = [
+            ".author img",
+            ".user img",
+            "[class*=avatar] img",
+            "img[class*=avatar]",
+        ]
+        for selector in selectors:
+            try:
+                url = page.locator(selector).first.get_attribute("src", timeout=1000)
+                if url:
+                    return url
+            except Exception:
+                continue
+        return ""
+
+    def _extract_content_images(self, page):
+        urls = []
+        selectors = [
+            ".note-content img",
+            ".swiper img",
+            "[class*=content] img",
+            "[class*=image] img",
+        ]
+        for selector in selectors:
+            try:
+                count = page.locator(selector).count()
+                for i in range(count):
+                    el = page.locator(selector).nth(i)
+                    url = (
+                        el.get_attribute("src") or
+                        el.get_attribute("data-src") or
+                        ""
+                    ).strip()
+                    if url:
+                        urls.append(url)
+            except Exception:
+                continue
+        return filter_content_images(urls)
+
+    def _extract_metrics(self, page):
+        result = {
+            "like_count": None,
+            "comment_count": None,
+            "favorite_count": None,
+            "share_count": None,
+            "field_source": {}
+        }
+        try:
+            body_text = page.locator("body").inner_text(timeout=1500)
+            like_count = parse_metric_text(body_text, "点赞")
+            comment_count = parse_metric_text(body_text, "评论")
+            favorite_count = parse_metric_text(body_text, "收藏")
+            share_count = parse_metric_text(body_text, "分享")
+
+            if like_count is not None:
+                result["like_count"] = like_count
+                result["field_source"]["like_count"] = "text_fallback"
+            if comment_count is not None:
+                result["comment_count"] = comment_count
+                result["field_source"]["comment_count"] = "text_fallback"
+            if favorite_count is not None:
+                result["favorite_count"] = favorite_count
+                result["field_source"]["favorite_count"] = "text_fallback"
+            if share_count is not None:
+                result["share_count"] = share_count
+                result["field_source"]["share_count"] = "text_fallback"
+        except Exception:
+            pass
+        return result
+十、标准化层最终版
+
+这个层是你这次必须补的。
+
+app/normalizers/content_normalizer.py
+from copy import deepcopy
+from app.schemas.content import ContentItem
+from app.utils.text_util import clean_text, build_snippet, build_preview
+from app.utils.image_util import choose_cover_url
+from app.utils.metric_util import calc_engagement_score
+
+
+class ContentNormalizer:
+
+    def normalize(self, item: ContentItem) -> ContentItem:
+        obj = deepcopy(item)
+
+        obj.title = clean_text(obj.title)
+        obj.author_name = clean_text(obj.author_name)
+        obj.snippet = clean_text(obj.snippet)
+        obj.content_text = clean_text(obj.content_text)
+
+        if not obj.snippet and obj.content_text:
+            obj.snippet = build_snippet(obj.content_text, max_len=100)
+
+        if obj.content_text:
+            obj.content_preview = build_preview(obj.content_text, max_len=120)
+
+        if not obj.cover_url and obj.content_image_urls:
+            obj.cover_url = choose_cover_url(obj.content_image_urls)
+
+        obj.data_quality = self._build_data_quality(obj)
+        obj.quality_score = self._calc_quality_score(obj)
+        obj.engagement_score = calc_engagement_score(
+            like_count=obj.like_count,
+            comment_count=obj.comment_count,
+            favorite_count=obj.favorite_count,
+            share_count=obj.share_count,
+        )
+
+        return obj
+
+    def merge_list_and_detail(self, base: ContentItem, detail_data: dict) -> ContentItem:
+        merged = base.model_copy(deep=True)
+
+        for key, value in detail_data.items():
+            if key == "field_source":
+                continue
+            if value is not None and value != [] and value != "":
+                setattr(merged, key, value)
+
+        merged.field_source.update(detail_data.get("field_source", {}))
+        return self.normalize(merged)
+
+    def _build_data_quality(self, item: ContentItem) -> dict:
+        return {
+            "has_title": bool(item.title),
+            "has_snippet": bool(item.snippet),
+            "has_content_text": bool(item.content_text),
+            "has_publish_time": bool(item.publish_time),
+            "has_cover_url": bool(item.cover_url),
+            "content_image_count": len(item.content_image_urls or []),
+            "has_like_count": item.like_count is not None,
+            "has_comment_count": item.comment_count is not None,
+        }
+
+    def _calc_quality_score(self, item: ContentItem) -> float:
+        score = 0.0
+        if item.title:
+            score += 0.15
+        if item.snippet:
+            score += 0.10
+        if item.content_text:
+            score += 0.25
+        if item.publish_time:
+            score += 0.15
+        if item.cover_url:
+            score += 0.10
+        if item.content_image_urls:
+            score += 0.10
+        if item.like_count is not None:
+            score += 0.10
+        if item.comment_count is not None:
+            score += 0.05
+        return round(min(score, 1.0), 4)
+十一、采集服务最终版
+app/services/collect_service.py
+import time
+from app.factories.collector_factory import CollectorFactory
+from app.normalizers.content_normalizer import ContentNormalizer
+from app.schemas.request import CollectRequest
+from app.schemas.result import CollectResponse, CollectStats
+
+
+class CollectService:
+
+    def __init__(self):
+        self.normalizer = ContentNormalizer()
+
+    def run(self, req: CollectRequest) -> CollectResponse:
+        start = time.time()
+
+        collector = CollectorFactory.get(req.platform)
+        items, stats = collector.collect(req)
+
+        normalized_items = [self.normalizer.normalize(item) for item in items]
+
+        stats.total = len(normalized_items)
+        stats.success = sum(1 for x in normalized_items if x.parse_status == "success")
+        stats.failed = stats.total - stats.success
+        stats.duration_ms = int((time.time() - start) * 1000)
+
+        return CollectResponse(
+            success=True,
+            platform=req.platform,
+            keyword=req.keyword,
+            total=len(normalized_items),
+            items=normalized_items,
+            stats=stats,
+        )
+十二、详情服务最终版
+app/services/detail_service.py
+from app.factories.collector_factory import CollectorFactory
+from app.normalizers.content_normalizer import ContentNormalizer
+from app.schemas.request import CollectDetailRequest
+from app.schemas.result import DetailResponse
+
+
+class DetailService:
+
+    def __init__(self):
+        self.normalizer = ContentNormalizer()
+
+    def run(self, req: CollectDetailRequest) -> DetailResponse:
+        collector = CollectorFactory.get(req.platform)
+        item = collector.fetch_detail(req)
+        item = self.normalizer.normalize(item)
+
+        return DetailResponse(
+            success=True,
+            item=item,
+            message="ok"
+        )
+十三、Collector 最终结构
+app/collectors/xiaohongshu_collector.py
+
+这份文件最终只保留三类逻辑：
+
+页面打开和操作
+调 parser
+调 normalizer 合并
+from typing import List, Tuple
+from app.collectors.base import BaseCollector
+from app.parsers.xiaohongshu_list_parser import XiaohongshuListParser
+from app.parsers.xiaohongshu_detail_parser import XiaohongshuDetailParser
+from app.normalizers.content_normalizer import ContentNormalizer
+from app.schemas.content import ContentItem
+from app.schemas.request import CollectRequest, CollectDetailRequest
+from app.schemas.result import CollectStats
+from app.utils.browser import create_browser
+
+
+class XiaohongshuCollector(BaseCollector):
+
+    def __init__(self):
+        self.list_parser = XiaohongshuListParser()
+        self.detail_parser = XiaohongshuDetailParser()
+        self.normalizer = ContentNormalizer()
+
+    def collect(self, req: CollectRequest) -> Tuple[List[ContentItem], CollectStats]:
+        stats = CollectStats()
+        items = []
+
+        with create_browser() as browser:
+            page = browser.new_page()
+            self._open_search(page, req.keyword)
+
+            cards = self._get_cards(page, req.max_items)
+            for card in cards:
+                try:
+                    item = self.list_parser.parse_card(card)
+
+                    if req.need_detail:
+                        detail_data = self._fetch_detail_data(page, item.url)
+                        item = self.normalizer.merge_list_and_detail(item, detail_data)
+                        stats.detail_success += 1
+                    else:
+                        item = self.normalizer.normalize(item)
+
+                    items.append(item)
+                except Exception as e:
+                    stats.detail_failed += 1
+                    fail_item = ContentItem(
+                        source="xiaohongshu",
+                        source_id="",
+                        url="",
+                        parse_status="failed",
+                        raw_data={"error": str(e)}
+                    )
+                    items.append(fail_item)
+
+        return items, stats
+
+    def fetch_detail(self, req: CollectDetailRequest) -> ContentItem:
+        with create_browser() as browser:
+            page = browser.new_page()
+            url = req.url or self._build_url_by_source_id(req.source_id)
+            page.goto(url, wait_until="domcontentloaded", timeout=req.timeout_sec * 1000)
+
+            detail_data = self.detail_parser.parse(page)
+            item = ContentItem(
+                source="xiaohongshu",
+                source_id=req.source_id or self._extract_source_id(url),
+                url=url,
+            )
+            return self.normalizer.merge_list_and_detail(item, detail_data)
+
+    def _open_search(self, page, keyword: str):
+        pass
+
+    def _get_cards(self, page, max_items: int):
+        pass
+
+    def _fetch_detail_data(self, page, url: str) -> dict:
+        detail_page = page.context.new_page()
+        try:
+            detail_page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            return self.detail_parser.parse(detail_page)
+        finally:
+            detail_page.close()
+
+    def _build_url_by_source_id(self, source_id: str) -> str:
+        return f"https://www.xiaohongshu.com/explore/{source_id}"
+
+    def _extract_source_id(self, url: str) -> str:
+        return url.rstrip("/").split("/")[-1]
+十四、工具层建议
+text_util.py
+import re
+
+
+def clean_text(text: str | None) -> str | None:
+    if not text:
+        return None
+    text = text.replace("\u200b", " ").replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
+def build_snippet(text: str | None, max_len: int = 100) -> str | None:
+    text = clean_text(text)
+    if not text:
+        return None
+    return text[:max_len]
+
+
+def build_preview(text: str | None, max_len: int = 120) -> str | None:
+    text = clean_text(text)
+    if not text:
+        return None
+    return text[:max_len]
+image_util.py
+from urllib.parse import urlsplit, urlunsplit
+
+BAD_IMAGE_KEYWORDS = [
+    "avatar",
+    "icon",
+    "logo",
+    "emoji",
+    "badge",
+    "profile",
+    "fe-platform",
+]
+
+
+def normalize_image_url(url: str) -> str:
+    if not url:
+        return ""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def is_bad_image(url: str) -> bool:
+    lower = url.lower()
+    return any(word in lower for word in BAD_IMAGE_KEYWORDS)
+
+
+def filter_content_images(urls: list[str]) -> list[str]:
+    result = []
+    seen = set()
+
+    for url in urls:
+        if not url:
+            continue
+        url = normalize_image_url(url)
+        if is_bad_image(url):
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        result.append(url)
+
+    return result[:9]
+
+
+def choose_cover_url(urls: list[str]) -> str | None:
+    if not urls:
+        return None
+    return urls[0]
+time_util.py
+import re
+from datetime import datetime
+
+
+DATE_PATTERNS = [
+    r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
+    r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})",
+    r"(\d{4}-\d{2}-\d{2})",
+    r"(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})",
+    r"(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2})",
+    r"(\d{4}/\d{2}/\d{2})",
+]
+
+
+def parse_publish_time(text: str | None):
+    if not text:
+        return None
+
+    for pattern in DATE_PATTERNS:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+
+        raw = match.group(1)
+        raw = raw.replace("/", "-")
+
+        for fmt in [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d",
+        ]:
+            try:
+                dt = datetime.strptime(raw, fmt)
+                if fmt == "%Y-%m-%d":
+                    dt = dt.replace(hour=0, minute=0, second=0)
+                return dt
+            except ValueError:
+                continue
+    return None
+metric_util.py
+import re
+
+
+def parse_metric_text(text: str | None, keyword: str):
+    if not text:
+        return None
+
+    pattern = rf"{keyword}\s*([0-9]+(?:\.[0-9]+)?[万wW]?)"
+    match = re.search(pattern, text)
+    if not match:
+        return None
+
+    raw = match.group(1).lower()
+    if "万" in raw or "w" in raw:
+        number = float(raw.replace("万", "").replace("w", ""))
+        return int(number * 10000)
+    return int(float(raw))
+
+
+def calc_engagement_score(
+    like_count=None,
+    comment_count=None,
+    favorite_count=None,
+    share_count=None
+):
+    score = 0.0
+    score += (like_count or 0) * 1.0
+    score += (comment_count or 0) * 2.0
+    score += (favorite_count or 0) * 1.5
+    score += (share_count or 0) * 2.5
+    return round(score, 2)
+十五、接口最终版
+app/api/routes.py
+from fastapi import APIRouter
+from app.schemas.request import CollectRequest, CollectDetailRequest
+from app.services.collect_service import CollectService
+from app.services.detail_service import DetailService
+
+router = APIRouter()
+
+
+@router.get("/health")
+def health():
+    return {
+        "success": True,
+        "message": "ok",
+        "browser_launchable": True,
+        "login_state_ready": True,
+        "platforms_enabled": ["xiaohongshu"]
+    }
+
+
+@router.get("/api/platforms")
+def platforms():
+    return [
+        {
+            "platform": "xiaohongshu",
+            "enabled": True,
+            "capabilities": {
+                "search": True,
+                "detail": True,
+                "comments": False
+            }
+        }
+    ]
+
+
+@router.post("/api/collect/run")
+def collect_run(req: CollectRequest):
+    service = CollectService()
+    return service.run(req)
+
+
+@router.post("/api/collect/detail")
+def collect_detail(req: CollectDetailRequest):
+    service = DetailService()
+    return service.run(req)
+十六、开发顺序，按这个做最稳
+
+你不要乱跳。
+就按这个顺序。
+
+第一步
+
+先把 schemas/content.py、request.py、result.py 定好。
+
+因为这是全项目的地基。
+
+第二步
+
+重构 BaseCollector。
+
+把抽象接口和实现接口统一。
+
+第三步
+
+把 xiaohongshu_collector.py 里的解析逻辑拆出去：
+
+列表解析 → xiaohongshu_list_parser.py
+详情解析 → xiaohongshu_detail_parser.py
+第四步
+
+补 content_normalizer.py
+
+这一步做完，你的数据质量会明显上来。
+
+第五步
+
+把 snippet 和 content_text 彻底分离。
+
+这个改完后，收件箱展示会立刻顺很多。
+
+第六步
+
+改图片抽取：
+
+全页 img 改成正文区域优先
+黑名单过滤
+去重
+限制张数
+第七步
+
+改发布时间提取：
+
+dom
+script
+fallback
+第八步
+
+加 field_source 和 data_quality
+
+后面你调试、验收、入库全靠它。
+
+十七、这版改完后的验收标准
+
+你做完后，拿 20 条数据抽样检查。
+
+验收指标
+title 有值率 ≥ 95%
+snippet 有值率 ≥ 90%
+content_text 有值率 ≥ 85%
+publish_time 有值率 ≥ 70%
+cover_url 有值率 ≥ 80%
+snippet == content_text 的比例 < 20%
+content_image_urls 平均张数回到合理范围
+头像 / icon 混入率明显下降
+十八、最后给你的最终判断
+
+你现在最需要的，不是继续想很多新功能。
+
+你现在最该做的是：
+
+把采集层一次性定干净。
+
+因为这层一旦定下来，后面会非常顺：
+
+收件箱直接接 snippet / content_text / cover_url / publish_time
+改写模块直接吃 content_text
+知识库直接沉淀正文和标签
+审核模块直接看标题、正文、时间、互动数据
+
+所以这次最终版的本质就一句话：
+
+把采集模块做成“标准内容输入层”。
+
+你下一步最适合做的，就是我上面这套目录直接开改。
+如果你要，我下一条我就直接给你：
+
+“xiaohongshu_collector.py 最终版可运行骨架”
