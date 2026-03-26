@@ -34,12 +34,14 @@ class ContentItem(BaseModel):
     title: str | None = None
     author_name: str | None = None
     author_id: str | None = None
+    author_avatar_url: str | None = None
 
     snippet: str | None = None
     content_text: str | None = None
+    content_preview: str | None = None
 
     cover_url: str | None = None
-    image_urls: list[str] = Field(default_factory=list)
+    content_image_urls: list[str] = Field(default_factory=list)
 
     like_count: int | None = None
     comment_count: int | None = None
@@ -53,6 +55,8 @@ class ContentItem(BaseModel):
     engagement_score: float | None = None
     quality_score: float | None = None
 
+    field_source: dict[str, str] = Field(default_factory=dict)
+    data_quality: dict[str, Any] = Field(default_factory=dict)
     raw_data: dict[str, Any] = Field(default_factory=dict)
 
 

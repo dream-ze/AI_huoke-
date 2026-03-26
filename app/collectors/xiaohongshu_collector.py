@@ -7,9 +7,10 @@ from urllib.parse import quote, urljoin
 from playwright.sync_api import Page
 
 from app.collectors.base import BaseCollector
+from app.normalizers.content_normalizer import ContentNormalizer
 from app.schemas.detail import CollectDetailRequest
 from app.schemas.request import CollectRequest
-from app.schemas.result import CollectStats, ContentItem
+from app.schemas.result import CollectStats, ContentItem, RiskStatus
 from app.utils.browser import create_browser
 
 
@@ -18,6 +19,7 @@ class XiaohongshuCollector(BaseCollector):
     SEARCH_URL = "https://www.xiaohongshu.com/search_result"
 
     def __init__(self) -> None:
+        self._normalizer = ContentNormalizer()
         root_dir = Path(__file__).resolve().parents[2]
         self._artifacts_dir = root_dir / "artifacts"
         self._screenshots_dir = self._artifacts_dir / "screenshots"
@@ -141,23 +143,23 @@ class XiaohongshuCollector(BaseCollector):
             author_name=self._clean_text(author_name) or None,
             snippet=self._clean_text(snippet) or None,
             cover_url=cover_url or None,
-            image_urls=[cover_url] if cover_url else [],
+            content_image_urls=[],
             like_count=like_count,
             comment_count=None,
             publish_time=None,
             collected_at=now,
             parse_status="list_only",
             risk_status="normal",
-            engagement_score=float(like_count),
-            quality_score=self._compute_quality(
-                title=self._clean_text(title),
-                snippet=self._clean_text(snippet),
-                content_text="",
-                image_count=1 if cover_url else 0,
-            ),
+            field_source={
+                "title": "list_dom",
+                "snippet": "list_dom",
+                "author_name": "list_dom",
+                "cover_url": "list_dom",
+                "like_count": "list_dom",
+            },
             raw_data={"stage": "list", "href": href},
         )
-        return item
+        return self._normalizer.normalize(item)
 
     def _enrich_detail(self, page: Page, item: ContentItem, need_comments: bool) -> ContentItem:
         try:
@@ -175,37 +177,49 @@ class XiaohongshuCollector(BaseCollector):
             title = self._first_text(page, ["h1", "#detail-title", ".note-title"])
             content_text = self._first_text(page, ["#detail-desc", ".note-content", "article"])
             author_name = self._first_text(page, [".author-container .name", ".author .name", ".username"])
-            publish_time = self._extract_publish_time(page)
-            image_urls = self._extract_image_urls(page)
-            like_count = self._extract_metric(page, "点赞")
-            comment_count = self._extract_metric(page, "评论") if need_comments else item.comment_count
+            publish_time, publish_time_source = self._extract_publish_time(page)
+            content_image_urls = self._extract_content_image_urls(page)
+            author_avatar_url = self._extract_author_avatar_url(page)
+            like_count = self._extract_metric_by_selectors(page, "点赞")
+            comment_count = self._extract_metric_by_selectors(page, "评论") if need_comments else item.comment_count
 
             merged_title = self._clean_text(title) or item.title
             merged_content = self._clean_text(content_text)
-            merged_snippet = (merged_content[:180] if merged_content else item.snippet) or None
+            merged_snippet = item.snippet
+            if not merged_snippet and merged_content:
+                merged_snippet = merged_content[:100]
 
             item.title = merged_title
             item.author_name = self._clean_text(author_name) or item.author_name
             item.content_text = merged_content or item.content_text
             item.snippet = merged_snippet
-            item.image_urls = image_urls
-            item.cover_url = image_urls[0] if image_urls else item.cover_url
+            item.content_image_urls = content_image_urls
+            item.cover_url = content_image_urls[0] if content_image_urls else item.cover_url
+            item.author_avatar_url = author_avatar_url or item.author_avatar_url
             item.like_count = like_count if like_count is not None else item.like_count
             item.comment_count = comment_count
             item.publish_time = publish_time
             item.risk_status = "normal"
+            item.field_source.update(
+                {
+                    "title": "detail_dom",
+                    "author_name": "detail_dom",
+                    "content_text": "detail_dom",
+                    "content_image_urls": "detail_dom",
+                    "cover_url": "detail_dom",
+                    "author_avatar_url": "detail_dom",
+                    "like_count": "detail_dom",
+                }
+            )
+            if need_comments:
+                item.field_source["comment_count"] = "detail_dom"
+            if publish_time_source:
+                item.field_source["publish_time"] = publish_time_source
 
             has_detail = bool(item.content_text) and bool(item.title)
             item.parse_status = "detail_success" if has_detail else "detail_failed"
-            item.engagement_score = float((item.like_count or 0) + (item.comment_count or 0) * 3)
-            item.quality_score = self._compute_quality(
-                title=item.title or "",
-                snippet=item.snippet or "",
-                content_text=item.content_text or "",
-                image_count=len(item.image_urls),
-            )
             item.raw_data.update({"stage": "detail"})
-            return item
+            return self._normalizer.normalize(item)
         except Exception as ex:
             item.parse_status = "detail_failed"
             item.risk_status = "normal"
@@ -220,44 +234,107 @@ class XiaohongshuCollector(BaseCollector):
             )
             return item
 
-    def _extract_publish_time(self, page: Page) -> Optional[datetime]:
-        text = self._clean_text(page.locator("body").inner_text(timeout=1200))
-        if not text:
-            return None
+    def _extract_publish_time(self, page: Page) -> tuple[Optional[datetime], str]:
+        selectors = [
+            "time",
+            "[class*=publish]",
+            "[class*=time]",
+            "[data-testid*=time]",
+        ]
+        for selector in selectors:
+            text = self._first_text(page, [selector])
+            parsed = self._parse_datetime_text(text)
+            if parsed:
+                return parsed, "detail_dom"
 
-        match = re.search(r"(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}))?", text)
-        if not match:
-            return None
+        html = page.content()
+        match = re.search(
+            r"(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+|T)(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?",
+            html,
+        )
+        if match:
+            year, month, day, hour, minute, second = match.groups()
+            try:
+                parsed = datetime(
+                    int(year),
+                    int(month),
+                    int(day),
+                    int(hour),
+                    int(minute),
+                    int(second or 0),
+                ).astimezone()
+                return parsed, "detail_script"
+            except ValueError:
+                return None, ""
 
-        year, month, day, hour, minute = match.groups()
-        hh = int(hour) if hour else 0
-        mm = int(minute) if minute else 0
-        try:
-            return datetime(int(year), int(month), int(day), hh, mm).astimezone()
-        except ValueError:
-            return None
+        return None, ""
 
-    def _extract_metric(self, page: Page, label: str) -> Optional[int]:
-        text = self._clean_text(page.locator("body").inner_text(timeout=1200))
-        if not text:
-            return None
-
-        pattern = rf"{label}\s*(\d+(?:\.\d+)?[万wW]?)"
-        match = re.search(pattern, text)
-        if not match:
-            return None
-        return self._to_int_count(match.group(1))
-
-    def _extract_image_urls(self, page: Page) -> list[str]:
-        urls: list[str] = []
-        for img in page.locator("img").all():
-            src = img.get_attribute("src") or img.get_attribute("data-src")
-            if not src or src.startswith("data:"):
+    def _extract_metric_by_selectors(self, page: Page, label: str) -> Optional[int]:
+        selectors = [
+            f"[aria-label*='{label}']",
+            f"[title*='{label}']",
+            f"button:has-text('{label}')",
+            f"span:has-text('{label}')",
+            f"div:has-text('{label}')",
+        ]
+        for selector in selectors:
+            locator = page.locator(selector)
+            if locator.count() <= 0:
                 continue
-            urls.append(src)
-        return list(dict.fromkeys(urls))[:20]
+            text = self._clean_text(locator.first.inner_text(timeout=800))
+            if not text:
+                continue
+            number = self._extract_count_from_text(text)
+            if number is not None:
+                return number
+        return None
 
-    def _detect_risk(self, page: Page) -> str:
+    def _extract_content_image_urls(self, page: Page) -> list[str]:
+        urls: list[str] = []
+        selectors = [
+            ".note-content img",
+            "article img",
+            "[class*=note] [class*=content] img",
+            "[class*=desc] img",
+        ]
+        for selector in selectors:
+            locator = page.locator(selector)
+            count = locator.count()
+            if count <= 0:
+                continue
+            for idx in range(count):
+                img = locator.nth(idx)
+                src = img.get_attribute("src") or img.get_attribute("data-src")
+                normalized = self._normalize_url(src)
+                if not normalized:
+                    continue
+                if self._is_noise_image(normalized):
+                    continue
+                urls.append(normalized)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for url in urls:
+            if url in seen:
+                continue
+            seen.add(url)
+            deduped.append(url)
+        return deduped[:9]
+
+    def _extract_author_avatar_url(self, page: Page) -> Optional[str]:
+        selectors = [
+            ".author img",
+            "[class*=author] [class*=avatar] img",
+            "img[class*=avatar]",
+        ]
+        for selector in selectors:
+            url = self._first_attr(page, selector, "src")
+            normalized = self._normalize_url(url)
+            if normalized:
+                return normalized
+        return None
+
+    def _detect_risk(self, page: Page) -> RiskStatus:
         text = self._clean_text(page.locator("body").inner_text(timeout=1200))
         if not text:
             return "blocked"
@@ -315,6 +392,13 @@ class XiaohongshuCollector(BaseCollector):
         except Exception:
             return 0
 
+    def _extract_count_from_text(self, text: str) -> Optional[int]:
+        match = re.search(r"(\d+(?:\.\d+)?(?:万|w|W)?)", text)
+        if not match:
+            return None
+        value = self._to_int_count(match.group(1))
+        return value
+
     def _extract_source_id(self, url: str) -> str:
         if not url:
             return ""
@@ -327,6 +411,64 @@ class XiaohongshuCollector(BaseCollector):
 
     def _clean_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", text or "").strip()
+
+    def _normalize_url(self, url: Optional[str]) -> Optional[str]:
+        if not url:
+            return None
+        text = url.strip()
+        if not text or text.startswith("data:"):
+            return None
+        # Keep canonical image path and drop query to avoid duplicate variants.
+        match = re.match(r"^(https?://[^?#]+)", text)
+        if not match:
+            return None
+        return match.group(1)
+
+    def _is_noise_image(self, url: str) -> bool:
+        lowered = url.lower()
+        noise_keywords = [
+            "avatar",
+            "icon",
+            "logo",
+            "emoji",
+            "badge",
+            "profile",
+            "fe-platform",
+            "picasso-static",
+        ]
+        return any(keyword in lowered for keyword in noise_keywords)
+
+    def _parse_datetime_text(self, text: str) -> Optional[datetime]:
+        cleaned = self._clean_text(text)
+        if not cleaned:
+            return None
+
+        exact_match = re.search(
+            r"(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+|T)(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?",
+            cleaned,
+        )
+        if exact_match:
+            year, month, day, hour, minute, second = exact_match.groups()
+            try:
+                return datetime(
+                    int(year),
+                    int(month),
+                    int(day),
+                    int(hour),
+                    int(minute),
+                    int(second or 0),
+                ).astimezone()
+            except ValueError:
+                return None
+
+        date_only_match = re.search(r"(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})", cleaned)
+        if not date_only_match:
+            return None
+        year, month, day = date_only_match.groups()
+        try:
+            return datetime(int(year), int(month), int(day), 0, 0, 0).astimezone()
+        except ValueError:
+            return None
 
     def _compute_quality(self, title: str, snippet: str, content_text: str, image_count: int) -> float:
         score = 0.0

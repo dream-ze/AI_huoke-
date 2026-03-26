@@ -30,6 +30,8 @@ def export_sample_to_excel(
 
     workbook = Workbook()
     sheet = workbook.active
+    if sheet is None:
+        raise RuntimeError("无法创建Excel工作表")
     sheet.title = "sample_data"
 
     headers = [
@@ -38,10 +40,13 @@ def export_sample_to_excel(
         "source_id",
         "title",
         "author_name",
+        "author_avatar_url",
         "snippet",
+        "content_preview",
         "content_text",
         "url",
         "cover_url",
+        "content_image_urls",
         "like_count",
         "comment_count",
         "publish_time",
@@ -59,10 +64,13 @@ def export_sample_to_excel(
                 item.source_id,
                 item.title,
                 item.author_name,
+                item.author_avatar_url,
                 item.snippet,
+                item.content_preview,
                 item.content_text,
                 item.url,
                 item.cover_url,
+                "\n".join(item.content_image_urls),
                 item.like_count,
                 item.comment_count,
                 item.publish_time,
