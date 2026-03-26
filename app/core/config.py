@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     BROWSER_VIEWPORT_WIDTH: int = 1440
     BROWSER_VIEWPORT_HEIGHT: int = 900
 
+    SAMPLE_EXPORT_DIR: str = "exports"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

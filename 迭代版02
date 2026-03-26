@@ -1,0 +1,1684 @@
+可以，而且我觉得你这个项目最值得先优化的就是“返回数据结构”。
+我看了你这个 feature/browser-collector 分支，现在接口 /api/collect/run 的返回是：
+
+顶层：success / platform / keyword / count / items / message
+items 里主要有：title / author / content / url / like_count / comment_count / publish_time / source_id / raw_data
+
+但目前采集器里，小红书数据实际上还是偏“粗抓”状态：
+它是通过 section 做卡片遍历、从 inner_text 拆标题/作者/点赞，content 直接塞整段文本，comment_count 和 publish_time 基本是空，cover_url 也没真正提取，raw_data 也是空对象。这个会导致你后面做收件箱、清洗、去重、评分、改写时都不太顺手。
+
+我建议你不要只返回“展示型数据”，而是一步升级成**“可入库、可评分、可追踪”的标准结构**。
+
+你可以把返回改成三层：
+
+1）顶层返回：加任务信息
+
+现在只有 success/count/message，太薄。建议补：
+
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "count": 10,
+  "request_id": "20260326_xhs_xxx",
+  "task_status": "finished",
+  "cost_ms": 4280,
+  "collected_at": "2026-03-26T10:25:30+08:00",
+  "has_more": true,
+  "message": "采集完成",
+  "items": []
+}
+
+这样你后面前端看板、日志排查、失败重试都会轻松很多。你现在的接口和 schema 里还没有这些任务级字段。
+
+2）单条 item：分成“展示字段 + 分析字段 + 溯源字段”
+
+你现在 ContentItem 只有基础字段，而且很多字段是字符串，像 like_count、comment_count 都不利于排序和打分。
+
+我建议改成这样：
+
+{
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "source_id": "67xxxxxx",
+  "source_type": "note",
+  "title": "公积金贷款流程",
+  "author_name": "小张",
+  "author_id": "",
+  "author_profile_url": "",
+  "content_text": "正文摘要...",
+  "content_html": "",
+  "url": "https://www.xiaohongshu.com/explore/xxxx",
+  "cover_url": "https://...",
+  "image_urls": [],
+  "video_url": "",
+  "publish_time": "",
+  "like_count": 123,
+  "comment_count": 8,
+  "collect_count": 0,
+  "share_count": 0,
+  "engagement_score": 139,
+  "is_ad": false,
+  "is_deleted": false,
+  "lang": "zh-CN",
+  "topic_tags": ["贷款", "公积金"],
+  "matched_keyword": "贷款",
+  "snippet": "公积金贷款流程...",
+  "raw_data": {},
+  "debug_info": {
+    "card_text": "...",
+    "parse_version": "v1"
+  }
+}
+
+核心点就三个：
+
+数字字段一律转 int
+正文、摘要、标签分开
+增加 debug / 溯源字段
+
+因为你现在的解析逻辑只是 lines[0] 当标题、lines[-2] 当作者、lines[-1] 当点赞，这种规则很容易错位。加 debug_info.card_text 后，后面你排查“为什么作者错了”会非常快。
+
+3）单独加 meta，不要把一切都塞 raw_data
+
+你现在 schema 里有 raw_data，但采集器实际返回的是空对象。
+
+建议拆成：
+
+"meta": {
+  "rank": 1,
+  "page_no": 1,
+  "position": 3,
+  "collector": "playwright",
+  "collector_version": "2026.03.26",
+  "search_url": "xxx",
+  "extracted_from": "search_result"
+},
+"raw_data": {
+  "card_text": "...",
+  "href": "/explore/xxxx"
+}
+
+这样 meta 给业务用，raw_data 给排查用。
+后面你入库到 content_inbox 时，meta 可以直接参与筛选，raw_data 则只是保底存档。
+
+你这个分支最该优先改的 5 个点
+第一优先级：把 like_count/comment_count 改成数字
+
+现在 schema 里它们是可选字符串，小红书采集器里也是按文本塞进去。
+这会直接影响你后面：
+
+爆款排序
+热度评分
+过滤低质量内容
+看板统计
+
+建议统一输出：
+
+like_count: int = 0
+comment_count: int = 0
+collect_count: int = 0
+share_count: int = 0
+
+并且加一个解析函数，把 1.2万 这种转成整数。
+
+第二优先级：把 content 拆成 content_text + snippet
+
+现在采集器里 content=text[:1000]，其实塞的是卡片整段文字，不是真正文。
+
+建议：
+
+title：标题
+snippet：搜索页卡片摘要
+content_text：详情页正文，拿不到就先空
+raw_data.card_text：原卡片文本
+
+这样你后面做改写时，就能区分“标题改写”和“正文改写”。
+
+第三优先级：补 author_id / tags / cover_url / image_urls
+
+你现在只保留了 author，但没有作者唯一标识，也没真正提取封面和图片数组。
+
+这会导致：
+
+去重不稳
+无法按作者聚合
+素材池不好做
+看板里卡片不够好看
+
+前端一旦要做“素材预览”，这几个字段就很关键。
+
+第四优先级：加入 quality_score 和 parse_status
+
+你这个系统后面一定要进收件箱，所以建议采集阶段先给一版基础评分：
+
+"quality_score": 72,
+"parse_status": "partial",
+"missing_fields": ["publish_time", "comment_count"]
+
+这样前端收件箱可以直接筛：
+
+仅看高质量
+仅看解析完整
+仅看待补全
+
+这比后面再人工翻方便很多。
+
+第五优先级：把“失败原因”返回到 item 级别
+
+你现在服务层是总异常就返回 success=False，否则就是成功。
+但真实业务里常见情况是：
+
+10 条里成功 7 条
+3 条字段缺失
+2 条解析异常
+
+所以建议顶层加：
+
+"stats": {
+  "scanned": 28,
+  "parsed": 10,
+  "deduplicated": 3,
+  "failed": 2
+}
+
+item 里加：
+
+"parse_status": "ok",
+"error_message": ""
+
+这样你一眼就能知道是“页面没抓到”，还是“抓到了但解析错了”。
+
+我更推荐你直接升级成这个返回结构
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "request_id": "req_xhs_20260326_001",
+  "task_status": "finished",
+  "count": 2,
+  "cost_ms": 4280,
+  "collected_at": "2026-03-26T10:25:30+08:00",
+  "stats": {
+    "scanned": 18,
+    "parsed": 2,
+    "deduplicated": 4,
+    "failed": 1
+  },
+  "items": [
+    {
+      "platform": "xiaohongshu",
+      "keyword": "贷款",
+      "source_id": "67abc123",
+      "source_type": "note",
+      "title": "公积金贷款流程",
+      "snippet": "公积金贷款流程分享...",
+      "content_text": "",
+      "author_name": "小张",
+      "author_id": "",
+      "url": "https://www.xiaohongshu.com/explore/67abc123",
+      "cover_url": "https://...",
+      "image_urls": [],
+      "video_url": "",
+      "publish_time": "",
+      "like_count": 123,
+      "comment_count": 8,
+      "collect_count": 0,
+      "share_count": 0,
+      "engagement_score": 139,
+      "topic_tags": ["贷款", "公积金"],
+      "quality_score": 78,
+      "parse_status": "partial",
+      "missing_fields": ["publish_time"],
+      "meta": {
+        "rank": 1,
+        "collector": "playwright",
+        "collector_version": "v1"
+      },
+      "raw_data": {
+        "card_text": "..."
+      }
+    }
+  ],
+  "message": "采集完成"
+}
+结合你现在项目，我建议这样落地
+
+你现在这个分支已经有：
+
+CollectRequest
+ContentItem / CollectResponse
+CollectService
+XiaohongshuCollector
+/api/collect/run 路由
+
+所以最省事的改法不是重写，而是：
+
+先扩 app/schemas/result.py
+再在 xiaohongshu_collector.py 增加清洗函数：
+数字标准化
+标签提取
+摘要提取
+质量评分
+最后在 CollectService 里补：
+request_id
+cost_ms
+stats
+
+这样你现有结构不用大动，但返回质量会明显上一个台阶。
+
+我给你的结论
+
+你这个项目现在不是“不能用”，而是返回结果还停留在采集 demo 层。
+下一步应该把它升级成：
+
+采集结果 = 可直接进收件箱的数据包
+
+也就是：
+
+能排序
+能去重
+能追踪
+能评分
+能直接给改写模块吃
+
+你要的话，我下一条可以直接按你这个项目目录，给你一版：
+
+app/schemas/result.py 升级版 + xiaohongshu_collector.py 返回结构改造版代码
+我会按你现有 FastAPI 项目格式直接写。
+
+
+
+采集模块 V1.0 定版目标
+
+这版只做三件事：
+
+稳定采集搜索结果卡片
+返回标准化结构，能直接进收件箱
+给后面的详情补采、评论补采预留接口
+
+也就是说：
+
+现在先不追求“一次把详情、评论、图片全抓完”
+先把搜索卡片采集这条链跑稳
+后面再在卡片基础上做“补全详情”“补全评论”
+
+这个更适合你现在的阶段。
+
+一、V1.0 的采集范围
+1）本期纳入
+
+先只定这几个字段为核心输出：
+
+平台
+关键词
+标题
+作者名
+摘要文本
+详情页 URL
+点赞数
+评论数（能拿到就返回，拿不到先置 0）
+source_id
+封面图
+原始抓取信息
+采集状态
+质量分
+
+你当前代码里已经有 platform / keyword / title / author / content / url / cover_url / like_count / comment_count / publish_time / source_id / raw_data 这些雏形，只是字段设计和填充方式还比较粗。
+
+2）本期不强做
+
+这些先不作为 V1.0 必须项：
+
+详情页正文完整抓取
+全量评论抓取
+评论楼中楼
+视频地址
+作者主页完整信息
+收藏数、分享数精确抓取
+
+不是不要，而是放到 V1.1 / V1.2。
+
+二、采集模块最终职责
+
+我建议你把采集模块职责固定成：
+
+“采到候选内容，并输出标准内容包。”
+
+它不负责：
+
+文案改写
+知识库入库决策
+风险审核
+销售判断
+
+它只负责把外部内容采进来，并返回一个统一结构。
+
+这样模块边界就很清晰。
+
+三、V1.0 标准返回结构
+
+这是我建议你这次就定下来的最终响应格式。
+
+顶层响应
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "request_id": "collect_xhs_20260326_001",
+  "task_status": "finished",
+  "count": 10,
+  "cost_ms": 4280,
+  "collected_at": "2026-03-26T10:25:30+08:00",
+  "stats": {
+    "scanned": 28,
+    "parsed": 10,
+    "deduplicated": 6,
+    "failed": 2
+  },
+  "items": [],
+  "message": "采集完成"
+}
+单条 item
+{
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "source_id": "67abc123",
+  "source_type": "note",
+  "title": "公积金贷款流程",
+  "author_name": "小张",
+  "author_id": "",
+  "snippet": "公积金贷款流程分享...",
+  "content_text": "",
+  "url": "https://www.xiaohongshu.com/explore/67abc123",
+  "cover_url": "https://...",
+  "image_urls": [],
+  "publish_time": "",
+  "like_count": 123,
+  "comment_count": 8,
+  "collect_count": 0,
+  "share_count": 0,
+  "engagement_score": 139,
+  "quality_score": 76,
+  "topic_tags": ["贷款", "公积金"],
+  "parse_status": "partial",
+  "missing_fields": ["publish_time"],
+  "meta": {
+    "rank": 1,
+    "page_no": 1,
+    "position": 3,
+    "collector": "playwright",
+    "collector_version": "v1.0"
+  },
+  "raw_data": {
+    "card_text": "...",
+    "href": "/explore/67abc123"
+  }
+}
+四、字段怎么定
+1）顶层字段定版
+
+你现在返回只有 success / platform / keyword / count / items / message。
+
+这次建议补下面这些：
+
+必须新增
+request_id：这次任务唯一 ID
+task_status：finished / partial / failed
+cost_ms：采集耗时
+collected_at：采集完成时间
+stats：统计信息
+原字段保留
+success
+platform
+keyword
+count
+items
+message
+
+这样你的前端、日志、排错、重试都会好很多。
+
+2）内容字段定版
+
+你现在的 ContentItem 里 author 和 content 太泛，like_count/comment_count 又是字符串，不利于排序和评分。
+
+建议改成下面这些核心字段：
+
+基础展示字段
+platform
+keyword
+source_id
+source_type
+title
+author_name
+url
+cover_url
+snippet
+内容字段
+content_text
+image_urls
+publish_time
+topic_tags
+热度字段
+like_count
+comment_count
+collect_count
+share_count
+engagement_score
+质量与解析字段
+quality_score
+parse_status
+missing_fields
+溯源字段
+meta
+raw_data
+五、V1.0 的采集流程定版
+
+我建议你采集流程固定成下面这条。
+
+第一步：接收请求
+
+输入还是保持简单：
+
+{
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "max_items": 20
+}
+
+这个和你当前 CollectRequest 基本一致，当前也确实只有这 3 个字段。
+
+第二步：打开平台搜索页
+
+比如小红书走搜索结果页。
+
+你当前小红书采集器就是通过拼接 search_result?keyword=... 打开搜索页面，再滚动抓卡片。
+
+第三步：扫描卡片
+
+遍历卡片节点，提取：
+
+文本
+链接
+封面
+作者
+点赞
+评论
+
+你当前已经做了 section 卡片扫描和链接抽取，但解析主要还是依赖 inner_text，并且作者和点赞是按行号猜的。
+
+第四步：标准化
+
+对抓到的数据做统一处理：
+
+清理空格
+点赞转数字
+评论转数字
+去重
+截断超长文本
+补默认值
+第五步：计算评分
+
+生成：
+
+engagement_score
+quality_score
+parse_status
+第六步：返回统一响应
+
+收口成标准结构，给收件箱直接使用。
+
+六、V1.0 的评分规则定版
+
+这个非常重要，因为你后面是要卖的。
+
+1）互动分 engagement_score
+
+先简单定：
+
+engagement_score = like_count + comment_count * 2
+
+因为评论通常比点赞更能反映真实需求。
+
+2）质量分 quality_score
+
+可以先按字段完整度算：
+
+有标题 +20
+有作者 +10
+有 URL +20
+有 source_id +10
+有点赞数 +10
+有评论数 +10
+有封面 +10
+有摘要 +10
+
+总分 100。
+
+3）解析状态 parse_status
+
+只定三个值：
+
+ok：主要字段完整
+partial：字段不全，但可用
+failed：内容太差，不建议入库
+
+这样收件箱里就可以筛选：
+
+仅看高质量
+仅看解析完整
+仅看待补采
+七、V1.0 去重规则定版
+
+当前你的小红书采集器已经用 seen_urls 去重了，这个思路是对的。
+
+但 V1.0 我建议固定成两层去重：
+
+第一层：按 URL 去重
+
+最直接。
+
+第二层：按 source_id 去重
+
+防止 URL 变形。
+
+可选第三层
+
+标题相同且作者相同，也视为重复候选。
+
+但第三层先不要写太重，避免误删。
+
+八、V1.0 评论策略定版
+
+你前面问“要不要爬评论”，我这里直接给结论版。
+
+这版不做全量评论采集
+
+原因很简单：
+
+慢
+容易不稳定
+你现在更需要先跑通收件箱
+这版只保留评论能力入口
+
+也就是 item 里先保留：
+
+comment_count
+comments_preview（可选，先空）
+can_fetch_comments（可选，布尔值）
+V1.1 再做
+
+规则定成：
+
+只有高价值内容才补采评论
+
+比如：
+
+like_count >= 300
+或 comment_count >= 10
+
+才触发评论补采。
+
+这样系统不会一下变得很重。
+
+九、V1.0 小红书采集器改造要求
+
+你现在的小红书采集器是：
+
+打开搜索页
+遍历 section
+用 inner_text
+从文本中拆标题、作者、点赞
+comment_count 空
+cover_url 空
+raw_data 空对象
+
+这次改造要求就定成下面这样：
+
+必改
+1. like_count/comment_count 统一转 int
+
+不能再是字符串。
+
+2. content 改成 snippet
+
+因为你现在的 content 本质上只是卡片整段文本，不是真正文。
+
+3. 增加 raw_data.card_text
+
+保留原始卡片文本，便于排错。
+
+4. 增加 parse_status
+
+让前端知道这条数据是不是完整。
+
+5. 封面图尽量提取
+
+拿不到也没关系，但要留字段。
+
+可后补
+作者 ID
+标签
+发布时间
+图片列表
+十、模块拆分定版
+
+我建议你采集部分固定成这几个层次。
+
+1）路由层
+
+负责接请求、返回响应。
+
+2）服务层
+
+负责：
+
+创建 request_id
+记录耗时
+组装 stats
+包装响应
+
+你当前 CollectService.run_collect() 已经在做最基础的调 collector 和包装响应，但还没做 request_id、耗时、统计信息。
+
+3）采集器层
+
+每个平台一个采集器：
+
+xiaohongshu_collector.py
+后面再扩抖音、知乎、闲鱼
+
+你当前 CollectRequest 也已经限定了 xiaohongshu / douyin / zhihu / xianyu 这些平台枚举。
+
+4）解析清洗层
+
+单独抽函数：
+
+normalize_count()
+clean_text()
+extract_tags()
+build_quality_score()
+
+这样采集器不会越来越乱。
+
+十一、V1.0 最终接口行为
+请求
+{
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "max_items": 10
+}
+返回
+成功：success=true
+部分成功：success=true, task_status=partial
+失败：success=false, task_status=failed
+部分成功的定义
+
+比如：
+
+扫到了 30 个
+解析成功 8 个
+2 个字段缺失严重
+1 个报错
+
+这种不应该算整个任务失败，而应该算 partial。
+
+这个比你现在“只要没抛异常就 success=true”的逻辑更适合业务。你当前服务层的确是只要 collector 返回 items 就直接 success=True。
+
+十二、这版完成后，能直接接你后面的哪些模块
+
+这版采集定完后，可以直接接：
+
+1）收件箱
+
+按：
+
+平台
+关键词
+热度
+质量分
+解析状态
+
+来展示。
+
+2）清洗模块
+
+处理：
+
+去重
+垃圾内容过滤
+低质量内容过滤
+3）改写模块
+
+取：
+
+title
+snippet
+topic_tags
+engagement_score
+
+作为改写输入。
+
+4）后续评论补采
+
+对高价值内容二次采集。
+
+十三、我给你的最终定版结论
+
+你采集模块这次就定成一句话：
+
+V1.0 = 搜索结果卡片采集器 + 标准内容包输出器
+
+不要一下做成“全能爬虫”。
+
+V1.0 必须做到
+搜索稳定
+去重稳定
+数据结构统一
+点赞评论数字化
+可评分
+可进收件箱
+可给后续模块使用
+V1.0 暂时不强求
+全量详情
+全量评论
+楼中楼
+全平台深度适配
+
+如果你愿意，我下一条就直接给你一版：
+
+result.py 定版模型 + collect_service.py 定版写法 + xiaohongshu_collector.py 改造骨架
+
+我会按你现在这个项目结构直接写成能落代码的版本。
+
+
+
+一、详情补采接口的定位
+
+这个接口专门干一件事：
+
+根据已经采到的 url 或 source_id，再去详情页把内容补全。
+
+它不负责搜索，不负责批量关键词采集，只负责：
+
+补 content_text
+补 image_urls
+补 publish_time
+顺手也可以补 author_name / cover_url / like_count / comment_count
+
+这样你的链路就变成：
+
+第一步：搜索卡片采集
+
+拿到：
+
+title
+author_name
+url
+like_count
+comment_count
+cover_url
+第二步：详情补采
+
+补齐：
+
+content_text
+image_urls
+publish_time
+更准确的互动数据
+二、接口怎么定
+
+我建议你接口这样设计：
+
+路由
+POST /api/collect/detail
+请求体
+{
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/67abc123"
+}
+
+或者：
+
+{
+  "platform": "xiaohongshu",
+  "source_id": "67abc123"
+}
+
+也就是：
+
+url 和 source_id 二选一
+有 url 优先用 url
+没有 url 就根据 source_id 拼详情地址
+三、请求模型定版
+
+你可以新建：
+
+app/schemas/detail.py
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, Field, model_validator
+
+
+PlatformType = Literal["xiaohongshu", "douyin", "zhihu", "xianyu"]
+
+
+class CollectDetailRequest(BaseModel):
+    platform: PlatformType
+    url: Optional[str] = None
+    source_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_url_or_source_id(self):
+        if not self.url and not self.source_id:
+            raise ValueError("url 和 source_id 至少要传一个")
+        return self
+
+
+class DetailData(BaseModel):
+    platform: str
+    source_id: str = ""
+    url: str = ""
+
+    title: str = ""
+    author_name: str = ""
+    author_id: str = ""
+
+    content_text: str = ""
+    image_urls: List[str] = Field(default_factory=list)
+    cover_url: str = ""
+    publish_time: str = ""
+
+    like_count: int = 0
+    comment_count: int = 0
+    collect_count: int = 0
+    share_count: int = 0
+
+    raw_data: dict = Field(default_factory=dict)
+
+
+class CollectDetailResponse(BaseModel):
+    success: bool
+    platform: str
+    url: str = ""
+    source_id: str = ""
+    data: Optional[DetailData] = None
+    message: str = ""
+四、接口返回长什么样
+成功示例
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/67abc123",
+  "source_id": "67abc123",
+  "data": {
+    "platform": "xiaohongshu",
+    "source_id": "67abc123",
+    "url": "https://www.xiaohongshu.com/explore/67abc123",
+    "title": "公积金贷款流程",
+    "author_name": "小张",
+    "author_id": "",
+    "content_text": "今天讲一下公积金贷款的完整流程...",
+    "image_urls": [
+      "https://xxx/1.jpg",
+      "https://xxx/2.jpg"
+    ],
+    "cover_url": "https://xxx/1.jpg",
+    "publish_time": "2026-03-25 18:20:00",
+    "like_count": 1234,
+    "comment_count": 56,
+    "collect_count": 88,
+    "share_count": 12,
+    "raw_data": {
+      "detail_url": "https://www.xiaohongshu.com/explore/67abc123"
+    }
+  },
+  "message": "详情补采完成"
+}
+失败示例
+{
+  "success": false,
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/67abc123",
+  "source_id": "67abc123",
+  "data": null,
+  "message": "详情页解析失败"
+}
+五、服务层怎么设计
+
+你可以单独做一个服务：
+
+app/services/detail_service.py
+from app.collectors.xiaohongshu_collector import XiaohongshuCollector
+from app.schemas.detail import CollectDetailRequest, CollectDetailResponse
+
+
+class DetailService:
+    def __init__(self) -> None:
+        self.collectors = {
+            "xiaohongshu": XiaohongshuCollector(),
+        }
+
+    async def fetch_detail(self, req: CollectDetailRequest) -> CollectDetailResponse:
+        collector = self.collectors.get(req.platform)
+        if not collector:
+            return CollectDetailResponse(
+                success=False,
+                platform=req.platform,
+                url=req.url or "",
+                source_id=req.source_id or "",
+                data=None,
+                message=f"暂不支持的平台: {req.platform}",
+            )
+
+        try:
+            result = await collector.fetch_detail(req)
+
+            return CollectDetailResponse(
+                success=result.get("success", False),
+                platform=req.platform,
+                url=result.get("url", req.url or ""),
+                source_id=result.get("source_id", req.source_id or ""),
+                data=result.get("data"),
+                message=result.get("message", ""),
+            )
+        except Exception as e:
+            return CollectDetailResponse(
+                success=False,
+                platform=req.platform,
+                url=req.url or "",
+                source_id=req.source_id or "",
+                data=None,
+                message=f"详情补采失败: {str(e)}",
+            )
+六、路由层怎么写
+app/api/collect.py 里加一个接口
+from fastapi import APIRouter
+
+from app.schemas.detail import CollectDetailRequest, CollectDetailResponse
+from app.services.detail_service import DetailService
+
+router = APIRouter(prefix="/api/collect", tags=["collect"])
+
+detail_service = DetailService()
+
+
+@router.post("/detail", response_model=CollectDetailResponse)
+async def collect_detail(req: CollectDetailRequest):
+    return await detail_service.fetch_detail(req)
+七、小红书采集器里怎么补这个能力
+
+你当前 XiaohongshuCollector 已经有主采集逻辑了。
+现在给它再加一个方法：
+
+fetch_detail(req)
+from typing import Any, Dict
+from urllib.parse import quote
+
+from app.schemas.detail import CollectDetailRequest, DetailData
+
+
+class XiaohongshuCollector:
+    COLLECTOR_VERSION = "v1.0"
+
+    async def fetch_detail(self, req: CollectDetailRequest) -> Dict[str, Any]:
+        url = req.url or self._build_detail_url(req.source_id or "")
+        source_id = req.source_id or self._extract_source_id(url)
+
+        if not url:
+            return {
+                "success": False,
+                "url": "",
+                "source_id": source_id,
+                "data": None,
+                "message": "缺少详情页地址",
+            }
+
+        # 这里接你真实的 Playwright 打开详情页逻辑
+        # async with async_playwright() as p:
+        #     browser = await p.chromium.launch(headless=True)
+        #     page = await browser.new_page()
+        #     await page.goto(url, wait_until="domcontentloaded")
+        #     ...
+        #
+        #     title = ...
+        #     author_name = ...
+        #     content_text = ...
+        #     image_urls = ...
+        #     publish_time = ...
+        #     like_count = ...
+        #     comment_count = ...
+
+        # 先放骨架示例
+        title = "公积金贷款流程"
+        author_name = "小张"
+        content_text = "今天讲一下公积金贷款的完整流程，第一步是准备资料，第二步是提交审核。"
+        image_urls = [
+            "https://example.com/1.jpg",
+            "https://example.com/2.jpg",
+        ]
+        publish_time = "2026-03-25 18:20:00"
+        like_count = 1234
+        comment_count = 56
+        collect_count = 88
+        share_count = 12
+        cover_url = image_urls[0] if image_urls else ""
+
+        data = DetailData(
+            platform="xiaohongshu",
+            source_id=source_id,
+            url=url,
+            title=title,
+            author_name=author_name,
+            author_id="",
+            content_text=content_text,
+            image_urls=image_urls,
+            cover_url=cover_url,
+            publish_time=publish_time,
+            like_count=like_count,
+            comment_count=comment_count,
+            collect_count=collect_count,
+            share_count=share_count,
+            raw_data={
+                "detail_url": url,
+            },
+        )
+
+        return {
+            "success": True,
+            "url": url,
+            "source_id": source_id,
+            "data": data,
+            "message": "详情补采完成",
+        }
+
+    def _build_detail_url(self, source_id: str) -> str:
+        if not source_id:
+            return ""
+        return f"https://www.xiaohongshu.com/explore/{source_id}"
+八、详情页到底抓哪些字段
+
+这一步不要贪多，我建议你先固定抓这 7 个：
+
+必抓
+title
+author_name
+content_text
+image_urls
+cover_url
+publish_time
+url/source_id
+能抓就抓
+like_count
+comment_count
+collect_count
+share_count
+
+这样已经够用了。
+
+九、Playwright 里具体抓什么
+
+这里我不写死选择器，因为小红书页面经常变。
+你现在最稳的思路是：
+
+1）优先抓页面文本区
+
+拿：
+
+标题
+正文
+作者
+发布时间
+2）抓图片
+
+找详情页里的 img，把图片地址收集起来。
+
+3）抓互动数据
+
+如果页面上有点赞、收藏、评论数字，就提出来。
+
+十、建议你在详情补采里加“容错”
+
+因为详情页经常会有这些情况：
+
+页面打开慢
+某些字段没加载出来
+图片是懒加载
+互动数字位置变化
+
+所以你不要要求“全字段必须成功”，而是这样分级：
+
+成功标准
+
+只要拿到下面 3 个，就算成功：
+
+title
+content_text
+url
+部分缺失也返回
+
+比如没拿到发布时间、评论数，也照样返回，别整个报错。
+
+十一、和收件箱怎么配合
+
+你后面可以这样用：
+
+搜索采集结果先入收件箱
+
+字段先存：
+
+title
+author_name
+snippet
+url
+like_count
+comment_count
+用户点击“补详情”
+
+调用：
+
+POST /api/collect/detail
+
+补回：
+
+content_text
+image_urls
+publish_time
+
+然后更新收件箱那条记录。
+
+这样你的系统体验会更好，因为：
+
+首次采集快
+详情按需补
+不会一上来就很重
+十二、我帮你定一下数据库更新思路
+
+你收件箱表后面可以加这些字段：
+
+detail_status = "pending"   # pending / done / failed
+content_text = ""
+image_urls = []
+publish_time = None
+detail_fetched_at = None
+
+主采集时：
+
+detail_status = pending
+
+详情补采成功后：
+
+detail_status = done
+
+补采失败：
+
+detail_status = failed
+
+这个很好用。
+
+十三、你现在最适合的最终方案
+
+我直接帮你收口成一句：
+
+采集模块分两段
+1. 搜索采集接口
+
+负责快：
+
+/api/collect/run
+2. 详情补采接口
+
+负责全：
+
+/api/collect/detail
+
+这就是你现在最合适的结构。
+
+如果你愿意，我下一条直接继续给你：
+
+“详情补采 + 收件箱更新” 的 SQLAlchemy 模型和入库代码骨架
+
+
+一、详情补采接口的定位
+
+这个接口专门干一件事：
+
+根据已经采到的 url 或 source_id，再去详情页把内容补全。
+
+它不负责搜索，不负责批量关键词采集，只负责：
+
+补 content_text
+补 image_urls
+补 publish_time
+顺手也可以补 author_name / cover_url / like_count / comment_count
+
+这样你的链路就变成：
+
+第一步：搜索卡片采集
+
+拿到：
+
+title
+author_name
+url
+like_count
+comment_count
+cover_url
+第二步：详情补采
+
+补齐：
+
+content_text
+image_urls
+publish_time
+更准确的互动数据
+二、接口怎么定
+
+我建议你接口这样设计：
+
+路由
+POST /api/collect/detail
+请求体
+{
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/67abc123"
+}
+
+或者：
+
+{
+  "platform": "xiaohongshu",
+  "source_id": "67abc123"
+}
+
+也就是：
+
+url 和 source_id 二选一
+有 url 优先用 url
+没有 url 就根据 source_id 拼详情地址
+三、请求模型定版
+
+你可以新建：
+
+app/schemas/detail.py
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, Field, model_validator
+
+
+PlatformType = Literal["xiaohongshu", "douyin", "zhihu", "xianyu"]
+
+
+class CollectDetailRequest(BaseModel):
+    platform: PlatformType
+    url: Optional[str] = None
+    source_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_url_or_source_id(self):
+        if not self.url and not self.source_id:
+            raise ValueError("url 和 source_id 至少要传一个")
+        return self
+
+
+class DetailData(BaseModel):
+    platform: str
+    source_id: str = ""
+    url: str = ""
+
+    title: str = ""
+    author_name: str = ""
+    author_id: str = ""
+
+    content_text: str = ""
+    image_urls: List[str] = Field(default_factory=list)
+    cover_url: str = ""
+    publish_time: str = ""
+
+    like_count: int = 0
+    comment_count: int = 0
+    collect_count: int = 0
+    share_count: int = 0
+
+    raw_data: dict = Field(default_factory=dict)
+
+
+class CollectDetailResponse(BaseModel):
+    success: bool
+    platform: str
+    url: str = ""
+    source_id: str = ""
+    data: Optional[DetailData] = None
+    message: str = ""
+四、接口返回长什么样
+成功示例
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/67abc123",
+  "source_id": "67abc123",
+  "data": {
+    "platform": "xiaohongshu",
+    "source_id": "67abc123",
+    "url": "https://www.xiaohongshu.com/explore/67abc123",
+    "title": "公积金贷款流程",
+    "author_name": "小张",
+    "author_id": "",
+    "content_text": "今天讲一下公积金贷款的完整流程...",
+    "image_urls": [
+      "https://xxx/1.jpg",
+      "https://xxx/2.jpg"
+    ],
+    "cover_url": "https://xxx/1.jpg",
+    "publish_time": "2026-03-25 18:20:00",
+    "like_count": 1234,
+    "comment_count": 56,
+    "collect_count": 88,
+    "share_count": 12,
+    "raw_data": {
+      "detail_url": "https://www.xiaohongshu.com/explore/67abc123"
+    }
+  },
+  "message": "详情补采完成"
+}
+失败示例
+{
+  "success": false,
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/67abc123",
+  "source_id": "67abc123",
+  "data": null,
+  "message": "详情页解析失败"
+}
+五、服务层怎么设计
+
+你可以单独做一个服务：
+
+app/services/detail_service.py
+from app.collectors.xiaohongshu_collector import XiaohongshuCollector
+from app.schemas.detail import CollectDetailRequest, CollectDetailResponse
+
+
+class DetailService:
+    def __init__(self) -> None:
+        self.collectors = {
+            "xiaohongshu": XiaohongshuCollector(),
+        }
+
+    async def fetch_detail(self, req: CollectDetailRequest) -> CollectDetailResponse:
+        collector = self.collectors.get(req.platform)
+        if not collector:
+            return CollectDetailResponse(
+                success=False,
+                platform=req.platform,
+                url=req.url or "",
+                source_id=req.source_id or "",
+                data=None,
+                message=f"暂不支持的平台: {req.platform}",
+            )
+
+        try:
+            result = await collector.fetch_detail(req)
+
+            return CollectDetailResponse(
+                success=result.get("success", False),
+                platform=req.platform,
+                url=result.get("url", req.url or ""),
+                source_id=result.get("source_id", req.source_id or ""),
+                data=result.get("data"),
+                message=result.get("message", ""),
+            )
+        except Exception as e:
+            return CollectDetailResponse(
+                success=False,
+                platform=req.platform,
+                url=req.url or "",
+                source_id=req.source_id or "",
+                data=None,
+                message=f"详情补采失败: {str(e)}",
+            )
+六、路由层怎么写
+app/api/collect.py 里加一个接口
+from fastapi import APIRouter
+
+from app.schemas.detail import CollectDetailRequest, CollectDetailResponse
+from app.services.detail_service import DetailService
+
+router = APIRouter(prefix="/api/collect", tags=["collect"])
+
+detail_service = DetailService()
+
+
+@router.post("/detail", response_model=CollectDetailResponse)
+async def collect_detail(req: CollectDetailRequest):
+    return await detail_service.fetch_detail(req)
+七、小红书采集器里怎么补这个能力
+
+你当前 XiaohongshuCollector 已经有主采集逻辑了。
+现在给它再加一个方法：
+
+fetch_detail(req)
+from typing import Any, Dict
+from urllib.parse import quote
+
+from app.schemas.detail import CollectDetailRequest, DetailData
+
+
+class XiaohongshuCollector:
+    COLLECTOR_VERSION = "v1.0"
+
+    async def fetch_detail(self, req: CollectDetailRequest) -> Dict[str, Any]:
+        url = req.url or self._build_detail_url(req.source_id or "")
+        source_id = req.source_id or self._extract_source_id(url)
+
+        if not url:
+            return {
+                "success": False,
+                "url": "",
+                "source_id": source_id,
+                "data": None,
+                "message": "缺少详情页地址",
+            }
+
+        # 这里接你真实的 Playwright 打开详情页逻辑
+        # async with async_playwright() as p:
+        #     browser = await p.chromium.launch(headless=True)
+        #     page = await browser.new_page()
+        #     await page.goto(url, wait_until="domcontentloaded")
+        #     ...
+        #
+        #     title = ...
+        #     author_name = ...
+        #     content_text = ...
+        #     image_urls = ...
+        #     publish_time = ...
+        #     like_count = ...
+        #     comment_count = ...
+
+        # 先放骨架示例
+        title = "公积金贷款流程"
+        author_name = "小张"
+        content_text = "今天讲一下公积金贷款的完整流程，第一步是准备资料，第二步是提交审核。"
+        image_urls = [
+            "https://example.com/1.jpg",
+            "https://example.com/2.jpg",
+        ]
+        publish_time = "2026-03-25 18:20:00"
+        like_count = 1234
+        comment_count = 56
+        collect_count = 88
+        share_count = 12
+        cover_url = image_urls[0] if image_urls else ""
+
+        data = DetailData(
+            platform="xiaohongshu",
+            source_id=source_id,
+            url=url,
+            title=title,
+            author_name=author_name,
+            author_id="",
+            content_text=content_text,
+            image_urls=image_urls,
+            cover_url=cover_url,
+            publish_time=publish_time,
+            like_count=like_count,
+            comment_count=comment_count,
+            collect_count=collect_count,
+            share_count=share_count,
+            raw_data={
+                "detail_url": url,
+            },
+        )
+
+        return {
+            "success": True,
+            "url": url,
+            "source_id": source_id,
+            "data": data,
+            "message": "详情补采完成",
+        }
+
+    def _build_detail_url(self, source_id: str) -> str:
+        if not source_id:
+            return ""
+        return f"https://www.xiaohongshu.com/explore/{source_id}"
+八、详情页到底抓哪些字段
+
+这一步不要贪多，我建议你先固定抓这 7 个：
+
+必抓
+title
+author_name
+content_text
+image_urls
+cover_url
+publish_time
+url/source_id
+能抓就抓
+like_count
+comment_count
+collect_count
+share_count
+
+这样已经够用了。
+
+九、Playwright 里具体抓什么
+
+这里我不写死选择器，因为小红书页面经常变。
+你现在最稳的思路是：
+
+1）优先抓页面文本区
+
+拿：
+
+标题
+正文
+作者
+发布时间
+2）抓图片
+
+找详情页里的 img，把图片地址收集起来。
+
+3）抓互动数据
+
+如果页面上有点赞、收藏、评论数字，就提出来。
+
+十、建议你在详情补采里加“容错”
+
+因为详情页经常会有这些情况：
+
+页面打开慢
+某些字段没加载出来
+图片是懒加载
+互动数字位置变化
+
+所以你不要要求“全字段必须成功”，而是这样分级：
+
+成功标准
+
+只要拿到下面 3 个，就算成功：
+
+title
+content_text
+url
+部分缺失也返回
+
+比如没拿到发布时间、评论数，也照样返回，别整个报错。
+
+十一、和收件箱怎么配合
+
+你后面可以这样用：
+
+搜索采集结果先入收件箱
+
+字段先存：
+
+title
+author_name
+snippet
+url
+like_count
+comment_count
+用户点击“补详情”
+
+调用：
+
+POST /api/collect/detail
+
+补回：
+
+content_text
+image_urls
+publish_time
+
+然后更新收件箱那条记录。
+
+这样你的系统体验会更好，因为：
+
+首次采集快
+详情按需补
+不会一上来就很重
+十二、我帮你定一下数据库更新思路
+
+你收件箱表后面可以加这些字段：
+
+detail_status = "pending"   # pending / done / failed
+content_text = ""
+image_urls = []
+publish_time = None
+detail_fetched_at = None
+
+主采集时：
+
+detail_status = pending
+
+详情补采成功后：
+
+detail_status = done
+
+补采失败：
+
+detail_status = failed
+
+这个很好用。
+
+十三、你现在最适合的最终方案
+
+我直接帮你收口成一句：
+
+采集模块分两段
+1. 搜索采集接口
+
+负责快：
+
+/api/collect/run
+2. 详情补采接口
+
+负责全：
+
+/api/collect/detail
+
+这就是你现在最合适的结构。
+
+如果你愿意，我下一条直接继续给你：
+
+“详情补采 + 收件箱更新” 的 SQLAlchemy 模型和入库代码骨架
