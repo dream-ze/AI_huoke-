@@ -1,23 +1,15 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import verify_token
-from app.models import MaterialInbox
+from app.domains.ai_workbench.ai_service import AIService
 from app.services.collector import AcquisitionIntakeService
 
 v1_inbox_router = APIRouter(prefix="/material", tags=["material-inbox-v1"])
-
-
-# ─────────────────────────────────────────
-# 请求 / 响应 Schema
-# ─────────────────────────────────────────
-
-class ApproveRequest(BaseModel):
-    remark: Optional[str] = None
 
 
 class ManualInboxRequest(BaseModel):
@@ -28,65 +20,34 @@ class ManualInboxRequest(BaseModel):
     note: Optional[str] = None
 
 
-class ToTopicRequest(BaseModel):
-    topic_id: int
-    remark: Optional[str] = None
+class UpdateStatusRequest(BaseModel):
+    status: str
+    review_note: Optional[str] = None
 
 
-class NegativeCaseRequest(BaseModel):
-    remark: Optional[str] = None
+class RewriteRequest(BaseModel):
+    platform: str = Field(default="xiaohongshu", min_length=2, max_length=50)
+    account_type: str = Field(default="科普号", min_length=2, max_length=50)
+    target_audience: str = Field(default="泛人群", min_length=2, max_length=50)
+    task_type: str = Field(default="rewrite", min_length=2, max_length=50)
 
 
-class DiscardRequest(BaseModel):
-    remark: Optional[str] = None
+def _to_row(item: Any) -> dict[str, Any]:
+    return AcquisitionIntakeService.serialize_material_item(item)
 
-
-# ─────────────────────────────────────────
-# 工具
-# ─────────────────────────────────────────
-
-def _to_row(item: MaterialInbox) -> dict[str, Any]:
-    created_at = getattr(item, "created_at", None)
-    updated_at = getattr(item, "updated_at", None)
-    publish_time = getattr(item, "publish_time", None)
-    return {
-        "id": item.id,
-        "source_channel": item.source_channel,
-        "source_task_id": item.source_task_id,
-        "source_submission_id": item.source_submission_id,
-        "platform": item.platform,
-        "title": item.title,
-        "author": item.author,
-        "content": item.content,
-        "url": item.url,
-        "cover_url": item.cover_url,
-        "like_count": item.like_count,
-        "comment_count": item.comment_count,
-        "collect_count": item.collect_count,
-        "share_count": item.share_count,
-        "publish_time": publish_time.isoformat() if publish_time else None,
-        "raw_data": item.raw_data or {},
-        "status": item.status,
-        "submitted_by_employee_id": item.submitted_by_employee_id,
-        "remark": item.remark,
-        "created_at": created_at.isoformat() if created_at else None,
-        "updated_at": updated_at.isoformat() if updated_at else None,
-    }
-
-
-# ─────────────────────────────────────────
-# 列表查询（静态路由必须在动态路由之前）
-# ─────────────────────────────────────────
 
 @v1_inbox_router.get(
     "/inbox",
     summary="收件箱列表",
-    description="查询当前用户的收件箱条目，支持按 status / platform / source_channel 过滤。",
+    description="查询当前用户收件箱，支持按三段式状态和过滤字段检索。",
 )
 def list_material_inbox(
-    status: Optional[str] = Query(default=None, description="pending / approved / negative_case / discarded"),
+    status: Optional[str] = Query(default=None, description="pending / review / discard"),
     platform: Optional[str] = Query(default=None),
-    source_channel: Optional[str] = Query(default=None, description="collect_task / employee_submission / wechat_robot"),
+    source_channel: Optional[str] = Query(default=None),
+    keyword: Optional[str] = Query(default=None),
+    risk_status: Optional[str] = Query(default=None),
+    is_duplicate: Optional[bool] = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     current_user: dict = Depends(verify_token),
@@ -98,6 +59,9 @@ def list_material_inbox(
         status=status,
         platform=platform,
         source_channel=source_channel,
+        keyword=keyword,
+        risk_status=risk_status,
+        is_duplicate=is_duplicate,
         skip=skip,
         limit=limit,
     )
@@ -106,8 +70,8 @@ def list_material_inbox(
 
 @v1_inbox_router.post(
     "/inbox/manual",
-    summary="手动录入内容到收件箱",
-    description="将手动填写的标题/正文直接提交到收件箱，状态为 pending，等待人工审核。",
+    summary="手动录入到收件箱",
+    description="手动内容录入统一进入 review 状态，等待人工处理。",
 )
 def submit_manual_to_inbox(
     req: ManualInboxRequest,
@@ -125,97 +89,30 @@ def submit_manual_to_inbox(
     )
 
 
-# ─────────────────────────────────────────
-# 分拣动作（POST /inbox/{id}/动作）
-# 必须注册在 GET /inbox/{inbox_id} 之前，
-# 以防动态路由抢先匹配。
-# ─────────────────────────────────────────
-
-@v1_inbox_router.post(
-    "/inbox/{inbox_id}/approve",
-    summary="审核通过 – 入素材库与洞察库",
-    description=(
-        "将 pending 状态的收件箱条目提升到 ContentAsset（素材库）和 InsightContentItem（洞察库）。"
-        "操作幂等保护：非 pending 状态的条目返回 409。"
-    ),
+@v1_inbox_router.patch(
+    "/inbox/{inbox_id}/status",
+    summary="更新收件箱状态",
+    description="按状态机更新 pending/review/discard。",
 )
-def approve_inbox_item(
+def update_material_inbox_status(
     inbox_id: int,
-    req: ApproveRequest,
+    req: UpdateStatusRequest,
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
     try:
-        return AcquisitionIntakeService.approve_item(db, current_user["user_id"], inbox_id, req.remark)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-
-
-@v1_inbox_router.post(
-    "/inbox/{inbox_id}/to-topic",
-    summary="挂主题 – 入洞察库并关联指定主题",
-    description=(
-        "将 pending 收件箱条目提升到 ContentAsset 和 InsightContentItem，并绑定 topic_id 对应的主题。"
-        "若 topic_id 不存在返回 404；非 pending 状态返回 409。"
-    ),
-)
-def to_topic_inbox_item(
-    inbox_id: int,
-    req: ToTopicRequest,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
-):
-    try:
-        return AcquisitionIntakeService.to_topic_item(
-            db, current_user["user_id"], inbox_id, req.topic_id, req.remark
+        return AcquisitionIntakeService.update_inbox_status(
+            db=db,
+            owner_id=current_user["user_id"],
+            inbox_id=inbox_id,
+            target_status=req.status,
+            review_note=req.review_note,
         )
     except ValueError as exc:
-        status_code = 404 if "不存在" in str(exc) and "主题" in str(exc) else 409
-        raise HTTPException(status_code=status_code, detail=str(exc))
+        detail = str(exc)
+        status_code = 404 if "不存在" in detail else 409
+        raise HTTPException(status_code=status_code, detail=detail)
 
-
-@v1_inbox_router.post(
-    "/inbox/{inbox_id}/to-negative-case",
-    summary="标记为反案例 – 入洞察库",
-    description=(
-        "将 pending 收件箱条目标记为反案例并写入 InsightContentItem（manual_note 前缀 [反案例]），"
-        "不创建 ContentAsset。非 pending 状态返回 409。"
-    ),
-)
-def to_negative_case_inbox_item(
-    inbox_id: int,
-    req: NegativeCaseRequest,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
-):
-    try:
-        return AcquisitionIntakeService.to_negative_case_item(
-            db, current_user["user_id"], inbox_id, req.remark
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-
-
-@v1_inbox_router.post(
-    "/inbox/{inbox_id}/discard",
-    summary="丢弃收件箱条目",
-    description="将 pending 条目状态置为 discarded，不创建任何下游记录。非 pending 状态返回 409。",
-)
-def discard_inbox_item(
-    inbox_id: int,
-    req: DiscardRequest,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
-):
-    try:
-        return AcquisitionIntakeService.discard_item(db, current_user["user_id"], inbox_id, req.remark)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
-
-
-# ─────────────────────────────────────────
-# 单条详情（动态路由放最后）
-# ─────────────────────────────────────────
 
 @v1_inbox_router.get(
     "/inbox/{inbox_id}",
@@ -231,3 +128,29 @@ def get_material_inbox_detail(
         raise HTTPException(status_code=404, detail="收件箱内容不存在")
     return _to_row(item)
 
+
+@v1_inbox_router.post(
+    "/inbox/{inbox_id}/rewrite",
+    summary="基于收件箱素材生成文案",
+    description="收件箱只是素材视图，改写直接基于 material_items + knowledge_documents 检索生成。",
+)
+async def rewrite_material_from_inbox(
+    inbox_id: int,
+    req: RewriteRequest,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    ai_service = AIService(db=db)
+    try:
+        return await AcquisitionIntakeService.generate(
+            db=db,
+            owner_id=current_user["user_id"],
+            material_id=inbox_id,
+            platform=req.platform,
+            account_type=req.account_type,
+            target_audience=req.target_audience,
+            task_type=req.task_type,
+            ai_service=ai_service,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

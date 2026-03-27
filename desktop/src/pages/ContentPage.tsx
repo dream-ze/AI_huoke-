@@ -34,7 +34,7 @@ export function ContentPage() {
           .map((s) => s.trim())
           .filter(Boolean),
       });
-      setMessage("已提交到收件箱，等待审核后入库");
+          setMessage("已进入素材中心，并放入待审核队列");
       setTitle("");
       setContent("");
       await fetchData();
@@ -95,7 +95,7 @@ export function ContentPage() {
               <th>ID</th>
               <th>平台</th>
               <th>标题</th>
-              <th>标签</th>
+              <th>状态</th>
               <th>创建时间</th>
             </tr>
           </thead>
@@ -105,7 +105,7 @@ export function ContentPage() {
                 <td>{item.id}</td>
                 <td>{item.platform}</td>
                 <td>{item.title}</td>
-                <td>{item.tags?.join(", ")}</td>
+                <td>{(item as any).status || "-"}</td>
                 <td>{new Date(item.created_at).toLocaleString()}</td>
               </tr>
             ))}

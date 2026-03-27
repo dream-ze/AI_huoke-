@@ -28,7 +28,16 @@ export function CollectCenterPage() {
   const [kKeyword, setKKeyword] = useState("");
   const [kMaxItems, setKMaxItems] = useState(20);
   const [kLoading, setKLoading] = useState(false);
-  const [kResult, setKResult] = useState<{ task_id: number; status: string; result_count: number; inbox_count: number } | null>(null);
+  const [kResult, setKResult] = useState<{
+    task_id: number;
+    status: string;
+    result_count: number;
+    inserted: number;
+    review: number;
+    discard: number;
+    duplicate: number;
+    failed: number;
+  } | null>(null);
   const [kError, setKError] = useState("");
 
   async function onLinkSubmit(e: FormEvent) {
@@ -190,8 +199,30 @@ export function CollectCenterPage() {
           {kResult && (
             <div style={{ marginTop: 12, padding: 12, background: "var(--bg-2)", borderRadius: 8, fontSize: 13 }}>
               <div style={{ color: "var(--ok)", fontWeight: 600, marginBottom: 4 }}>✓ 采集完成</div>
-              <div className="muted">
-                任务 ID：{kResult.task_id}，抓取 {kResult.result_count} 条，入收件箱 {kResult.inbox_count} 条
+              <div className="muted" style={{ marginBottom: 8 }}>
+                任务 ID：{kResult.task_id}，采集状态：{kResult.status}，抓取总量：{kResult.result_count}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
+                <div style={{ padding: "8px 10px", borderRadius: 8, background: "#e8f5e9" }}>
+                  <div style={{ fontSize: 12, color: "#2e7d32" }}>pending</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#1b5e20" }}>{kResult.inserted}</div>
+                </div>
+                <div style={{ padding: "8px 10px", borderRadius: 8, background: "#fff8e1" }}>
+                  <div style={{ fontSize: 12, color: "#f57f17" }}>review</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#e65100" }}>{kResult.review}</div>
+                </div>
+                <div style={{ padding: "8px 10px", borderRadius: 8, background: "#f5f5f5" }}>
+                  <div style={{ fontSize: 12, color: "#616161" }}>discard</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#424242" }}>{kResult.discard}</div>
+                </div>
+                <div style={{ padding: "8px 10px", borderRadius: 8, background: "#ffebee" }}>
+                  <div style={{ fontSize: 12, color: "#c62828" }}>duplicate</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#b71c1c" }}>{kResult.duplicate}</div>
+                </div>
+                <div style={{ padding: "8px 10px", borderRadius: 8, background: "#ede7f6" }}>
+                  <div style={{ fontSize: 12, color: "#5e35b1" }}>failed</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#4527a0" }}>{kResult.failed}</div>
+                </div>
               </div>
               <div className="muted">
                 → 前往 <a href="/inbox" style={{ color: "var(--brand)" }}>收件箱</a> 审核

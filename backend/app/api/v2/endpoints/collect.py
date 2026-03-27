@@ -3,12 +3,13 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import verify_token
 from app.domains.acquisition.collect_service import CollectService, PLATFORM_LABELS
-from app.models import ContentAsset, ContentBlock, ContentComment, ContentSnapshot
+from app.models import MaterialItem
 
 
 class ExtractFromUrlRequest(BaseModel):
@@ -153,16 +154,17 @@ def _build_spider_ingest_request(req: SpiderXHSNoteIn) -> IngestPageRequest:
 collect_routes = APIRouter(prefix="/collect", tags=["collect-v2"])
 
 
-def _to_log_row(item: ContentAsset) -> dict[str, Any]:
+def _to_log_row(item: MaterialItem) -> dict[str, Any]:
     created_at = getattr(item, "created_at", None)
     return {
-        "content_id": item.id,
+        "material_id": item.id,
         "platform": item.platform,
-        "source_type": item.source_type or "manual_link",
+        "source_channel": item.source_channel,
         "title": item.title,
         "source_url": item.source_url,
-        "status": "success",
-        "error": None,
+        "status": item.status,
+        "risk_status": item.risk_status,
+        "filter_reason": item.filter_reason,
         "created_at": created_at.isoformat() if created_at is not None else None,
     }
 
@@ -201,138 +203,13 @@ def ingest_page(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
+    _ = req
+    _ = current_user
+    _ = db
     raise HTTPException(
         status_code=410,
         detail="此接口已停用。内容采集请通过 /api/v1/employee-submissions/link 或 /api/v1/collector/tasks/keyword 提交。",
     )
-    # ── 以下代码已失效 ──
-    # 优先使用 client_request_id 做幂等去重；若无，则回退为同用户 + 同链接 + 同标题。
-    if req.client_request_id:
-        dedupe_key = f"[REQ_ID]{req.client_request_id}"
-        existing = (
-            db.query(ContentAsset)
-            .filter(
-                ContentAsset.owner_id == current_user["user_id"],
-                ContentAsset.manual_note.ilike(f"%{dedupe_key}%"),
-            )
-            .order_by(ContentAsset.created_at.desc())
-            .first()
-        )
-        if existing:
-            return {
-                "content_id": existing.id,
-                "status": "ingested",
-                "dedupe_hit": True,
-                "message": "重复提交，已复用已有素材",
-            }
-
-    if req.source_url:
-        by_url = (
-            db.query(ContentAsset)
-            .filter(
-                ContentAsset.owner_id == current_user["user_id"],
-                ContentAsset.source_url == req.source_url,
-                ContentAsset.title == req.title,
-            )
-            .first()
-        )
-        if by_url:
-            return {
-                "content_id": by_url.id,
-                "status": "ingested",
-                "dedupe_hit": True,
-                "message": "链接已存在，已复用素材",
-            }
-
-    metrics = dict(req.metrics or {})
-    if req.comments:
-        metrics.setdefault("comment_count", len(req.comments))
-
-    note_lines: list[str] = []
-    if req.manual_note:
-        note_lines.append(req.manual_note)
-    if req.client_request_id:
-        note_lines.append(f"[REQ_ID]{req.client_request_id}")
-    if req.blocks:
-        note_lines.append(f"[BLOCK_COUNT]{len(req.blocks)}")
-    if req.snapshot and (req.snapshot.raw_html or req.snapshot.screenshot_url):
-        note_lines.append("[HAS_SNAPSHOT]1")
-
-    screenshots: list[str] = []
-    if req.snapshot and req.snapshot.screenshot_url:
-        screenshots.append(req.snapshot.screenshot_url)
-
-    top_comments = [comment.model_dump() for comment in req.comments[:20]]
-
-    item = ContentAsset(
-        owner_id=current_user["user_id"],
-        platform=req.platform,
-        source_url=req.source_url,
-        content_type=req.content_type,
-        title=req.title,
-        content=req.content_text,
-        author=req.author_name,
-        publish_time=req.publish_time,
-        tags=req.tags,
-        top_comments=top_comments,
-        comments_keywords=[],
-        metrics=metrics,
-        source_type=req.source_type,
-        category=CollectService.auto_category(req.title, req.content_text),
-        manual_note="\n".join(note_lines) if note_lines else None,
-        screenshots=screenshots,
-    )
-
-    db.add(item)
-    db.commit()
-    db.refresh(item)
-
-    if req.blocks:
-        db.add_all(
-            [
-                ContentBlock(
-                    content_id=item.id,
-                    block_type=block.block_type,
-                    block_order=block.block_order,
-                    block_text=block.block_text,
-                )
-                for block in req.blocks
-            ]
-        )
-
-    if req.comments:
-        db.add_all(
-            [
-                ContentComment(
-                    content_id=item.id,
-                    parent_comment_id=comment.parent_comment_id,
-                    commenter_name=comment.commenter_name,
-                    comment_text=comment.comment_text,
-                    like_count=comment.like_count,
-                    is_pinned=comment.is_pinned,
-                )
-                for comment in req.comments
-            ]
-        )
-
-    if req.snapshot and (req.snapshot.raw_html or req.snapshot.screenshot_url or req.snapshot.page_meta_json):
-        db.add(
-            ContentSnapshot(
-                content_id=item.id,
-                raw_html=req.snapshot.raw_html,
-                screenshot_url=req.snapshot.screenshot_url,
-                page_meta_json=req.snapshot.page_meta_json,
-            )
-        )
-
-    db.commit()
-
-    return {
-        "content_id": item.id,
-        "status": "ingested",
-        "dedupe_hit": False,
-        "message": "已入素材中心",
-    }
 
 
 @collect_routes.post("/ingest-spider-xhs")
@@ -341,8 +218,13 @@ def ingest_spider_xhs(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    mapped = _build_spider_ingest_request(req)
-    return ingest_page(mapped, current_user=current_user, db=db)
+    _ = req
+    _ = current_user
+    _ = db
+    raise HTTPException(
+        status_code=410,
+        detail="Spider_XHS 旧直写接口已停用，请改为先落地新素材管道或使用历史回填脚本。",
+    )
 
 
 @collect_routes.post("/ingest-spider-xhs/batch")
@@ -351,45 +233,13 @@ def ingest_spider_xhs_batch(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    rows: list[dict[str, Any]] = []
-    ok = 0
-    dedupe = 0
-    failed = 0
-
-    for item in req.items:
-        try:
-            mapped = _build_spider_ingest_request(item)
-            result = ingest_page(mapped, current_user=current_user, db=db)
-            dedupe_hit = bool(result.get("dedupe_hit"))
-            if dedupe_hit:
-                dedupe += 1
-            else:
-                ok += 1
-            rows.append(
-                {
-                    "note_id": item.note_id,
-                    "content_id": result.get("content_id"),
-                    "dedupe_hit": dedupe_hit,
-                    "status": "ok",
-                }
-            )
-        except Exception as exc:
-            failed += 1
-            rows.append(
-                {
-                    "note_id": item.note_id,
-                    "status": "failed",
-                    "error": str(exc),
-                }
-            )
-
-    return {
-        "total": len(req.items),
-        "ok": ok,
-        "dedupe": dedupe,
-        "failed": failed,
-        "rows": rows,
-    }
+    _ = req
+    _ = current_user
+    _ = db
+    raise HTTPException(
+        status_code=410,
+        detail="Spider_XHS 批量直写接口已停用，请使用 scripts/backfill_material_pipeline.py 或新的采集入口。",
+    )
 
 
 @collect_routes.get("/logs")
@@ -400,11 +250,17 @@ def collect_logs(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    query = db.query(ContentAsset).filter(ContentAsset.owner_id == current_user["user_id"])
+    query = db.query(MaterialItem).filter(MaterialItem.owner_id == current_user["user_id"])
     if source_type:
-        query = query.filter(ContentAsset.source_type == source_type)
+        source_channel = {
+            "manual_link": "employee_submission",
+            "wechat_robot": "wechat_robot",
+            "keyword": "collect_task",
+            "manual_input": "manual_input",
+        }.get(source_type, source_type)
+        query = query.filter(MaterialItem.source_channel == source_channel)
 
-    items = query.order_by(ContentAsset.created_at.desc()).offset(skip).limit(limit).all()
+    items = query.order_by(MaterialItem.created_at.desc()).offset(skip).limit(limit).all()
     return [_to_log_row(item) for item in items]
 
 
@@ -413,7 +269,32 @@ def collect_stats(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    return CollectService.get_stats(db, current_user["user_id"])
+    owner_id = current_user["user_id"]
+    total = db.query(func.count(MaterialItem.id)).filter(MaterialItem.owner_id == owner_id).scalar() or 0
+    by_platform_rows = (
+        db.query(MaterialItem.platform, func.count(MaterialItem.id))
+        .filter(MaterialItem.owner_id == owner_id)
+        .group_by(MaterialItem.platform)
+        .all()
+    )
+    by_status_rows = (
+        db.query(MaterialItem.status, func.count(MaterialItem.id))
+        .filter(MaterialItem.owner_id == owner_id)
+        .group_by(MaterialItem.status)
+        .all()
+    )
+    duplicate_count = (
+        db.query(func.count(MaterialItem.id))
+        .filter(MaterialItem.owner_id == owner_id, MaterialItem.is_duplicate.is_(True))
+        .scalar()
+        or 0
+    )
+    return {
+        "total": int(total),
+        "duplicate_count": int(duplicate_count),
+        "by_platform": {platform: count for platform, count in by_platform_rows if platform},
+        "by_status": {status: count for status, count in by_status_rows if status},
+    }
 
 
 v2_collect_router = APIRouter()

@@ -17,7 +17,7 @@ export function MaterialsPage() {
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState<CollectDetail | null>(null);
-  const [activeTab, setActiveTab] = useState<"blocks" | "comments" | "snapshot" | "insight" | "raw">("blocks");
+  const [activeTab, setActiveTab] = useState<"content" | "knowledge" | "raw" | "generation">("content");
   const [actionMessage, setActionMessage] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [rewriting, setRewriting] = useState(false);
@@ -94,7 +94,7 @@ export function MaterialsPage() {
     try {
       const data = await getCollectDetail(id);
       setDetail(data);
-      setActiveTab("blocks");
+      setActiveTab("content");
     } catch (err: any) {
       setActionMessage(err?.response?.data?.detail || "加载素材详情失败");
     } finally {
@@ -110,8 +110,8 @@ export function MaterialsPage() {
       await analyzeCollect(detail.id);
       const fresh = await getCollectDetail(detail.id);
       setDetail(fresh);
-      setActionMessage("分析完成，洞察结果已回写");
-      setActiveTab("insight");
+      setActionMessage("知识文档已重建");
+      setActiveTab("knowledge");
       await fetchData();
     } catch (err: any) {
       setActionMessage(err?.response?.data?.detail || "分析失败");
@@ -128,6 +128,7 @@ export function MaterialsPage() {
       const data = await rewriteCollect(detail.id, rewritePlatform);
       setRewrittenText(data?.rewritten || "");
       setActionMessage("改写完成");
+      setActiveTab("generation");
     } catch (err: any) {
       setActionMessage(err?.response?.data?.detail || "改写失败");
     } finally {
@@ -166,7 +167,7 @@ export function MaterialsPage() {
           .map((s) => s.trim())
           .filter(Boolean),
       });
-      setMessage("已提交到收件箱，等待审核后入库");
+          setMessage("已进入素材中心，并放入待审核队列");
       setTitle("");
       setContent("");
       localStorage.removeItem(DRAFT_KEY);
@@ -239,7 +240,8 @@ export function MaterialsPage() {
               <th>ID</th>
               <th>平台</th>
               <th>标题</th>
-              <th>标签</th>
+              <th>状态</th>
+              <th>热度/线索</th>
               <th>创建时间</th>
               <th>操作</th>
             </tr>
@@ -250,7 +252,8 @@ export function MaterialsPage() {
                 <td>{item.id}</td>
                 <td>{item.platform}</td>
                 <td>{item.title}</td>
-                <td>{item.tags?.join(", ")}</td>
+                <td>{item.status} / {item.risk_status}</td>
+                <td>{item.hot_level} / {item.lead_level}</td>
                 <td>{item.created_at ? new Date(item.created_at).toLocaleString() : "-"}</td>
                 <td>
                   <button className="ghost" type="button" onClick={() => openDetail(item.id)}>
@@ -272,11 +275,17 @@ export function MaterialsPage() {
         ) : (
           <div className="grid" style={{ gap: 12 }}>
             <div className="muted">
-              标题：{detail.title} | 平台：{detail.platform} | 作者：{detail.author_name || "-"}
+              标题：{detail.title} | 平台：{detail.platform} | 作者：{detail.author_name || "-"} | 状态：{detail.status}
+            </div>
+            <div className="muted">
+              质量 {detail.quality_score} / 相关 {detail.relevance_score} / 线索 {detail.lead_score} | 热度 {detail.hot_level} | 线索等级 {detail.lead_level}
+            </div>
+            <div className="muted">
+              来源：{detail.source_channel} | 风险：{detail.risk_status} | 过滤原因：{detail.filter_reason || "-"}
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button className="secondary" type="button" onClick={handleAnalyze} disabled={analyzing}>
-                {analyzing ? "分析中..." : "生成洞察"}
+                {analyzing ? "重建中..." : "重建知识"}
               </button>
               <select
                 value={rewritePlatform}
@@ -294,66 +303,71 @@ export function MaterialsPage() {
             {actionMessage && <div className="muted">{actionMessage}</div>}
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button className={activeTab === "blocks" ? "primary" : "ghost"} type="button" onClick={() => setActiveTab("blocks")}>正文块</button>
-              <button className={activeTab === "comments" ? "primary" : "ghost"} type="button" onClick={() => setActiveTab("comments")}>评论</button>
-              <button className={activeTab === "snapshot" ? "primary" : "ghost"} type="button" onClick={() => setActiveTab("snapshot")}>快照</button>
-              <button className={activeTab === "insight" ? "primary" : "ghost"} type="button" onClick={() => setActiveTab("insight")}>洞察</button>
-              <button className={activeTab === "raw" ? "primary" : "ghost"} type="button" onClick={() => setActiveTab("raw")}>原始字段</button>
+              <button className={activeTab === "content" ? "primary" : "ghost"} type="button" onClick={() => setActiveTab("content")}>素材正文</button>
+              <button className={activeTab === "knowledge" ? "primary" : "ghost"} type="button" onClick={() => setActiveTab("knowledge")}>知识文档</button>
+              <button className={activeTab === "raw" ? "primary" : "ghost"} type="button" onClick={() => setActiveTab("raw")}>原始载荷</button>
+              <button className={activeTab === "generation" ? "primary" : "ghost"} type="button" onClick={() => setActiveTab("generation")}>改写记录</button>
             </div>
 
-            {activeTab === "blocks" && (
+            {activeTab === "content" && (
               <div className="grid" style={{ gap: 8 }}>
-                {(detail.blocks || []).length ? detail.blocks.map((block, index) => (
-                  <div key={`${block.block_type}-${block.block_order}-${index}`} className="card" style={{ padding: 10 }}>
-                    <div className="muted">{block.block_type} #{block.block_order}</div>
-                    <div>{block.block_text}</div>
+                <div className="muted">链接：{detail.source_url || "-"}</div>
+                <div className="muted">关键词：{detail.keyword || "-"}</div>
+                <div className="muted">发布时间：{detail.publish_time ? new Date(detail.publish_time).toLocaleString() : "-"}</div>
+                <textarea readOnly value={detail.content_text || ""} placeholder="无正文内容" />
+                {detail.review_note && <div className="muted">审核备注：{detail.review_note}</div>}
+                {detail.remark && <div className="muted">补充备注：{detail.remark}</div>}
+              </div>
+            )}
+
+            {activeTab === "knowledge" && (
+              <div className="grid" style={{ gap: 8 }}>
+                {detail.knowledge && (
+                  <div className="card" style={{ padding: 10 }}>
+                    <div className="muted">主知识文档</div>
+                    <div>账号类型：{detail.knowledge.account_type || "-"}</div>
+                    <div>目标人群：{detail.knowledge.target_audience || "-"}</div>
+                    <div>内容类型：{detail.knowledge.content_type || "-"}</div>
+                    <div>主题：{detail.knowledge.topic || "-"}</div>
+                    <div>摘要：{detail.knowledge.summary || "-"}</div>
                   </div>
-                )) : <div className="muted">暂无结构化正文块</div>}
-              </div>
-            )}
-
-            {activeTab === "comments" && (
-              <div className="grid" style={{ gap: 8 }}>
-                {(detail.comments || []).length ? detail.comments.map((comment, index) => (
-                  <div key={`${comment.commenter_name || "u"}-${index}`} className="card" style={{ padding: 10 }}>
-                    <div className="muted">{comment.commenter_name || "匿名"} · 赞 {comment.like_count || 0}</div>
-                    <div>{comment.comment_text}</div>
+                )}
+                {(detail.knowledge_documents || []).length ? detail.knowledge_documents.map((document) => (
+                  <div key={document.document_id} className="card" style={{ padding: 10 }}>
+                    <div className="muted">文档 #{document.document_id}</div>
+                    <div>主题：{document.topic || "-"}</div>
+                    <div>账号类型：{document.account_type} | 目标人群：{document.target_audience}</div>
+                    <div>摘要：{document.summary || "-"}</div>
+                    <textarea readOnly value={(document.chunks || []).join("\n\n") || document.content_text || ""} placeholder="无知识切片" />
                   </div>
-                )) : <div className="muted">暂无评论</div>}
-              </div>
-            )}
-
-            {activeTab === "snapshot" && (
-              <div className="grid" style={{ gap: 8 }}>
-                <div className="muted">截图地址：{detail.snapshot?.screenshot_url || "-"}</div>
-                <textarea readOnly value={detail.snapshot?.raw_html || ""} placeholder="无页面 HTML 快照" />
-              </div>
-            )}
-
-            {activeTab === "insight" && (
-              <div className="grid" style={{ gap: 8 }}>
-                <div className="muted">标题模式：{detail.insight?.title_pattern || "-"}</div>
-                <div>高频问题：{(detail.insight?.high_freq_questions_json || []).join(" / ") || "-"}</div>
-                <div>关键句：{(detail.insight?.key_sentences_json || []).join(" / ") || "-"}</div>
-                <div>建议选题：{(detail.insight?.suggested_topics_json || []).join(" / ") || "-"}</div>
+                )) : <div className="muted">暂无知识文档，请先执行“重建知识”</div>}
               </div>
             )}
 
             {activeTab === "raw" && (
               <div className="grid" style={{ gap: 8 }}>
-                <div className="muted">用于回放 Spider_XHS 原始字段（如 note_id、note_type、image_list、video_addr 等）。</div>
-                <textarea
-                  readOnly
-                  value={JSON.stringify(detail.snapshot?.raw_payload || detail.snapshot?.page_meta_json || {}, null, 2)}
-                  placeholder="无原始字段"
-                />
+                <div className="muted">source_id：{detail.source_id || "-"}</div>
+                <div className="muted">cover_url：{detail.cover_url || "-"}</div>
+                <textarea readOnly value={JSON.stringify(detail.raw_data || {}, null, 2)} placeholder="无原始字段" />
               </div>
             )}
 
-            {rewrittenText && (
+            {activeTab === "generation" && (
               <div className="grid" style={{ gap: 8 }}>
-                <h4 style={{ margin: 0 }}>改写结果</h4>
-                <textarea readOnly value={rewrittenText} />
+                {rewrittenText && (
+                  <div className="grid" style={{ gap: 8 }}>
+                    <h4 style={{ margin: 0 }}>本次改写</h4>
+                    <textarea readOnly value={rewrittenText} />
+                  </div>
+                )}
+                {(detail.generation_tasks || []).length ? detail.generation_tasks.map((task) => (
+                  <div key={task.generation_task_id} className="card" style={{ padding: 10 }}>
+                    <div className="muted">
+                      #{task.generation_task_id} · {task.platform} · {task.account_type} · {task.target_audience} · {task.created_at ? new Date(task.created_at).toLocaleString() : "-"}
+                    </div>
+                    <textarea readOnly value={task.output_text || ""} />
+                  </div>
+                )) : <div className="muted">暂无改写记录</div>}
               </div>
             )}
           </div>

@@ -56,16 +56,14 @@ def get_headers():
 
 
 def create_content(title: str, content: str, platform: str = "xiaohongshu"):
-    """Create content asset"""
+    """Create material via manual inbox entry"""
     response = requests.post(
-        f"{BASE_URL}/api/v2/collect/ingest-page",
+        f"{BASE_URL}/api/v1/material/inbox/manual",
         headers=get_headers(),
         json={
-            "source_type": "manual_link",
             "platform": platform,
-            "content_type": "post",
             "title": title,
-            "content_text": content,
+            "content": content,
             "tags": ["marketing", "content"],
         }
     )

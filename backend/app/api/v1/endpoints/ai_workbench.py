@@ -5,9 +5,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.rate_limit import DistributedRateLimiter
 from app.core.security import verify_token
-from app.domains.acquisition.collect_service import CollectService
 from app.domains.ai_workbench.ai_service import AIService
-from app.models import BrowserPluginCollection, ContentAsset
 from app.schemas import (
     AIRewriteRequest,
     ArkVisionRequest,
@@ -15,7 +13,7 @@ from app.schemas import (
     PluginContentCreate,
     PluginContentResponse,
 )
-from app.services.insight_service import InsightService
+from app.services.collector import AcquisitionIntakeService
 
 ai_workbench_routes = APIRouter(tags=["ai-workbench"])
 ark_vision_limiter = DistributedRateLimiter(
@@ -27,44 +25,39 @@ ark_vision_limiter = DistributedRateLimiter(
 )
 
 
-def _sync_plugin_content_asset(
+async def _rewrite_with_material_pipeline(
+    request: AIRewriteRequest,
+    current_user: dict,
     db: Session,
-    user_id: int,
-    plugin_data: PluginContentCreate,
-) -> ContentAsset:
-    existing = (
-        db.query(ContentAsset)
-        .filter(
-            ContentAsset.owner_id == user_id,
-            ContentAsset.source_url == plugin_data.url,
-        )
-        .first()
-    )
-    if existing:
-        return existing
+    platform: str,
+) -> dict:
+    ai_service = AIService(db=db)
+    content = AcquisitionIntakeService.get_material_item(db, current_user["user_id"], request.content_id)
+    if not content:
+        raise HTTPException(status_code=404, detail="素材不存在")
 
-    comment_count = len(plugin_data.comments_json or [])
-    asset = ContentAsset(
-        owner_id=user_id,
-        platform=plugin_data.platform,
-        source_url=plugin_data.url,
-        content_type="post",
-        title=plugin_data.title,
-        content=plugin_data.content,
-        author=plugin_data.author,
-        publish_time=plugin_data.publish_time,
-        tags=plugin_data.tags or [],
-        metrics={"comment_count": comment_count},
-        heat_score=float(plugin_data.heat_score or 0.0),
-        is_viral=bool((plugin_data.heat_score or 0.0) >= 80),
-        source_type="plugin",
-        category=CollectService.auto_category(plugin_data.title, plugin_data.content),
-        manual_note="浏览器插件采集自动入库",
+    primary_doc = AcquisitionIntakeService.get_primary_knowledge_document(content)
+    account_type = primary_doc.account_type if primary_doc else "科普号"
+    target_audience = request.target_audience or (primary_doc.target_audience if primary_doc else "泛人群")
+    result = await AcquisitionIntakeService.generate(
+        db=db,
+        owner_id=current_user["user_id"],
+        material_id=content.id,
+        platform=platform,
+        account_type=account_type,
+        target_audience=target_audience,
+        task_type="rewrite",
+        ai_service=ai_service,
     )
-    db.add(asset)
-    db.commit()
-    db.refresh(asset)
-    return asset
+    return {
+        "original": content.content_text,
+        "rewritten": result["output_text"],
+        "platform": platform,
+        "insight_used": bool(result.get("references")),
+        "insight_reference_count": len(result.get("references") or []),
+        "references": result.get("references") or [],
+        "generation_task_id": result.get("generation_task_id"),
+    }
 
 
 @ai_workbench_routes.post("/rewrite/xiaohongshu")
@@ -73,39 +66,7 @@ async def rewrite_xiaohongshu(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    ai_service = AIService(db=db)
-
-    from app.models import ContentAsset
-
-    content = db.query(ContentAsset).filter(ContentAsset.id == request.content_id).first()
-    if not content:
-        raise Exception("Content not found")
-
-    insight_ctx = None
-    if request.topic_name:
-        insight_ctx = InsightService.retrieve_for_generation(
-            db,
-            owner_id=current_user["user_id"],
-            platform="xiaohongshu",
-            topic_name=request.topic_name,
-            audience_tags=request.audience_tags or [],
-            limit=5,
-        )
-
-    rewritten = await ai_service.rewrite_xiaohongshu(
-        content.content,
-        request.style or "casual",
-        user_id=current_user["user_id"],
-        insight_ctx=insight_ctx,
-    )
-
-    return {
-        "original": content.content,
-        "rewritten": rewritten,
-        "platform": "xiaohongshu",
-        "insight_used": insight_ctx is not None and (insight_ctx.get("reference_count", 0) > 0),
-        "insight_reference_count": insight_ctx.get("reference_count", 0) if insight_ctx else 0,
-    }
+    return await _rewrite_with_material_pipeline(request, current_user, db, "xiaohongshu")
 
 
 @ai_workbench_routes.post("/rewrite/douyin")
@@ -114,38 +75,7 @@ async def rewrite_douyin(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    ai_service = AIService(db=db)
-
-    from app.models import ContentAsset
-
-    content = db.query(ContentAsset).filter(ContentAsset.id == request.content_id).first()
-    if not content:
-        raise Exception("Content not found")
-
-    insight_ctx = None
-    if request.topic_name:
-        insight_ctx = InsightService.retrieve_for_generation(
-            db,
-            owner_id=current_user["user_id"],
-            platform="douyin",
-            topic_name=request.topic_name,
-            audience_tags=request.audience_tags or [],
-            limit=5,
-        )
-
-    rewritten = await ai_service.rewrite_douyin(
-        content.content,
-        user_id=current_user["user_id"],
-        insight_ctx=insight_ctx,
-    )
-
-    return {
-        "original": content.content,
-        "rewritten": rewritten,
-        "platform": "douyin",
-        "insight_used": insight_ctx is not None and (insight_ctx.get("reference_count", 0) > 0),
-        "insight_reference_count": insight_ctx.get("reference_count", 0) if insight_ctx else 0,
-    }
+    return await _rewrite_with_material_pipeline(request, current_user, db, "douyin")
 
 
 @ai_workbench_routes.post("/rewrite/zhihu")
@@ -154,38 +84,7 @@ async def rewrite_zhihu(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    ai_service = AIService(db=db)
-
-    from app.models import ContentAsset
-
-    content = db.query(ContentAsset).filter(ContentAsset.id == request.content_id).first()
-    if not content:
-        raise Exception("Content not found")
-
-    insight_ctx = None
-    if request.topic_name:
-        insight_ctx = InsightService.retrieve_for_generation(
-            db,
-            owner_id=current_user["user_id"],
-            platform="zhihu",
-            topic_name=request.topic_name,
-            audience_tags=request.audience_tags or [],
-            limit=5,
-        )
-
-    rewritten = await ai_service.rewrite_zhihu(
-        content.content,
-        user_id=current_user["user_id"],
-        insight_ctx=insight_ctx,
-    )
-
-    return {
-        "original": content.content,
-        "rewritten": rewritten,
-        "platform": "zhihu",
-        "insight_used": insight_ctx is not None and (insight_ctx.get("reference_count", 0) > 0),
-        "insight_reference_count": insight_ctx.get("reference_count", 0) if insight_ctx else 0,
-    }
+    return await _rewrite_with_material_pipeline(request, current_user, db, "zhihu")
 
 
 @ai_workbench_routes.post("/plugin/collect", response_model=PluginContentResponse)

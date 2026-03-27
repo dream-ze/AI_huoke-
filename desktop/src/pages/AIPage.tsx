@@ -1,13 +1,11 @@
 import { FormEvent, useEffect, useState } from "react";
-import { analyzeArkVision, listContent, listInsightTopics, rewriteContent, submitManualToInbox } from "../lib/api";
+import { analyzeArkVision, listContent, rewriteContent, submitManualToInbox } from "../lib/api";
 import { ContentAsset } from "../types";
 
 export function AIPage() {
   const [contentList, setContentList] = useState<ContentAsset[]>([]);
   const [contentId, setContentId] = useState<number | "">("");
   const [targetPlatform, setTargetPlatform] = useState<"xiaohongshu" | "douyin" | "zhihu">("xiaohongshu");
-  const [topicName, setTopicName] = useState("");
-  const [insightTopics, setInsightTopics] = useState<{ id: number; name: string }[]>([]);
   const [insightRefCount, setInsightRefCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
@@ -25,13 +23,9 @@ export function AIPage() {
 
   useEffect(() => {
     async function fetchData() {
-      const [list, topics] = await Promise.all([
-        listContent().catch(() => []),
-        listInsightTopics().catch(() => []),
-      ]);
+      const list = await listContent().catch(() => []);
       setContentList(list || []);
       if (list?.[0]?.id) setContentId(list[0].id);
-      setInsightTopics((topics as any[]) || []);
     }
     fetchData();
   }, []);
@@ -46,7 +40,6 @@ export function AIPage() {
       const data = await rewriteContent({
         content_id: Number(contentId),
         target_platform: targetPlatform,
-        topic_name: topicName || undefined,
       });
       setResult(data?.rewritten || "未返回内容");
       setInsightRefCount(data?.insight_reference_count ?? null);
@@ -95,7 +88,7 @@ export function AIPage() {
         content: visionResult.trim(),
         tags: ["火山图片理解"],
       });
-      setVisionToRewriteMessage("已将识别结果提交到收件箱，审核通过后可在左侧选择该素材进行改写");
+      setVisionToRewriteMessage("已进入素材中心，可直接在素材列表中选择并改写");
     } catch (err: any) {
       setVisionError(err?.response?.data?.detail || err?.message || "提交失败");
     } finally {
@@ -141,16 +134,8 @@ export function AIPage() {
             </div>
 
             <div>
-              <label>洞察主题（可选）</label>
-              <select
-                value={topicName}
-                onChange={(e) => { setTopicName(e.target.value); setInsightRefCount(null); }}
-              >
-                <option value="">— 不接入洞察库</option>
-                {insightTopics.map((t) => (
-                  <option key={t.id} value={t.name}>{t.name}</option>
-                ))}
-              </select>
+              <label>参考模式</label>
+              <input value="自动检索知识库" readOnly />
             </div>
           </div>
 
@@ -169,8 +154,8 @@ export function AIPage() {
         {insightRefCount !== null && (
           <p style={{ fontSize: 13, color: insightRefCount > 0 ? "var(--brand-2)" : "#888", marginBottom: 8 }}>
             {insightRefCount > 0
-              ? `✅ 已接入洞察库，参考了 ${insightRefCount} 条爬取内容`
-              : `⚠️ 未检索到匹配参考，已按通用模式改写`}
+              ? `✅ 已检索知识库，参考了 ${insightRefCount} 条素材文档`
+              : `⚠️ 未检索到匹配参考，已按默认规则改写`}
           </p>
         )}
         <textarea value={result} readOnly placeholder="这里显示改写结果" />

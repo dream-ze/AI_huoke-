@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-全链路联调脚本：browser_collector → 关键词采集 → 收件箱 → 审核入库
+全链路联调脚本：browser_collector → 关键词采集 → 收件箱视图 → 状态流转
 
 使用前确保：
   - backend    运行在 127.0.0.1:8000  (uvicorn main:app --reload)
@@ -108,24 +108,24 @@ def step_list_inbox(token: str, status: str = "pending") -> list:
     return items
 
 
-def step_approve_item(token: str, inbox_id: int) -> dict:
-    print(f"\n[Step 5] 审核通过 inbox_id={inbox_id}")
-    r = httpx.post(
-        f"{BACKEND_URL}/api/v1/material/inbox/{inbox_id}/approve",
-        json={"remark": "联调脚本自动审核"},
+def step_update_status(token: str, inbox_id: int, status: str, review_note: str) -> dict:
+    print(f"\n[Step 5] 更新状态 inbox_id={inbox_id} -> {status}")
+    r = httpx.patch(
+        f"{BACKEND_URL}/api/v1/material/inbox/{inbox_id}/status",
+        json={"status": status, "review_note": review_note},
         headers={"Authorization": f"Bearer {token}"},
         timeout=10,
     )
     if r.status_code != 200:
-        fail(f"approve 失败 {r.status_code}: {r.text[:300]}")
+        fail(f"状态流转失败 {r.status_code}: {r.text[:300]}")
     result: dict = r.json()
-    ok("approve 成功")
+    ok("状态更新成功")
     dump("结果", result)
     return result
 
 
-def step_verify_approved(token: str, inbox_id: int) -> None:
-    print(f"\n[Step 6] 验证条目已转为 approved")
+def step_verify_status(token: str, inbox_id: int, expected_status: str) -> None:
+    print(f"\n[Step 6] 验证条目已转为 {expected_status}")
     r = httpx.get(
         f"{BACKEND_URL}/api/v1/material/inbox/{inbox_id}",
         headers={"Authorization": f"Bearer {token}"},
@@ -135,9 +135,9 @@ def step_verify_approved(token: str, inbox_id: int) -> None:
         fail(f"查询详情失败 {r.status_code}")
     detail: dict = r.json()
     status = detail.get("status")
-    if status != "approved":
-        fail(f"期望 approved，实际为 {status}")
-    ok(f"验证通过：inbox_id={inbox_id} status=approved")
+    if status != expected_status:
+        fail(f"期望 {expected_status}，实际为 {status}")
+    ok(f"验证通过：inbox_id={inbox_id} status={expected_status}")
 
 
 # ─────────────────────────────────────────
@@ -161,21 +161,26 @@ def main() -> None:
     token = step_login(args.username, args.password)
     task_result = step_create_keyword_task(token, args.platform, args.keyword, args.max_items)
 
-    inbox_count = task_result.get("inbox_count", 0)
-    if inbox_count == 0:
-        warn("本次采集无新入库内容，跳过 approve 验证")
+    new_count = int(task_result.get("inserted", 0)) + int(task_result.get("review", 0))
+    if new_count == 0:
+        warn("本次采集无新素材进入收件箱视图，跳过状态流转验证")
         print("\n[DONE] 联调结束（无可审核条目）")
         return
 
     pending_items = step_list_inbox(token, status="pending")
-    if not pending_items:
-        warn("pending 列表为空（可能已被之前的测试消费），跳过 approve")
+    review_items = step_list_inbox(token, status="review")
+    if pending_items:
+        first_id: int = pending_items[0]["id"]
+        step_update_status(token, first_id, "review", "联调脚本自动转人工复核")
+        step_verify_status(token, first_id, "review")
+    elif review_items:
+        first_id = review_items[0]["id"]
+        step_update_status(token, first_id, "pending", "联调脚本自动回切待处理")
+        step_verify_status(token, first_id, "pending")
+    else:
+        warn("pending/review 列表均为空，跳过状态流转验证")
         print("\n[DONE] 联调结束（无 pending 条目）")
         return
-
-    first_id: int = pending_items[0]["id"]
-    step_approve_item(token, first_id)
-    step_verify_approved(token, first_id)
 
     print("\n" + "=" * 56)
     print("  全链路联调成功 ✓")

@@ -107,19 +107,15 @@ export async function rewriteContent(payload: {
   topic_name?: string;
   audience_tags?: string[];
 }) {
-  const endpointMap = {
-    xiaohongshu: "/api/v1/ai/rewrite/xiaohongshu",
-    douyin: "/api/v1/ai/rewrite/douyin",
-    zhihu: "/api/v1/ai/rewrite/zhihu"
-  };
-  const { data } = await api.post(endpointMap[payload.target_platform], {
-    content_id: payload.content_id,
+  const { data } = await api.post(`/api/v2/materials/${payload.content_id}/rewrite`, {
     target_platform: payload.target_platform,
-    content_type: "post",
-    topic_name: payload.topic_name || null,
-    audience_tags: payload.audience_tags || []
+    task_type: "rewrite",
   });
-  return data;
+  return {
+    ...data,
+    rewritten: data?.output_text || "",
+    insight_reference_count: Array.isArray(data?.references) ? data.references.length : 0,
+  };
 }
 
 // ── 素材中台 ──────────────────────────────────────────
@@ -130,30 +126,15 @@ export async function analyzeCollect(contentId: number, forceCloud = false) {
 
 export async function listCollect(params?: {
   platform?: string;
-  category?: string;
-  is_viral?: boolean;
   search?: string;
+  status?: string;
+  risk_status?: string;
+  source_channel?: string;
   skip?: number;
   limit?: number;
 }) {
   const { data } = await api.get("/api/v2/materials", { params });
-  return (data || []).map((item: any) => ({
-    id: item.id,
-    platform: item.platform,
-    source_url: item.source_url,
-    content_type: item.content_type,
-    title: item.title,
-    content: item.content_text || "",
-    author: item.author_name,
-    tags: item.tags || [],
-    heat_score: item.heat_score || 0,
-    is_viral: !!item.is_viral,
-    source_type: item.source_type,
-    category: item.category,
-    manual_note: item.manual_note,
-    metrics: item.metrics || {},
-    created_at: item.created_at,
-  }));
+  return data || [];
 }
 
 export async function getCollectDetail(id: number) {
@@ -165,19 +146,22 @@ export async function rewriteCollect(id: number, targetPlatform: "xiaohongshu" |
   const { data } = await api.post(`/api/v2/materials/${id}/rewrite`, {
     target_platform: targetPlatform,
   });
-  return data;
+  return {
+    ...data,
+    rewritten: data?.output_text || "",
+  };
 }
 
 export async function updateCollect(
   id: number,
-  payload: { tags?: string[]; manual_note?: string; category?: string; title?: string; content?: string }
+  payload: { review_note?: string; remark?: string; status?: string; title?: string; content?: string }
 ) {
   const { data } = await api.patch(`/api/v2/materials/${id}`, {
     title: payload.title,
     content_text: payload.content,
-    tags: payload.tags,
-    manual_note: payload.manual_note,
-    category: payload.category,
+    review_note: payload.review_note,
+    remark: payload.remark,
+    status: payload.status,
   });
   return data;
 }
@@ -512,7 +496,16 @@ export async function createKeywordCollectTask(payload: {
     keyword: payload.keyword,
     max_items: payload.max_items ?? 20,
   });
-  return data as { task_id: number; status: string; result_count: number; inbox_count: number };
+  return data as {
+    task_id: number;
+    status: string;
+    result_count: number;
+    inserted: number;
+    review: number;
+    discard: number;
+    duplicate: number;
+    failed: number;
+  };
 }
 
 export async function submitEmployeeLink(payload: { url: string; note?: string }) {
@@ -527,6 +520,9 @@ export async function listMaterialInbox(params?: {
   status?: string;
   platform?: string;
   source_channel?: string;
+  keyword?: string;
+  risk_status?: string;
+  is_duplicate?: boolean;
   skip?: number;
   limit?: number;
 }) {
@@ -537,18 +533,30 @@ export async function listMaterialInbox(params?: {
     source_task_id?: number | null;
     source_submission_id?: number | null;
     platform: string;
+    source_id?: string | null;
+    keyword?: string | null;
     title?: string | null;
     author?: string | null;
     content?: string | null;
     url?: string | null;
+    cover_url?: string | null;
     like_count: number;
     comment_count: number;
     collect_count: number;
     share_count: number;
+    parse_status: string;
+    risk_status: string;
+    quality_score: number;
+    relevance_score: number;
+    lead_score: number;
+    is_duplicate: boolean;
+    filter_reason?: string | null;
     status: string;
     submitted_by_employee_id?: number | null;
     remark?: string | null;
+    review_note?: string | null;
     created_at?: string | null;
+    updated_at?: string | null;
   }>;
 }
 
@@ -557,22 +565,10 @@ export async function getMaterialInboxItem(id: number) {
   return data;
 }
 
-export async function approveInboxItem(id: number, remark?: string) {
-  const { data } = await api.post(`/api/v1/material/inbox/${id}/approve`, { remark });
-  return data;
-}
-
-export async function discardInboxItem(id: number, remark?: string) {
-  const { data } = await api.post(`/api/v1/material/inbox/${id}/discard`, { remark });
-  return data;
-}
-
-export async function toTopicInboxItem(id: number, topic_id: number, remark?: string) {
-  const { data } = await api.post(`/api/v1/material/inbox/${id}/to-topic`, { topic_id, remark });
-  return data;
-}
-
-export async function toNegativeCaseInboxItem(id: number, remark?: string) {
-  const { data } = await api.post(`/api/v1/material/inbox/${id}/to-negative-case`, { remark });
+export async function updateMaterialInboxStatus(id: number, payload: {
+  status: "pending" | "review" | "discard";
+  review_note?: string;
+}) {
+  const { data } = await api.patch(`/api/v1/material/inbox/${id}/status`, payload);
   return data;
 }

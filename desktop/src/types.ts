@@ -60,70 +60,88 @@ export type CollectItem = {
   id: number;
   platform: string;
   source_url?: string;
-  content_type: string;
   title: string;
-  content: string;
-  author?: string;
-  tags: string[];
-  heat_score: number;
-  is_viral: boolean;
-  source_type?: string;   // link | paste | import
-  category?: string;
-  manual_note?: string;
-  metrics: Record<string, number>;
+  content_text: string;
+  author_name?: string;
+  source_channel: string;
+  keyword?: string;
+  hot_level: string;
+  lead_level: string;
+  quality_score: number;
+  relevance_score: number;
+  lead_score: number;
+  risk_status: string;
+  status: string;
+  filter_reason?: string;
+  remark?: string;
+  review_note?: string;
+  generation_count: number;
+  knowledge?: {
+    document_id?: number | null;
+    account_type?: string | null;
+    target_audience?: string | null;
+    content_type?: string | null;
+    topic?: string | null;
+    summary?: string | null;
+    chunk_count: number;
+  };
   created_at: string;
 };
 
-export type CollectBlock = {
-  id?: number;
-  block_type: string;
-  block_order: number;
-  block_text: string;
+export type CollectKnowledgeDocument = {
+  document_id: number;
+  platform: string;
+  account_type: string;
+  target_audience: string;
+  content_type: string;
+  topic?: string | null;
+  title?: string | null;
+  summary?: string | null;
+  content_text?: string | null;
+  chunks: string[];
+  chunk_keywords: string[][];
 };
 
-export type CollectComment = {
-  id?: number;
-  parent_comment_id?: number | null;
-  commenter_name?: string;
-  comment_text: string;
-  like_count?: number;
-  is_pinned?: boolean;
-};
-
-export type CollectSnapshot = {
-  raw_html?: string | null;
-  screenshot_url?: string | null;
-  page_meta_json?: Record<string, any>;
-  raw_payload?: Record<string, any>;
-};
-
-export type CollectInsight = {
-  high_freq_questions_json: string[];
-  key_sentences_json: string[];
-  title_pattern?: string | null;
-  suggested_topics_json: string[];
+export type CollectGenerationTask = {
+  generation_task_id: number;
+  platform: string;
+  account_type: string;
+  target_audience: string;
+  task_type: string;
+  output_text: string;
+  reference_document_ids: number[];
+  created_at?: string | null;
 };
 
 export type CollectDetail = {
   id: number;
   platform: string;
-  source_type?: string;
+  source_channel: string;
   source_url?: string;
-  content_type: string;
+  source_id?: string;
+  keyword?: string;
   title: string;
   content_text: string;
   author_name?: string;
+  cover_url?: string;
   publish_time?: string;
-  tags: string[];
-  metrics: Record<string, any>;
-  category?: string;
-  manual_note?: string;
-  heat_score: number;
-  is_viral: boolean;
-  blocks: CollectBlock[];
-  comments: CollectComment[];
-  snapshot: CollectSnapshot;
-  insight: CollectInsight;
+  hot_level: string;
+  lead_level: string;
+  lead_reason?: string;
+  quality_score: number;
+  relevance_score: number;
+  lead_score: number;
+  parse_status: string;
+  risk_status: string;
+  status: string;
+  filter_reason?: string;
+  remark?: string;
+  review_note?: string;
+  raw_data: Record<string, any>;
+  generation_count: number;
+  knowledge?: CollectItem["knowledge"];
+  knowledge_documents: CollectKnowledgeDocument[];
+  generation_tasks: CollectGenerationTask[];
   created_at?: string;
   updated_at?: string;
 };

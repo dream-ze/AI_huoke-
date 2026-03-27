@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Float, JSON, Enum, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Float, JSON, Enum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -424,6 +424,11 @@ class CollectTask(Base):
 
     status = Column(String(20), nullable=False, default="pending")
     result_count = Column(Integer, nullable=False, default=0)
+    inserted_count = Column(Integer, nullable=False, default=0)
+    review_count = Column(Integer, nullable=False, default=0)
+    discard_count = Column(Integer, nullable=False, default=0)
+    duplicate_count = Column(Integer, nullable=False, default=0)
+    failed_count = Column(Integer, nullable=False, default=0)
     error_message = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -454,15 +459,20 @@ class MaterialInbox(Base):
     """Unified intake inbox for all external content inputs."""
 
     __tablename__ = "material_inbox"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "platform", "source_id", name="uq_material_inbox_owner_platform_source"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
-    source_channel = Column(String(30), nullable=False)  # collect_task / employee_submission / wechat_robot
+    source_channel = Column(String(30), nullable=False)  # collect_task / employee_submission / wechat_robot / manual_input
     source_task_id = Column(Integer, ForeignKey("collect_tasks.id"), nullable=True, index=True)
     source_submission_id = Column(Integer, ForeignKey("employee_link_submissions.id"), nullable=True, index=True)
 
     platform = Column(String(30), nullable=False)
+    source_id = Column(String(255), nullable=True, index=True)
+    keyword = Column(String(255), nullable=True, index=True)
     title = Column(String(255), nullable=True)
     author = Column(String(255), nullable=True)
     content = Column(Text, nullable=True)
@@ -475,14 +485,262 @@ class MaterialInbox(Base):
     share_count = Column(Integer, default=0)
     publish_time = Column(DateTime, nullable=True)
 
+    parse_status = Column(String(32), nullable=False, default="success", index=True)
+    risk_status = Column(String(32), nullable=False, default="safe", index=True)
+    quality_score = Column(Integer, nullable=False, default=0)
+    relevance_score = Column(Integer, nullable=False, default=0)
+    lead_score = Column(Integer, nullable=False, default=0)
+    is_duplicate = Column(Boolean, nullable=False, default=False, index=True)
+    filter_reason = Column(Text, nullable=True)
+
     raw_data = Column(JSON, default=dict)
 
-    status = Column(String(20), nullable=False, default="pending")
+    status = Column(String(20), nullable=False, default="pending", index=True)  # pending / review / discard
     submitted_by_employee_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     remark = Column(Text, nullable=True)
+    review_note = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SourceContent(Base):
+    """Raw content inputs from collector or manual submissions."""
+
+    __tablename__ = "source_contents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    source_channel = Column(String(30), nullable=False, default="manual_input", index=True)
+    source_task_id = Column(Integer, ForeignKey("collect_tasks.id"), nullable=True, index=True)
+    source_submission_id = Column(Integer, ForeignKey("employee_link_submissions.id"), nullable=True, index=True)
+    submitted_by_employee_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
+    source_type = Column(String(20), nullable=False, default="manual")
+    source_platform = Column(String(50), nullable=False, index=True)
+    source_id = Column(String(128), nullable=True, index=True)
+    source_url = Column(Text, nullable=True)
+    keyword = Column(String(255), nullable=True, index=True)
+
+    raw_title = Column(Text, nullable=True)
+    raw_content = Column(Text, nullable=True)
+    raw_payload = Column(JSON, default=dict)
+
+    author_name = Column(String(255), nullable=True)
+    cover_url = Column(String(500), nullable=True)
+    publish_time = Column(DateTime, nullable=True)
+
+    like_count = Column(Integer, default=0)
+    comment_count = Column(Integer, default=0)
+    favorite_count = Column(Integer, default=0)
+    share_count = Column(Integer, default=0)
+
+    parse_status = Column(String(32), nullable=False, default="success")
+    risk_status = Column(String(32), nullable=False, default="safe")
+    remark = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    normalized_contents = relationship("NormalizedContent", back_populates="source_content", cascade="all,delete-orphan")
+
+
+class NormalizedContent(Base):
+    """Cleaned and standardized content payloads."""
+
+    __tablename__ = "normalized_contents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    source_content_id = Column(Integer, ForeignKey("source_contents.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    title = Column(Text, nullable=True)
+    content_text = Column(Text, nullable=True)
+    content_preview = Column(Text, nullable=True)
+    content_hash = Column(String(64), nullable=False, index=True)
+
+    platform = Column(String(50), nullable=False, index=True)
+    source_id = Column(String(128), nullable=True, index=True)
+    source_url = Column(Text, nullable=True)
+    author_name = Column(String(255), nullable=True)
+    cover_url = Column(String(500), nullable=True)
+    publish_time = Column(DateTime, nullable=True)
+
+    like_count = Column(Integer, default=0)
+    comment_count = Column(Integer, default=0)
+    favorite_count = Column(Integer, default=0)
+    share_count = Column(Integer, default=0)
+
+    parse_status = Column(String(32), nullable=False, default="success")
+    risk_status = Column(String(32), nullable=False, default="safe")
+    keyword = Column(String(255), nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    source_content = relationship("SourceContent", back_populates="normalized_contents")
+    material_items = relationship("MaterialItem", back_populates="normalized_content", cascade="all,delete-orphan")
+
+
+class MaterialItem(Base):
+    """Primary asset table. Inbox is only a filtered view of this table."""
+
+    __tablename__ = "material_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    source_channel = Column(String(30), nullable=False, default="manual_input", index=True)
+    source_task_id = Column(Integer, ForeignKey("collect_tasks.id"), nullable=True, index=True)
+    source_submission_id = Column(Integer, ForeignKey("employee_link_submissions.id"), nullable=True, index=True)
+    submitted_by_employee_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
+    source_content_id = Column(Integer, ForeignKey("source_contents.id", ondelete="SET NULL"), nullable=True, index=True)
+    normalized_content_id = Column(Integer, ForeignKey("normalized_contents.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    platform = Column(String(50), nullable=False, index=True)
+    source_id = Column(String(128), nullable=True, index=True)
+    source_url = Column(Text, nullable=True)
+    keyword = Column(String(255), nullable=True, index=True)
+
+    title = Column(Text, nullable=True)
+    content_text = Column(Text, nullable=True)
+    content_preview = Column(Text, nullable=True)
+    author_name = Column(String(255), nullable=True)
+    cover_url = Column(String(500), nullable=True)
+    publish_time = Column(DateTime, nullable=True)
+
+    like_count = Column(Integer, default=0)
+    comment_count = Column(Integer, default=0)
+    favorite_count = Column(Integer, default=0)
+    share_count = Column(Integer, default=0)
+
+    hot_level = Column(String(10), nullable=False, default="low")
+    lead_level = Column(String(10), nullable=False, default="low")
+    lead_reason = Column(Text, nullable=True)
+    quality_score = Column(Integer, nullable=False, default=0)
+    relevance_score = Column(Integer, nullable=False, default=0)
+    lead_score = Column(Integer, nullable=False, default=0)
+
+    parse_status = Column(String(32), nullable=False, default="success", index=True)
+    risk_status = Column(String(32), nullable=False, default="safe", index=True)
+    is_duplicate = Column(Boolean, nullable=False, default=False, index=True)
+    filter_reason = Column(Text, nullable=True)
+
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    remark = Column(Text, nullable=True)
+    review_note = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    source_content = relationship("SourceContent", foreign_keys=[source_content_id])
+    normalized_content = relationship("NormalizedContent", back_populates="material_items")
+    knowledge_documents = relationship("KnowledgeDocument", back_populates="material_item", cascade="all,delete-orphan")
+    generation_tasks = relationship("GenerationTask", back_populates="material_item", cascade="all,delete-orphan")
+
+
+class KnowledgeDocument(Base):
+    """Structured knowledge extracted from materials."""
+
+    __tablename__ = "knowledge_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    material_item_id = Column(Integer, ForeignKey("material_items.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    platform = Column(String(50), nullable=False, index=True)
+    account_type = Column(String(50), nullable=False, index=True)
+    target_audience = Column(String(50), nullable=False, index=True)
+    content_type = Column(String(50), nullable=False, index=True)
+    topic = Column(Text, nullable=True)
+
+    title = Column(Text, nullable=True)
+    summary = Column(Text, nullable=True)
+    content_text = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    material_item = relationship("MaterialItem", back_populates="knowledge_documents")
+    knowledge_chunks = relationship("KnowledgeChunk", back_populates="knowledge_document", cascade="all,delete-orphan")
+
+
+class KnowledgeChunk(Base):
+    """Retrieval chunks for knowledge documents."""
+
+    __tablename__ = "knowledge_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    knowledge_document_id = Column(Integer, ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    chunk_type = Column(String(30), nullable=False, default="body")
+    chunk_text = Column(Text, nullable=False)
+    chunk_index = Column(Integer, nullable=False, default=0)
+    keywords = Column(JSON, default=list)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    knowledge_document = relationship("KnowledgeDocument", back_populates="knowledge_chunks")
+
+
+class Rule(Base):
+    """Generation boundary constraints."""
+
+    __tablename__ = "rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    rule_type = Column(String(50), nullable=False, index=True)
+    platform = Column(String(50), nullable=True, index=True)
+    account_type = Column(String(50), nullable=True, index=True)
+    target_audience = Column(String(50), nullable=True, index=True)
+    name = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    priority = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PromptTemplate(Base):
+    """Task-specific prompt templates."""
+
+    __tablename__ = "prompt_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    task_type = Column(String(50), nullable=False, index=True)
+    platform = Column(String(50), nullable=True, index=True)
+    account_type = Column(String(50), nullable=True, index=True)
+    target_audience = Column(String(50), nullable=True, index=True)
+    version = Column(String(30), nullable=False, default="v1")
+    system_prompt = Column(Text, nullable=False)
+    user_prompt_template = Column(Text, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GenerationTask(Base):
+    """Persisted generation outputs and context snapshot."""
+
+    __tablename__ = "generation_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    material_item_id = Column(Integer, ForeignKey("material_items.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    platform = Column(String(50), nullable=False, index=True)
+    account_type = Column(String(50), nullable=False, index=True)
+    target_audience = Column(String(50), nullable=False, index=True)
+    task_type = Column(String(50), nullable=False, index=True)
+    prompt_snapshot = Column(Text, nullable=True)
+    output_text = Column(Text, nullable=False)
+    reference_document_ids = Column(JSON, default=list)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    material_item = relationship("MaterialItem", back_populates="generation_tasks")
 
 
 # ─────────────────────────────────────────────────────────────

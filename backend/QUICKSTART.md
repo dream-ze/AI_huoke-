@@ -116,13 +116,14 @@ GET    /api/auth/me          - 获取当前用户
 ### 采集与素材（v2）
 ```
 POST   /api/v2/collect/extract-from-url - 链接预提取
-POST   /api/v2/collect/ingest-page      - 统一入库
+POST   /api/v1/collector/tasks/keyword  - 关键词采集并入素材管道
+POST   /api/v1/material/inbox/manual    - 手动录入进入待审核队列
 GET    /api/v2/collect/logs             - 采集日志
 GET    /api/v2/materials                - 素材列表
 GET    /api/v2/materials/{id}           - 素材详情
 PATCH  /api/v2/materials/{id}           - 更新素材
 DELETE /api/v2/materials/{id}           - 删除素材
-POST   /api/v2/materials/{id}/analyze   - AI 分析
+POST   /api/v2/materials/{id}/analyze   - 重建知识文档
 POST   /api/v2/materials/{id}/rewrite   - AI 改写
 ```
 
@@ -160,9 +161,7 @@ GET    /api/dashboard/high-quality-content - 高质量内容
 
 ### AI改写
 ```
-POST   /api/ai/rewrite/xiaohongshu - 小红书改写
-POST   /api/ai/rewrite/douyin      - 抖音改写
-POST   /api/ai/rewrite/zhihu       - 知乎改写
+POST   /api/v2/materials/{id}/rewrite   - 基于素材与知识库生成改写
 ```
 
 ## 🧪 测试 API
@@ -182,16 +181,15 @@ curl -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"testuser","password":"YOUR_STRONG_PASSWORD"}'
 
-# 统一入库
-curl -X POST http://localhost:8000/api/v2/collect/ingest-page \
+# 手动录入素材
+curl -X POST http://localhost:8000/api/v1/material/inbox/manual \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "source_type": "manual_link",
     "platform":"xiaohongshu",
-    "content_type":"post",
     "title":"Test",
-    "content_text":"Test content"
+    "content":"Test content",
+    "tags":["manual"]
   }'
 ```
 
