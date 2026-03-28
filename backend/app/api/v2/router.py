@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-from app.api.v2.endpoints.collect import v2_collect_router
-from app.api.v2.endpoints.materials import v2_materials_router
+from app.collector.api.v2_collect_routes import v2_collect_router
+from app.collector.api.material_routes import v2_materials_router
 
 api_v2_router = APIRouter(prefix="/api/v2", tags=["v2"])
 

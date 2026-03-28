@@ -290,7 +290,7 @@ class TestV1Routing:
         assert data["version"] == "v1"
 
     def test_v1_collect_keyword_task_to_inbox(self, auth_headers, monkeypatch):
-        from app.services.collector.browser_collector_client import BrowserCollectorClient
+        from app.collector.services.browser_client import BrowserCollectorClient
 
         def fake_collect_keyword(self, platform: str, keyword: str, max_items: int = 20):
             return {
@@ -361,7 +361,7 @@ class TestV1Routing:
         assert response.status_code == 410
 
     def test_v1_employee_submission_link_to_inbox(self, auth_headers, monkeypatch):
-        from app.services.collector.browser_collector_client import BrowserCollectorClient
+        from app.collector.services.browser_client import BrowserCollectorClient
 
         def fake_collect_single_link(self, url: str):
             return {
@@ -434,7 +434,7 @@ class TestV1Routing:
 
     def test_inbox_action_approve(self, auth_headers, monkeypatch):
         """approve → ContentAsset + InsightContentItem 均入库，status 变 approved。"""
-        from app.services.collector.browser_collector_client import BrowserCollectorClient
+        from app.collector.services.browser_client import BrowserCollectorClient
 
         def fake_kw(self, platform, keyword, max_items):
             return {"success": True, "total": 1, "items": [
@@ -472,7 +472,7 @@ class TestV1Routing:
 
     def test_inbox_action_discard(self, auth_headers, monkeypatch):
         """discard → status 变 discarded，再次 discard 返回 409。"""
-        from app.services.collector.browser_collector_client import BrowserCollectorClient
+        from app.collector.services.browser_client import BrowserCollectorClient
 
         def fake_kw(self, platform, keyword, max_items):
             return {"success": True, "total": 1, "items": [
@@ -508,7 +508,7 @@ class TestV1Routing:
 
     def test_inbox_action_to_negative_case(self, auth_headers, monkeypatch):
         """to-negative-case → InsightContentItem 入库（manual_note 含 [反案例]），status=negative_case。"""
-        from app.services.collector.browser_collector_client import BrowserCollectorClient
+        from app.collector.services.browser_client import BrowserCollectorClient
 
         def fake_kw(self, platform, keyword, max_items):
             return {"success": True, "total": 1, "items": [

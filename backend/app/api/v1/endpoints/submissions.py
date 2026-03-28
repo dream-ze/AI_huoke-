@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import verify_token
-from app.services.collector import AcquisitionIntakeService
+from app.collector.services.intake import AcquisitionIntakeService
 
 v1_submissions_router = APIRouter(prefix="/employee-submissions", tags=["employee-submissions-v1"])
 v1_integrations_router = APIRouter(prefix="/integrations", tags=["integrations-v1"])

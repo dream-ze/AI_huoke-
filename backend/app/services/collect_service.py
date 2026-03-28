@@ -1,6 +1,6 @@
 """Compatibility facade for the canonical collect service implementation."""
 
-from app.domains.acquisition.collect_service import (
+from app.collector.services.collect_service import (
     ALL_CATEGORIES,
     PLATFORM_LABELS,
     CollectService,
