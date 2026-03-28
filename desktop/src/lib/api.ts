@@ -473,6 +473,17 @@ export async function getSystemVersion() {
   return data;
 }
 
+export async function getSystemHealth() {
+  const { data } = await api.get("/api/system/ops/health");
+  return data as {
+    status: string;
+    database: string;
+    redis: string;
+    timestamp: string;
+    version?: string;
+  };
+}
+
 export async function analyzeInsightItem(itemId: number) {
   const { data } = await api.post(`/api/insight/analyze/${itemId}`);
   return data;

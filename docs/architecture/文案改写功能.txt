@@ -1,0 +1,481 @@
+目标只有两个能力：
+
+标签系统：把素材自动打上 topic_tag / intent_tag / crowd_tag
+文案生成：基于素材 + 标签，生成 3 版文案
+
+这版我故意不做重架构，不接复杂 RAG，不搞向量库。
+先让你本地就能跑起来。
+
+一、目录结构
+app/
+  main.py
+  schemas.py
+  services/
+    tagger.py
+    copywriter.py
+requirements.txt
+二、requirements.txt
+fastapi==0.115.0
+uvicorn==0.30.6
+pydantic==2.9.2
+三、app/schemas.py
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+Platform = Literal["xiaohongshu", "douyin"]
+AccountType = Literal["personal_ip", "sales", "agency"]
+ToneType = Literal["natural", "emotional", "professional"]
+
+
+class MaterialIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    content_text: str = Field(..., min_length=1)
+    platform: Platform = "xiaohongshu"
+    keyword: str | None = None
+    author_name: str | None = None
+    publish_time: str | None = None
+
+
+class TagResult(BaseModel):
+    topic_tag: str
+    intent_tag: str
+    crowd_tag: str
+    risk_tag: str
+    heat_score: int
+    reason: str
+
+
+class TagResponse(BaseModel):
+    success: bool = True
+    data: TagResult
+
+
+class CopyGenerateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    content_text: str = Field(..., min_length=1)
+    platform: Platform = "xiaohongshu"
+    account_type: AccountType = "sales"
+    target_audience: str = "负债人群"
+    tone: ToneType = "natural"
+
+    topic_tag: str | None = None
+    intent_tag: str | None = None
+    crowd_tag: str | None = None
+    keyword: str | None = None
+
+
+class CopyVariant(BaseModel):
+    variant_name: str
+    title: str
+    content: str
+    hashtags: list[str]
+
+
+class CopyGenerateResponse(BaseModel):
+    success: bool = True
+    tags: TagResult
+    copies: list[CopyVariant]
+四、app/services/tagger.py
+
+这一版先用规则标签，优点是稳定、快、可控。
+
+from __future__ import annotations
+
+import re
+
+from app.schemas import TagResult
+
+
+def _contains_any(text: str, keywords: list[str]) -> bool:
+    return any(k in text for k in keywords)
+
+
+def _count_any(text: str, keywords: list[str]) -> int:
+    return sum(text.count(k) for k in keywords)
+
+
+def detect_topic_tag(text: str) -> str:
+    rules = {
+        "车贷": ["车贷", "车子贷款", "按揭车", "绿本", "解押", "提前还款", "免息车贷"],
+        "房贷": ["房贷", "按揭房", "公积金贷款", "商贷", "首付", "月供"],
+        "网贷": ["网贷", "借呗", "花呗", "度小满", "360借条", "微粒贷", "平台借款"],
+        "信用卡": ["信用卡", "刷卡", "账单", "分期", "逾期", "停息挂账"],
+        "征信": ["征信", "查询次数", "大数据花", "风控", "黑户", "白户"],
+    }
+    for tag, keywords in rules.items():
+        if _contains_any(text, keywords):
+            return tag
+    return "贷款泛话题"
+
+
+def detect_intent_tag(text: str) -> str:
+    if _contains_any(text, ["怎么办", "咋办", "怎么解决", "求助", "有没有人懂", "能不能", "怎么办啊"]):
+        return "求助"
+    if _contains_any(text, ["被拒", "拒贷", "下不来", "过不了", "审核不过"]):
+        return "被拒"
+    if _contains_any(text, ["避坑", "套路", "坑", "被骗", "千万别", "后悔"]):
+        return "避坑"
+    if _contains_any(text, ["攻略", "经验", "分享", "终于懂了", "提前还款"]):
+        return "经验分享"
+    if _contains_any(text, ["推荐", "中介", "有人做", "私我", "咨询我"]):
+        return "转化引导"
+    return "普通讨论"
+
+
+def detect_crowd_tag(text: str) -> str:
+    if _contains_any(text, ["负债", "欠款", "欠了", "还不上", "逾期"]):
+        return "负债人群"
+    if _contains_any(text, ["征信花", "大数据花", "查询多", "白户", "黑户"]):
+        return "征信问题人群"
+    if _contains_any(text, ["买车", "提车", "按揭车"]):
+        return "购车人群"
+    if _contains_any(text, ["买房", "首付", "上车"]):
+        return "购房人群"
+    return "泛需求人群"
+
+
+def detect_risk_tag(text: str) -> str:
+    high_risk_words = [
+        "套现", "洗白", "黑户秒过", "包装资料", "刷流水",
+        "百分百下款", "无视风控", "无视征信", "内部渠道"
+    ]
+    medium_risk_words = [
+        "私信", "加v", "加微", "VX", "微信", "联系我", "中介"
+    ]
+
+    if _contains_any(text, high_risk_words):
+        return "high"
+    if _contains_any(text, medium_risk_words):
+        return "medium"
+    return "low"
+
+
+def calc_heat_score(text: str) -> int:
+    score = 30
+    score += min(_count_any(text, ["贷款", "车贷", "房贷", "网贷", "征信"]) * 5, 20)
+    score += min(_count_any(text, ["怎么办", "被拒", "逾期", "套路", "提前还款"]) * 8, 30)
+
+    if len(text) > 200:
+        score += 10
+    if len(text) > 500:
+        score += 10
+
+    return min(score, 100)
+
+
+def build_reason(topic_tag: str, intent_tag: str, crowd_tag: str, risk_tag: str) -> str:
+    return (
+        f"识别为【{topic_tag}】话题，"
+        f"用户意图偏【{intent_tag}】，"
+        f"目标人群属于【{crowd_tag}】，"
+        f"风险等级为【{risk_tag}】。"
+    )
+
+
+def tag_material(title: str, content_text: str) -> TagResult:
+    merged = f"{title}\n{content_text}".strip()
+
+    merged = re.sub(r"\s+", " ", merged)
+
+    topic_tag = detect_topic_tag(merged)
+    intent_tag = detect_intent_tag(merged)
+    crowd_tag = detect_crowd_tag(merged)
+    risk_tag = detect_risk_tag(merged)
+    heat_score = calc_heat_score(merged)
+    reason = build_reason(topic_tag, intent_tag, crowd_tag, risk_tag)
+
+    return TagResult(
+        topic_tag=topic_tag,
+        intent_tag=intent_tag,
+        crowd_tag=crowd_tag,
+        risk_tag=risk_tag,
+        heat_score=heat_score,
+        reason=reason,
+    )
+五、app/services/copywriter.py
+
+这一版我先给你无大模型也能跑的版本。
+后面你接火山、DeepSeek、OpenAI，都只需要替换这里。
+
+from __future__ import annotations
+
+from app.schemas import CopyGenerateRequest, CopyVariant, TagResult
+
+
+def _hashtags(tags: list[str]) -> list[str]:
+    result: list[str] = []
+    for tag in tags:
+        if not tag:
+            continue
+        t = tag.strip().replace("#", "")
+        if t and t not in result:
+            result.append(f"#{t}")
+    return result[:6]
+
+
+def _shorten(text: str, max_len: int = 160) -> str:
+    text = text.strip().replace("\n", " ")
+    return text[:max_len]
+
+
+def generate_xiaohongshu_copies(req: CopyGenerateRequest, tags: TagResult) -> list[CopyVariant]:
+    source = _shorten(req.content_text, 180)
+    topic = req.topic_tag or tags.topic_tag
+    crowd = req.crowd_tag or tags.crowd_tag
+
+    variant1 = CopyVariant(
+        variant_name="爆款版",
+        title=f"{topic}真的别乱做，我是怎么一步步避坑的",
+        content=(
+            f"最近看到很多人在聊“{req.title}”，其实这种事我之前也踩过坑。\n\n"
+            f"尤其是像【{crowd}】这种情况，很多人第一反应就是急着做决定，"
+            f"但越着急越容易被带偏。\n\n"
+            f"我后来才发现，先把自己的情况拆清楚，比到处乱问更重要。\n"
+            f"比如这类问题里，最容易忽略的就是还款方式、实际成本、征信影响这几个点。\n\n"
+            f"素材里提到的点是：{source}...\n\n"
+            f"如果你也在碰到类似问题，真的建议先把自己的情况理一遍，"
+            f"别一上来就被别人节奏带走。"
+        ),
+        hashtags=_hashtags([req.keyword or "", topic, crowd, req.platform]),
+    )
+
+    variant2 = CopyVariant(
+        variant_name="引流版",
+        title=f"{topic}这件事，我劝你先别急着做决定",
+        content=(
+            f"很多人表面看是在问“{req.title}”，"
+            f"其实真正卡住的是：不知道自己适合哪种方案。\n\n"
+            f"像【{crowd}】这类情况，处理顺序很关键，顺序错了，后面会更麻烦。\n\n"
+            f"我把这类内容反复看了很多，发现大家最容易踩的就是：\n"
+            f"1. 只看表面利率\n"
+            f"2. 忽略隐藏成本\n"
+            f"3. 没提前判断自己条件\n\n"
+            f"原素材核心是：{source}...\n\n"
+            f"有同样情况的，先别乱操作，先把自己的问题点搞清楚。"
+        ),
+        hashtags=_hashtags([req.keyword or "", topic, "避坑", req.platform]),
+    )
+
+    variant3 = CopyVariant(
+        variant_name="安全版",
+        title=f"关于{topic}，分享几个容易被忽略的点",
+        content=(
+            f"今天整理了一下关于“{req.title}”这类内容。\n\n"
+            f"发现很多讨论其实都集中在几个问题上：\n"
+            f"- 真实成本怎么看\n"
+            f"- 还款节奏怎么判断\n"
+            f"- 不同人群适不适合当前方案\n\n"
+            f"像这篇素材里提到：{source}...\n\n"
+            f"如果你最近也在关注【{topic}】相关内容，建议多对比、多判断，"
+            f"先把信息看完整，再做决定。"
+        ),
+        hashtags=_hashtags([topic, crowd, "经验分享", req.platform]),
+    )
+
+    return [variant1, variant2, variant3]
+
+
+def generate_douyin_copies(req: CopyGenerateRequest, tags: TagResult) -> list[CopyVariant]:
+    source = _shorten(req.content_text, 120)
+    topic = req.topic_tag or tags.topic_tag
+    crowd = req.crowd_tag or tags.crowd_tag
+
+    variant1 = CopyVariant(
+        variant_name="口播版1",
+        title=f"{topic}别瞎弄",
+        content=(
+            f"{req.title}，很多人一上来就做错了。"
+            f"尤其是{crowd}，最怕的不是没办法，而是顺序搞错。"
+            f"这条素材里最关键的一点其实是：{source}。"
+            f"先把自己的情况看明白，再决定下一步。"
+        ),
+        hashtags=_hashtags([topic, crowd, req.platform]),
+    )
+
+    variant2 = CopyVariant(
+        variant_name="口播版2",
+        title=f"{topic}一定要先看这个",
+        content=(
+            f"很多人问{topic}怎么处理，"
+            f"其实不是不会做，是不知道先做哪一步。"
+            f"这篇内容里讲到：{source}。"
+            f"真遇到这种情况，先别急。"
+        ),
+        hashtags=_hashtags([topic, "避坑", req.platform]),
+    )
+
+    variant3 = CopyVariant(
+        variant_name="口播版3",
+        title=f"{topic}经验分享",
+        content=(
+            f"今天聊一下{topic}。"
+            f"很多人容易忽略真实成本和后续影响。"
+            f"素材核心内容是：{source}。"
+            f"这种事一定先判断，再行动。"
+        ),
+        hashtags=_hashtags([topic, "经验", req.platform]),
+    )
+
+    return [variant1, variant2, variant3]
+
+
+def generate_copies(req: CopyGenerateRequest, tags: TagResult) -> list[CopyVariant]:
+    if req.platform == "douyin":
+        return generate_douyin_copies(req, tags)
+    return generate_xiaohongshu_copies(req, tags)
+六、app/main.py
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+from app.schemas import (
+    CopyGenerateRequest,
+    CopyGenerateResponse,
+    MaterialIn,
+    TagResponse,
+)
+from app.services.copywriter import generate_copies
+from app.services.tagger import tag_material
+
+app = FastAPI(title="AI Huoke Tag + Copy API", version="0.1.0")
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"success": True, "message": "ok"}
+
+
+@app.post("/api/material/tag", response_model=TagResponse)
+def api_tag_material(payload: MaterialIn) -> TagResponse:
+    tags = tag_material(payload.title, payload.content_text)
+    return TagResponse(success=True, data=tags)
+
+
+@app.post("/api/copy/generate", response_model=CopyGenerateResponse)
+def api_generate_copy(payload: CopyGenerateRequest) -> CopyGenerateResponse:
+    tags = tag_material(payload.title, payload.content_text)
+    copies = generate_copies(payload, tags)
+    return CopyGenerateResponse(success=True, tags=tags, copies=copies)
+七、怎么启动
+
+在项目根目录执行：
+
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8010
+
+启动后打开：
+
+http://127.0.0.1:8010/docs
+八、测试请求
+1）标签接口
+
+POST /api/material/tag
+
+{
+  "title": "车贷2年免息提前还款攻略，顺利拿绿本解押",
+  "content_text": "终于把车贷提前还完了，之前一直担心提前还款会不会有违约金，也怕绿本拿不回来，后来才知道解押流程没有想象中复杂。",
+  "platform": "xiaohongshu",
+  "keyword": "车贷"
+}
+
+你会得到类似结果：
+
+{
+  "success": true,
+  "data": {
+    "topic_tag": "车贷",
+    "intent_tag": "经验分享",
+    "crowd_tag": "购车人群",
+    "risk_tag": "low",
+    "heat_score": 73,
+    "reason": "识别为【车贷】话题，用户意图偏【经验分享】，目标人群属于【购车人群】，风险等级为【low】。"
+  }
+}
+2）文案生成接口
+
+POST /api/copy/generate
+
+{
+  "title": "车贷2年免息提前还款攻略，顺利拿绿本解押",
+  "content_text": "终于把车贷提前还完了，之前一直担心提前还款会不会有违约金，也怕绿本拿不回来，后来才知道解押流程没有想象中复杂。",
+  "platform": "xiaohongshu",
+  "account_type": "sales",
+  "target_audience": "负债人群",
+  "tone": "natural",
+  "keyword": "车贷"
+}
+九、怎么接到你现在页面
+
+你现在前端其实只要接两个接口。
+
+1. 点击素材详情时，先请求标签
+POST /api/material/tag
+
+把返回的：
+
+topic_tag
+intent_tag
+crowd_tag
+risk_tag
+heat_score
+
+显示在详情面板里。
+
+2. 点击“生成文案”按钮时
+POST /api/copy/generate
+
+然后把返回的 copies 渲染成 3 个卡片：
+
+爆款版
+引流版
+安全版
+
+每个卡片一个“复制”按钮。
+
+十、这版为什么适合你现在
+
+因为它符合你现在的阶段：
+
+不重构大系统
+不依赖向量库
+不依赖复杂 RAG
+能直接接你现有收件箱
+能先验证“生成文案”这件事
+
+你现在最需要的是：
+
+先让素材 → 标签 → 文案 这条链路跑通
+
+不是一次把知识库做满。
+
+十一、下一步升级路径
+
+等这版跑通后，你再升级：
+
+第一步
+
+把 tagger.py 从规则升级成：
+
+规则 + 大模型分类
+第二步
+
+把 copywriter.py 从模板升级成：
+
+真正调用火山/DeepSeek/OpenAI
+第三步
+
+再加：
+
+改写记录表
+素材标签落库
+按平台/人群筛选
+十二、我建议你下一步直接这样干
+
+先把这 4 个文件落进你项目里，跑起来。
+然后把你现在的前端“执行改写”按钮，改成：
+
+生成3版文案

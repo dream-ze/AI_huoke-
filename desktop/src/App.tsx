@@ -13,12 +13,15 @@ import { CollectCenterPage } from "./pages/collect-center/CollectCenterPage";
 import { InboxPage } from "./pages/inbox/InboxPage";
 import { MaterialsPage } from "./pages/materials/MaterialsPage";
 import { AIWorkbenchPage } from "./pages/ai-workbench/AIWorkbenchPage";
+import { AIHubPage } from "./pages/ai-hub/AIHubPage";
 import { CompliancePage } from "./pages/CompliancePage";
 import { CustomersPage } from "./pages/CustomersPage";
 import { PublishPage } from "./pages/PublishPage";
 import { LeadsPage } from "./pages/leads/LeadsPage";
 import { SetupPage } from "./pages/SetupPage";
 import { InsightPage } from "./pages/InsightPage";
+import { OpsPage } from "./pages/OpsPage";
+import { WorkflowPage } from "./pages/WorkflowPage";
 
 // 是否运行在 Electron 中
 const isElectron = typeof window !== "undefined" && !!(window as any).desktop?.isElectron;
@@ -136,15 +139,18 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/workflow" element={<WorkflowPage />} />
                 <Route path="/collect-center" element={<CollectCenterPage />} />
                 <Route path="/inbox" element={<InboxPage />} />
                 <Route path="/materials" element={<MaterialsPage />} />
                 <Route path="/insight" element={<InsightPage />} />
+                <Route path="/ai-hub" element={<AIHubPage />} />
                 <Route path="/ai-workbench" element={<AIWorkbenchPage />} />
                 <Route path="/compliance" element={<CompliancePage />} />
                 <Route path="/leads" element={<LeadsPage />} />
                 <Route path="/customers" element={<CustomersPage />} />
                 <Route path="/publish" element={<PublishPage />} />
+                <Route path="/ops" element={<OpsPage />} />
               </Routes>
             </AppLayout>
           </Protected>

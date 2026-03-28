@@ -1,0 +1,775 @@
+1. 入箱
+
+先把所有内容统一进收件箱，来源先只保留这几种：
+
+采集器导入
+员工贴链接导入
+手动录入链接
+后续插件导入
+
+核心目标不是来源多，而是不管哪里来的内容，最后都进同一张表、同一套流程。
+
+2. 列表页
+
+收件箱首页先做成可工作的表格，不要一开始追求太花。
+
+每条内容至少显示：
+
+标题
+平台
+作者/账号
+关键词
+抓取时间
+当前状态
+负责人
+是否重复
+操作按钮
+
+操作按钮先保留：
+
+查看详情
+标记重复
+去改写
+入知识库
+废弃
+3. 详情页
+
+点开一条内容，能看到完整信息。
+
+详情页建议分块：
+
+原始信息
+原文标题
+原文内容
+原始链接
+平台
+发布时间
+点赞评论收藏这些能拿到就展示
+清洗信息
+清洗后正文
+提取出来的话题
+标签
+风险词
+是否重复
+处理信息
+当前状态
+分配给谁
+操作日志
+是否已改写
+是否已入知识库
+4. 状态流转
+
+这个很重要，收件箱的价值就在这里。
+
+先定死一套简单状态，不要太复杂：
+
+pending 待处理
+cleaned 已清洗
+rewriting 改写中
+reviewing 审核中
+approved 已通过
+kb_saved 已入知识库
+discarded 已废弃
+
+你现在不用追求特别完美，先能流转。
+
+5. 基础处理动作
+
+收件箱里先接这几个动作，够用了：
+
+去重
+
+根据链接、标题相似度、正文相似度做初步去重。
+第一版先简单点：
+
+同平台 + 同链接 = 重复
+标题完全一致 = 疑似重复
+后面再加向量相似度
+打标签
+
+标签先支持人工打：
+
+平台标签
+主题标签
+人群标签
+风险标签
+分配
+
+可以分给某个员工处理。
+
+进入改写
+
+从收件箱直接点“去改写”，把原内容带到改写模块。
+
+入知识库
+
+审核通过后可以一键沉淀到知识库。
+
+开发顺序
+
+你现在最重要的是顺序，不然又会乱。
+
+第一步：先把数据结构定下来
+
+最少要有一张 inbox_items 表。
+
+核心字段建议：
+
+id
+source_type              -- crawler/manual/employee/plugin
+source_platform          -- xiaohongshu/douyin/weibo/zhihu
+source_url
+title
+author_name
+author_id
+content_raw
+content_clean
+publish_time
+collected_time
+status
+assignee_id
+is_duplicate
+duplicate_group_id
+tags_json
+risk_flags_json
+meta_json
+created_at
+updated_at
+第二步：先打通“入箱”
+
+先别急着做复杂UI。
+先做到：
+
+采集结果能写入 inbox_items
+手动贴链接也能写入 inbox_items
+
+也就是先完成：
+
+所有数据统一落到 inbox_items
+
+这一步打通，你就赢很多了。
+
+第三步：做收件箱列表页
+
+页面先能做到：
+
+展示列表
+搜索关键词
+按状态筛选
+按平台筛选
+点进去看详情
+
+只要这一步出来，你就能开始真实使用。
+
+第四步：做详情页 + 状态修改
+
+在详情页里先支持：
+
+修改状态
+打标签
+标记重复
+指派处理人
+
+这一步完成，收件箱就不是“展示页”，而是“工作台”了。
+
+第五步：接改写模块
+
+从收件箱点“去改写”，跳到改写页，并自动带入：
+
+原文内容
+平台
+账号类型
+面向人群
+主题标签
+已选提示词模板
+
+这样收件箱就正式接到后面的业务链路。
+
+第六步：接知识库
+
+通过审核的内容，再一键进入知识库沉淀。
+这里先别做复杂RAG，先做到：
+
+可选“加入知识库”
+存储内容、标签、来源、适用场景
+后续再做检索召回
+你当前最应该做的版本
+
+我建议你别做大而全，先做 收件箱 v1 最小闭环：
+
+必做
+入箱接口
+收件箱列表
+详情页
+状态流转
+去改写按钮
+先不急做
+很复杂的权限系统
+很复杂的看板
+自动化审核流
+高级相似度去重
+很重的知识库检索
+你现在的目标
+
+你这几天不要再想“整个系统什么时候全做完”，你就盯一个目标：
+
+让一条采集内容，从进入收件箱，到人工看，到改写，完整跑通。
+
+只要这一条链路通了：
+
+你心里会没那么乱
+你姐她们就能开始试用
+后面优化才有依据
+你才知道哪些功能真有用
+一句话给你定方向
+
+你现在不是缺更多想法，
+你是缺一个能跑的收件箱闭环。
+
+先把这个做好，后面确实会快很多。
+
+接下来你最适合做的是：
+我直接给你拆“收件箱 v1 的数据库表结构 + API 设计 + 页面结构”。
+
+好的
+
+那我直接给你拆成能落地的一版。
+
+收件箱 v1 目标
+
+先只做一件事：
+
+让内容能进来、能看、能处理、能流转到改写。
+
+也就是这条链路：
+
+采集/贴链接 → 收件箱 → 详情页处理 → 去改写
+
+一、数据库表结构
+
+先不要拆太多表，v1 保持简单，但要留扩展空间。
+
+1）收件箱主表 inbox_items
+CREATE TABLE inbox_items (
+    id BIGSERIAL PRIMARY KEY,
+
+    source_type VARCHAR(32) NOT NULL,         -- crawler/manual/employee/plugin
+    source_platform VARCHAR(32) NOT NULL,     -- xiaohongshu/douyin/weibo/zhihu/others
+    source_url TEXT,
+    external_id VARCHAR(128),                 -- 平台原始ID，可选
+
+    title TEXT,
+    author_name VARCHAR(255),
+    author_id VARCHAR(128),
+
+    content_raw TEXT,                         -- 原始内容
+    content_clean TEXT,                       -- 清洗后的内容
+    summary TEXT,                             -- 摘要，可后续生成
+
+    keyword VARCHAR(255),                     -- 采集关键词
+    publish_time TIMESTAMP NULL,
+    collected_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    assignee_id BIGINT NULL,                  -- 负责人，可先不做外键
+    is_duplicate BOOLEAN NOT NULL DEFAULT FALSE,
+    duplicate_group_id VARCHAR(64) NULL,
+
+    tags_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    risk_flags_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    meta_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+    rewrite_status VARCHAR(32) NOT NULL DEFAULT 'not_started',
+    kb_status VARCHAR(32) NOT NULL DEFAULT 'not_saved',
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+建议索引：
+
+CREATE INDEX idx_inbox_items_status ON inbox_items(status);
+CREATE INDEX idx_inbox_items_platform ON inbox_items(source_platform);
+CREATE INDEX idx_inbox_items_collected_time ON inbox_items(collected_time DESC);
+CREATE INDEX idx_inbox_items_assignee_id ON inbox_items(assignee_id);
+2）操作日志表 inbox_action_logs
+
+这个很重要，后面你会很需要知道谁动了什么。
+
+CREATE TABLE inbox_action_logs (
+    id BIGSERIAL PRIMARY KEY,
+    inbox_item_id BIGINT NOT NULL,
+    action_type VARCHAR(64) NOT NULL,         -- create/update_status/tag/assign/mark_duplicate/send_to_rewrite
+    operator_id BIGINT NULL,
+    operator_name VARCHAR(255),
+    remark TEXT,
+    before_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    after_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+索引：
+
+CREATE INDEX idx_inbox_logs_item_id ON inbox_action_logs(inbox_item_id);
+3）标签表 tags（可选，但建议做）
+
+v1 你也可以先只存在 tags_json，但为了后面规范，最好加一张标签表。
+
+CREATE TABLE tags (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    category VARCHAR(50) NOT NULL,       -- platform/topic/audience/risk
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+4）改写任务表 rewrite_tasks
+
+从收件箱跳到改写时，可以生成一条任务。
+
+CREATE TABLE rewrite_tasks (
+    id BIGSERIAL PRIMARY KEY,
+    inbox_item_id BIGINT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending',   -- pending/generating/reviewing/done/failed
+    platform VARCHAR(32),
+    account_type VARCHAR(100),
+    target_audience VARCHAR(255),
+    prompt_template_id BIGINT NULL,
+    input_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    output_draft TEXT,
+    final_content TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+二、状态设计
+
+收件箱状态先固定，不要乱加。
+
+收件箱状态 status
+pending      待处理
+cleaned      已清洗
+rewriting    改写中
+reviewing    审核中
+approved     已通过
+kb_saved     已入知识库
+discarded    已废弃
+改写状态 rewrite_status
+not_started
+pending
+generating
+reviewing
+done
+failed
+知识库状态 kb_status
+not_saved
+saved
+三、FastAPI API 设计
+
+接口不要一开始设计太花，先围绕“列表、详情、处理、流转”。
+
+假设前缀是：
+
+/api/v1/inbox
+1）创建入箱
+POST /api/v1/inbox/items
+
+用于采集器、手动贴链接、员工贴链接统一入箱。
+
+请求体：
+
+{
+  "source_type": "crawler",
+  "source_platform": "xiaohongshu",
+  "source_url": "https://xxx.com/post/123",
+  "external_id": "post_123",
+  "title": "贷款避坑经验",
+  "author_name": "小王说贷款",
+  "author_id": "user_001",
+  "content_raw": "原始正文内容",
+  "keyword": "贷款",
+  "publish_time": "2026-03-26T10:00:00",
+  "meta_json": {
+    "likes": 100,
+    "comments": 20,
+    "favorites": 33
+  }
+}
+
+返回：
+
+{
+  "id": 101,
+  "status": "pending"
+}
+2）收件箱列表
+GET /api/v1/inbox/items
+
+支持参数：
+
+page
+page_size
+keyword
+status
+source_platform
+assignee_id
+is_duplicate
+
+例子：
+
+GET /api/v1/inbox/items?page=1&page_size=20&status=pending&source_platform=xiaohongshu&keyword=贷款
+
+返回：
+
+{
+  "total": 200,
+  "items": [
+    {
+      "id": 101,
+      "title": "贷款避坑经验",
+      "source_platform": "xiaohongshu",
+      "author_name": "小王说贷款",
+      "keyword": "贷款",
+      "status": "pending",
+      "assignee_id": 1,
+      "is_duplicate": false,
+      "collected_time": "2026-03-26T11:00:00"
+    }
+  ]
+}
+3）详情接口
+GET /api/v1/inbox/items/{id}
+
+返回完整信息：
+
+{
+  "id": 101,
+  "source_type": "crawler",
+  "source_platform": "xiaohongshu",
+  "source_url": "https://xxx.com/post/123",
+  "title": "贷款避坑经验",
+  "author_name": "小王说贷款",
+  "content_raw": "原始正文",
+  "content_clean": "清洗后的正文",
+  "keyword": "贷款",
+  "publish_time": "2026-03-26T10:00:00",
+  "collected_time": "2026-03-26T11:00:00",
+  "status": "pending",
+  "rewrite_status": "not_started",
+  "kb_status": "not_saved",
+  "tags_json": ["贷款", "避坑", "小红书"],
+  "risk_flags_json": ["敏感承诺词"],
+  "meta_json": {
+    "likes": 100,
+    "comments": 20
+  }
+}
+4）更新状态
+PATCH /api/v1/inbox/items/{id}/status
+
+请求体：
+
+{
+  "status": "cleaned",
+  "remark": "已完成人工清洗"
+}
+5）打标签
+PATCH /api/v1/inbox/items/{id}/tags
+
+请求体：
+
+{
+  "tags": ["贷款", "征信", "面向负债人群"]
+}
+6）标记重复
+PATCH /api/v1/inbox/items/{id}/duplicate
+
+请求体：
+
+{
+  "is_duplicate": true,
+  "duplicate_group_id": "dup_group_001",
+  "remark": "与 95 号内容重复"
+}
+7）指派处理人
+PATCH /api/v1/inbox/items/{id}/assign
+
+请求体：
+
+{
+  "assignee_id": 2,
+  "operator_name": "泽"
+}
+8）更新清洗内容
+PATCH /api/v1/inbox/items/{id}/clean
+
+请求体：
+
+{
+  "content_clean": "这是清洗后的正文内容",
+  "risk_flags_json": ["绝对化表述"],
+  "remark": "去掉了联系方式和口语噪音"
+}
+9）发送到改写模块
+POST /api/v1/inbox/items/{id}/send-to-rewrite
+
+请求体：
+
+{
+  "platform": "xiaohongshu",
+  "account_type": "助贷顾问",
+  "target_audience": "征信花、负债高、有资金需求的人群",
+  "prompt_template_id": 3
+}
+
+返回：
+
+{
+  "rewrite_task_id": 501,
+  "status": "pending"
+}
+
+同时这里要自动做两件事：
+
+inbox_items.status = rewriting
+inbox_items.rewrite_status = pending
+10）查看日志
+GET /api/v1/inbox/items/{id}/logs
+
+返回这条内容的所有操作记录。
+
+四、Pydantic 模型建议
+
+你现在如果用 FastAPI，建议按这个方向拆。
+
+schemas/
+  inbox.py
+  rewrite.py
+
+schemas/inbox.py
+
+from datetime import datetime
+from typing import Any, List, Optional
+from pydantic import BaseModel, Field
+
+class InboxCreate(BaseModel):
+    source_type: str
+    source_platform: str
+    source_url: Optional[str] = None
+    external_id: Optional[str] = None
+    title: Optional[str] = None
+    author_name: Optional[str] = None
+    author_id: Optional[str] = None
+    content_raw: Optional[str] = None
+    keyword: Optional[str] = None
+    publish_time: Optional[datetime] = None
+    meta_json: dict[str, Any] = Field(default_factory=dict)
+
+class InboxListItem(BaseModel):
+    id: int
+    title: Optional[str]
+    source_platform: str
+    author_name: Optional[str]
+    keyword: Optional[str]
+    status: str
+    assignee_id: Optional[int]
+    is_duplicate: bool
+    collected_time: datetime
+
+class InboxDetail(BaseModel):
+    id: int
+    source_type: str
+    source_platform: str
+    source_url: Optional[str]
+    title: Optional[str]
+    author_name: Optional[str]
+    content_raw: Optional[str]
+    content_clean: Optional[str]
+    keyword: Optional[str]
+    publish_time: Optional[datetime]
+    collected_time: datetime
+    status: str
+    rewrite_status: str
+    kb_status: str
+    tags_json: List[str]
+    risk_flags_json: List[str]
+    meta_json: dict[str, Any]
+
+class UpdateStatusRequest(BaseModel):
+    status: str
+    remark: Optional[str] = None
+
+class UpdateTagsRequest(BaseModel):
+    tags: List[str]
+
+class MarkDuplicateRequest(BaseModel):
+    is_duplicate: bool
+    duplicate_group_id: Optional[str] = None
+    remark: Optional[str] = None
+
+class AssignRequest(BaseModel):
+    assignee_id: int
+    operator_name: Optional[str] = None
+
+class CleanContentRequest(BaseModel):
+    content_clean: str
+    risk_flags_json: List[str] = Field(default_factory=list)
+    remark: Optional[str] = None
+五、后端目录结构
+
+结合你现在项目，建议先这样拆，够稳。
+
+app/
+  api/
+    v1/
+      inbox.py
+      rewrite.py
+  core/
+    config.py
+    database.py
+  models/
+    inbox_item.py
+    inbox_action_log.py
+    rewrite_task.py
+  schemas/
+    inbox.py
+    rewrite.py
+  services/
+    inbox_service.py
+    rewrite_service.py
+    duplicate_service.py
+    clean_service.py
+  crud/
+    inbox.py
+    rewrite.py
+  utils/
+    time.py
+    logger.py
+  main.py
+
+你要记住一个原则：
+
+路由层只接参数，业务逻辑放 service，数据库操作放 crud。
+
+这样你后面不会越来越乱。
+
+六、页面结构
+
+前端别设计太重，先做能工作。
+
+1）收件箱列表页
+
+页面模块：
+
+顶部筛选区
+关键词搜索框
+平台筛选
+状态筛选
+是否重复筛选
+负责人筛选
+查询按钮
+重置按钮
+中间表格区
+
+字段建议：
+
+标题
+平台
+作者
+关键词
+抓取时间
+当前状态
+负责人
+是否重复
+操作
+
+操作按钮：
+
+查看
+标记重复
+去改写
+废弃
+分页区
+页码
+每页条数
+2）收件箱详情页
+
+建议分成 4 个卡片。
+
+卡片1：原始内容
+标题
+原始链接
+平台
+作者
+发布时间
+点赞评论收藏
+原始正文
+卡片2：清洗内容
+清洗后正文
+风险标签
+主题标签
+重复状态
+卡片3：处理信息
+当前状态
+改写状态
+知识库状态
+负责人
+创建时间
+更新时间
+卡片4：操作区
+修改状态
+打标签
+标记重复
+指派人员
+保存清洗内容
+去改写
+3）改写页联动
+
+从收件箱点“去改写”后，改写页自动带入：
+
+原始正文
+清洗后正文
+平台
+主题标签
+账号类型
+面向人群
+
+这样你就不用手动复制粘贴了，这个体验会好很多。
+
+七、核心业务逻辑
+1）入箱逻辑
+
+不管采集器、员工贴链接还是手动录入，都统一走一个 service：
+
+create_inbox_item()
+
+里面做几件事：
+
+校验基础字段
+判断链接是否已存在
+自动写入主表
+记录创建日志
+2）去重逻辑
+
+v1 别搞太重，先三层就够：
+
+同平台 + 同链接 = 直接重复
+同平台 + 标题一致 = 疑似重复
+同平台 + 正文 hash 一致 = 重复
+
+后面再升级成向量相似度。
+
+3）状态流转逻辑
+
+建议封装一个状态流转函数，不要前端随便改。
+
+比如：
+
+ALLOWED_STATUS_TRANSITIONS = {
+    "pending": ["cleaned", "discarded", "rewriting"],
+    "cleaned": ["rewriting", "discarded"],
+    "rewriting": ["reviewing", "discarded"],
+    "reviewing": ["approved", "discarded"],
+    "approved": ["kb_saved"],
+    "kb_saved": [],
+    "discarded": []
+}
+
+这样你后面不会出现状态乱跳。

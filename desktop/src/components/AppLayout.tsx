@@ -2,16 +2,50 @@ import { PropsWithChildren, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { getSystemVersion } from "../lib/api";
 
-const navItems = [
-  { to: "/dashboard", label: "数据看板" },
-  { to: "/collect-center", label: "采集中心" },
-  { to: "/inbox", label: "收件箱" },
-  { to: "/insight", label: "爆款洞察" },
-  { to: "/ai-workbench", label: "AI工作台" },
-  { to: "/compliance", label: "合规审核" },
-  { to: "/leads", label: "线索池" },
-  { to: "/customers", label: "客户管理" },
-  { to: "/publish", label: "发布任务" }
+type NavGroup = {
+  title: string;
+  items: { to: string; label: string; icon: string; badge?: string }[];
+};
+
+const navGroups: NavGroup[] = [
+  {
+    title: "工作台",
+    items: [
+      { to: "/dashboard", label: "首页看板", icon: "📊" },
+      { to: "/workflow", label: "业务闭环", icon: "🔄", badge: "新" },
+    ],
+  },
+  {
+    title: "内容获取",
+    items: [
+      { to: "/collect-center", label: "采集中心", icon: "🎯" },
+      { to: "/inbox", label: "收件箱", icon: "📥" },
+      { to: "/materials", label: "素材库", icon: "📦" },
+      { to: "/insight", label: "爆款洞察", icon: "🔥" },
+    ],
+  },
+  {
+    title: "AI 能力",
+    items: [
+      { to: "/ai-hub", label: "AI 中枢", icon: "🤖", badge: "新" },
+      { to: "/ai-workbench", label: "改写工作台", icon: "✏️" },
+      { to: "/compliance", label: "合规审核", icon: "🛡️" },
+    ],
+  },
+  {
+    title: "客户转化",
+    items: [
+      { to: "/publish", label: "发布任务", icon: "📤" },
+      { to: "/leads", label: "线索池", icon: "💎" },
+      { to: "/customers", label: "客户管理", icon: "👥" },
+    ],
+  },
+  {
+    title: "系统运维",
+    items: [
+      { to: "/ops", label: "运维看板", icon: "⚙️", badge: "新" },
+    ],
+  },
 ];
 
 export function AppLayout({
@@ -36,24 +70,31 @@ export function AppLayout({
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">智获客</div>
-        <div className="brand-sub">AI 内容获客运营系统</div>
+        <div className="brand-sub">AI 内容获客运营系统 · 能力升级版</div>
 
-        <nav>
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                `nav-link ${isActive ? "active" : ""}`
-              }
-            >
-              {item.label}
-            </NavLink>
+        <nav className="nav-grouped">
+          {navGroups.map((group) => (
+            <div key={group.title} className="nav-group">
+              <div className="nav-group-title">{group.title}</div>
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `nav-link ${isActive ? "active" : ""}`
+                  }
+                >
+                  <span className="nav-icon">{item.icon}</span>
+                  <span className="nav-label">{item.label}</span>
+                  {item.badge && <span className="nav-badge">{item.badge}</span>}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 
-        <div style={{ marginTop: 20 }}>
-          <div className="muted" style={{ marginBottom: 8 }}>{versionText}</div>
+        <div className="sidebar-footer">
+          <div className="muted" style={{ marginBottom: 8, fontSize: 11 }}>{versionText}</div>
           <button className="ghost" onClick={onLogout}>
             退出登录
           </button>

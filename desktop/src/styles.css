@@ -47,6 +47,10 @@ h3 {
   background: color-mix(in srgb, var(--panel) 82%, white 18%);
   backdrop-filter: blur(6px);
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  max-height: 100vh;
 }
 
 .brand {
@@ -64,17 +68,70 @@ h3 {
 }
 
 .nav-link {
-  display: block;
-  margin: 8px 0;
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+  padding: 9px 12px;
   border-radius: 10px;
   color: var(--text);
   text-decoration: none;
-  font-weight: 600;
+  font-weight: 500;
+  font-size: 14px;
+  transition: all 0.15s ease;
+}
+
+.nav-link:hover {
+  background: rgba(182, 61, 31, 0.08);
 }
 
 .nav-link.active {
   background: linear-gradient(90deg, #f8d8bf, #c0edf3);
+  font-weight: 600;
+}
+
+.nav-icon {
+  font-size: 16px;
+  width: 22px;
+  text-align: center;
+}
+
+.nav-label {
+  flex: 1;
+}
+
+.nav-badge {
+  background: linear-gradient(90deg, var(--brand), #d45b39);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+
+.nav-grouped {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.nav-group {
+  margin-bottom: 12px;
+}
+
+.nav-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 12px 4px;
+  margin-top: 8px;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
 }
 
 .main {
@@ -240,5 +297,369 @@ button.ghost {
 
   .main {
     padding: 14px;
+  }
+}
+
+/* === 新能力升级组件 === */
+
+/* 首页升级模块 */
+.upgrade-banner {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+  color: #fff;
+  position: relative;
+  overflow: hidden;
+}
+
+.upgrade-banner::before {
+  content: "";
+  position: absolute;
+  top: -50%;
+  right: -20%;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(182, 61, 31, 0.3) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.upgrade-banner h2 {
+  font-size: 24px;
+  margin-bottom: 8px;
+  position: relative;
+}
+
+.upgrade-banner p {
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+  font-size: 14px;
+  position: relative;
+}
+
+.upgrade-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.upgrade-feature {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 16px;
+  backdrop-filter: blur(4px);
+}
+
+.upgrade-feature .icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+
+.upgrade-feature h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.upgrade-feature p {
+  font-size: 12px;
+  margin: 0;
+  opacity: 0.8;
+}
+
+/* 快捷入口卡片 */
+.quick-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.quick-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+  color: inherit;
+}
+
+.quick-entry:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(35, 26, 16, 0.12);
+  border-color: var(--brand);
+}
+
+.quick-entry .icon {
+  font-size: 32px;
+}
+
+.quick-entry .label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.quick-entry .desc {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* 工作流线路图 */
+.workflow-pipeline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  background: var(--panel);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.workflow-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 100px;
+  padding: 16px;
+  border-radius: 12px;
+  background: #fff;
+  border: 2px solid var(--line);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.workflow-step:hover {
+  border-color: var(--brand);
+  transform: scale(1.02);
+}
+
+.workflow-step.active {
+  border-color: var(--brand);
+  background: linear-gradient(135deg, #fff8e8, #fff);
+}
+
+.workflow-step .step-icon {
+  font-size: 28px;
+}
+
+.workflow-step .step-label {
+  font-weight: 600;
+  font-size: 13px;
+  text-align: center;
+}
+
+.workflow-step .step-count {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--brand);
+}
+
+.workflow-arrow {
+  font-size: 24px;
+  color: var(--muted);
+}
+
+/* 状态指示器 */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.status-dot.ok { background: var(--ok); }
+.status-dot.warn { background: var(--warn); }
+.status-dot.danger { background: var(--danger); }
+.status-dot.muted { background: var(--muted); }
+
+/* AI Hub 卡片 */
+.ai-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.ai-capability-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 20px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.ai-capability-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px rgba(35, 26, 16, 0.12);
+}
+
+.ai-capability-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.ai-capability-card .card-icon {
+  font-size: 36px;
+}
+
+.ai-capability-card .card-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.ai-capability-card .card-badge {
+  margin-left: auto;
+  background: linear-gradient(90deg, var(--ok), #45a049);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 8px;
+}
+
+.ai-capability-card .card-desc {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+
+.ai-capability-card .card-features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-capability-card .feature-tag {
+  background: rgba(15, 109, 122, 0.1);
+  color: var(--brand-2);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+/* 运维看板 */
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.ops-metric {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ops-metric .metric-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.ops-metric .metric-value {
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.ops-metric .metric-status {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+}
+
+/* 链路追踪组件 */
+.trace-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 16px;
+  background: #fafafa;
+  border-radius: 12px;
+}
+
+.trace-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  position: relative;
+}
+
+.trace-item:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 36px;
+  bottom: -12px;
+  width: 2px;
+  background: var(--line);
+}
+
+.trace-item .trace-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.trace-item .trace-content {
+  flex: 1;
+}
+
+.trace-item .trace-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.trace-item .trace-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 分隔线 */
+.divider {
+  height: 1px;
+  background: var(--line);
+  margin: 16px 0;
+}
+
+/* 4列卡片布局 */
+.grid.cards-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 980px) {
+  .grid.cards-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .grid.cards-4 {
+    grid-template-columns: 1fr;
   }
 }
