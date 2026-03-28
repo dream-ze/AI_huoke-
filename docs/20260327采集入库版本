@@ -1,0 +1,997 @@
+一、先从第一性原理定义你的系统
+
+你的原始输入只有两类：
+
+采集来的内容
+用户贴进来的链接/文本
+
+你的最终输出也只有一类：
+
+符合平台、人设、人群的可发布文案
+
+那中间必须完成的事，只有 4 步：
+
+拿到内容
+把内容变干净
+把内容组织成知识
+把知识用于生成
+
+所以系统最小闭环不是“很多模块”，而是：
+
+内容获取 → 内容标准化 → 知识组织 → 生成输出
+
+这就是你的最短路径。
+
+二、先定义目标，不然设计会漂
+
+结合你前面的所有话，我认为你当前的真实目标是：
+
+做一个内容生产系统，让采集到的内容和用户贴入的内容，自动沉淀成素材和知识，再按平台/账号/人群生成文案。
+
+这里有三个关键约束：
+
+1. 收件箱不是审核系统
+
+你已经说了，详情只是按钮，默认详情采集，收件箱主要是看：
+
+标题
+内容摘要
+评论数/热度
+是否吸引客户
+
+所以收件箱本质上是浏览与触发入口，不是主流程控制中心。
+
+2. 采集内容默认进知识体系
+
+你已经定了：清洗后默认进知识库。
+那就不能再设计“人工一条条审核后再入库”的链路。
+
+3. 知识库不是问答库，而是生成库
+
+你的知识库不是拿来问“贷款是什么”的。
+它是拿来支持“改写/仿写/生成”的。
+
+所以这不是传统 FAQ/RAG 方案，而是：
+
+素材资产化 + 结构知识化 + 规则约束化 + 生成编排化
+
+三、从原子问题出发：系统里到底应该有什么
+
+如果只保留不可替代的核心对象，系统里只需要 6 个对象。
+
+1. 原始内容
+
+外部进来的真实内容，不能丢。
+
+2. 标准内容
+
+清洗后的统一内容，供后续处理。
+
+3. 素材
+
+可直接作为参考样本的内容资产。
+
+4. 知识
+
+从素材里提炼出来的结构化信息。
+
+5. 规则
+
+控制生成边界和风格的约束。
+
+6. 提示词
+
+把任务转成模型可执行指令的模板。
+
+所以你最后的系统一定是：
+
+原始层 → 标准层 → 素材层 → 知识层 → 规则层 → 生成层
+
+这不是为了好看，是因为这六层承担的职责不同，不能混。
+
+四、最终架构，不做补丁，不做兼容，直接给最短正确路径
+
+我给你一版最终架构，只保留必要层。
+
+1）内容输入层
+
+负责把内容拿进来。
+
+输入来源：
+
+采集服务
+用户贴链接
+用户贴文本
+
+输出：
+
+统一的 source_content
+2）清洗标准化层
+
+负责把不同来源内容变成统一格式。
+
+做的事：
+
+字段映射
+文本清洗
+标题兜底
+时间标准化
+数字字段标准化
+去重 hash
+生成摘要
+
+输出：
+
+normalized_content
+3）素材库
+
+负责保存所有可复用内容资产。
+
+特点：
+
+默认进入
+保留全文
+保留互动数据
+保留来源信息
+不做人为筛掉主链路
+
+输出：
+
+material_item
+4）结构化知识库
+
+负责把素材变成可检索、可组合、可生成的知识单元。
+
+做的事：
+
+分类
+打标签
+主题抽取
+场景抽取
+人群归类
+内容类型归类
+片段拆分
+
+输出：
+
+knowledge_document
+knowledge_chunk
+5）规则库
+
+负责定义生成边界，不存素材。
+
+内容：
+
+平台规则
+账号规则
+人群表达规则
+敏感限制规则
+文案结构规则
+
+输出：
+
+rule_set
+6）提示词库
+
+负责定义不同任务如何调用模型。
+
+内容：
+
+改写 prompt
+仿写 prompt
+引流 prompt
+标题优化 prompt
+
+输出：
+
+prompt_template
+7）检索与生成编排层
+
+负责运行时把前面几层拼起来。
+
+做的事：
+
+根据平台/账号/人群过滤
+检索相似素材与知识
+应用规则
+选择 prompt
+组装上下文
+调用模型
+返回生成结果
+
+输出：
+
+generation_result
+五、模块之间的逻辑关系，必须全链路闭合
+
+下面这条链路是你系统的唯一主链路。
+
+主链路
+
+采集/贴链接
+→ 内容抽取
+→ 清洗标准化
+→ 入素材库
+→ 同步生成结构化知识
+→ 前端收件箱展示
+→ 用户选择平台/账号/人群
+→ 混合检索
+→ 套规则 + Prompt
+→ 文案生成
+
+注意这里有一个关键点：
+
+收件箱不是素材库的上游
+
+而是素材库的一个展示视图
+
+也就是说：
+
+数据先入素材库
+收件箱只是把素材以业务视角展示出来
+
+这个关系必须定死。
+不然你后面会出现“收件箱一套状态、素材库一套状态、知识库又一套状态”的混乱。
+
+六、收件箱的第一性原理定义
+
+收件箱到底是什么？
+
+不是数据库表。
+不是审核流。
+不是技术日志页。
+
+它的唯一职责是：
+
+让人快速浏览内容，并触发下一步动作。
+
+所以收件箱只应该展示“决策信息”。
+
+收件箱列表必须只有这些字段
+标题
+内容摘要
+评论数
+热度等级
+客户吸引力
+操作按钮
+收件箱详情按钮打开后才看
+标题
+全文
+评论/点赞/收藏
+来源链接
+分类标签
+客户吸引力原因
+收件箱动作只保留两个主动作
+去改写
+查看详情
+
+如果你后面确实需要加“丢弃”，也只能作为辅助动作，不应改变主链路。
+因为你已经定了“默认进素材/知识体系”。
+
+七、素材库的第一性原理定义
+
+素材库不是知识库。
+
+素材库的职责是：
+
+保存完整、真实、可回溯、可复用的内容资产。
+
+所以素材库应该保存：
+
+标题
+原文
+摘要
+平台
+来源链接
+互动数据
+作者
+发布时间
+清洗结果
+内容 hash
+初步分类结果
+
+素材库要解决的问题是：
+
+数据不丢
+数据可查
+数据可复用
+数据可作为知识提炼来源
+
+所以素材库是“资产层”，不是“规则层”。
+
+八、知识库的第一性原理定义
+
+知识库不是把素材再存一遍。
+
+知识库的职责是：
+
+把素材转成生成时能直接使用的结构化知识。
+
+所以知识库里不应该只是一坨全文，而应该是这些东西：
+
+主题
+场景
+目标人群
+平台
+账号类型
+内容类型
+情绪
+意图
+结构摘要
+高价值片段
+标题模式
+正文结构模式
+评论洞察
+
+所以知识库是“组织层”，不是“存储层”。
+
+九、规则库的第一性原理定义
+
+为什么你一定要有规则库？
+
+因为仅靠素材和知识，模型会“会写”，但不一定“写对”。
+
+规则库解决的是：
+
+写什么不能越界，怎么写才符合业务。
+
+规则库只放约束，不放素材。
+否则职责会混。
+
+十、提示词库的第一性原理定义
+
+提示词库不是方便你复制粘贴 prompt。
+它的职责是：
+
+把任务类型标准化，减少生成不稳定。
+
+你后端不能每次自由拼 prompt。
+否则后面平台、人群、账号一多，会立刻失控。
+
+十一、混合检索的第一性原理定义
+
+为什么不能只做向量检索？
+
+因为你的任务不是“找意思相近”，而是“找适合当前生成任务的参考”。
+
+所以检索必须是：
+
+结构过滤 + 关键词命中 + 语义召回 + 排序
+
+这四步一个都不能少。
+
+检索顺序必须固定为
+1. 先过滤
+
+按：
+
+平台
+账号类型
+目标人群
+内容类型
+2. 再关键词召回
+
+命中高精度业务词。
+
+3. 再语义召回
+
+找相似表达。
+
+4. 最后排序
+
+按：
+
+相关度
+热度
+客户吸引力
+新鲜度
+质量分
+
+这样逻辑才闭合。
+
+十二、最终数据模型，直接给你最短正确版
+A. 内容输入表 source_contents
+
+保存所有入口内容。
+
+字段：
+
+id
+source_type
+source_platform
+source_id
+source_url
+raw_title
+raw_content
+raw_payload
+author_name
+publish_time
+like_count
+comment_count
+favorite_count
+created_at
+B. 标准内容表 normalized_contents
+
+保存清洗后的统一内容。
+
+字段：
+
+id
+source_content_id
+title
+content_text
+content_preview
+content_hash
+platform
+author_name
+publish_time
+like_count
+comment_count
+favorite_count
+keyword
+created_at
+C. 素材库表 material_items
+
+保存可复用素材。
+
+字段：
+
+id
+normalized_content_id
+title
+content_text
+content_preview
+platform
+source_url
+comment_count
+like_count
+favorite_count
+hot_level
+lead_level
+lead_reason
+status
+created_at
+
+这里的 status 只做素材状态，不做复杂流程。
+
+D. 知识文档表 knowledge_documents
+
+保存结构化知识文档。
+
+字段：
+
+id
+material_item_id
+platform
+account_type
+target_audience
+content_type
+scene_type
+intent_type
+topic
+title
+summary
+content_text
+created_at
+E. 知识分片表 knowledge_chunks
+
+保存检索单元。
+
+字段：
+
+id
+knowledge_document_id
+chunk_type
+chunk_text
+chunk_index
+keywords
+embedding_id
+created_at
+F. 规则表 rules
+
+字段：
+
+id
+rule_type
+platform
+account_type
+target_audience
+scene_type
+name
+content
+priority
+created_at
+G. 提示词表 prompt_templates
+
+字段：
+
+id
+task_type
+platform
+account_type
+target_audience
+version
+system_prompt
+user_prompt_template
+created_at
+H. 生成任务表 generation_tasks
+
+字段：
+
+id
+source_ref_type
+source_ref_id
+platform
+account_type
+target_audience
+task_type
+prompt_template_id
+output_text
+created_at
+十三、全链路处理流程，必须这么走
+链路 1：采集内容
+采集服务返回内容
+写入 source_contents
+清洗标准化，写入 normalized_contents
+生成素材，写入 material_items
+自动分类，写入 knowledge_documents
+切分片段，写入 knowledge_chunks
+收件箱从 material_items 展示
+链路 2：用户贴链接
+抽取正文
+写入 source_contents
+后续流程完全一致
+
+这就是你要的“不能走兼容性补丁、必须全链路逻辑正确”。
+
+十四、收件箱、素材库、知识库三者关系，必须固定
+
+很多系统做乱，就是因为三者角色重叠。
+
+这里我帮你定死：
+
+收件箱
+
+是视图层
+
+给人看
+给人点
+不承担主存储
+素材库
+
+是资产层
+
+存完整内容
+保证可追溯
+知识库
+
+是组织层
+
+做分类
+做抽象
+做检索
+
+这三个层次不能混。
+
+十五、你当前最短落地路径
+
+不做过度设计，只做必须做的。
+
+Phase 1
+
+完成：
+
+source_contents
+normalized_contents
+material_items
+收件箱页面
+Phase 2
+
+完成：
+
+knowledge_documents
+knowledge_chunks
+自动分类逻辑
+Phase 3
+
+完成：
+
+rules
+prompt_templates
+混合检索
+Phase 4
+
+完成：
+
+生成编排
+改写页面
+十六、我这里有一个需要你拍板的关键点
+
+这里有一个目标还不够清晰，我先停一下，把它指出来。
+
+你现在说“知识库有分类”，但分类粒度还没有完全定清楚。
+这个会直接影响表结构、检索逻辑和生成效果。
+
+你至少要确认下面这四个一级分类是不是你要的：
+
+平台：小红书 / 抖音 / 视频号
+账号类型：顾问号 / 法务号 / 科普号 / 引流号
+目标人群：负债逾期 / 征信问题 / 创业周转 / 宝妈
+内容类型：标题 / 正文 / 案例 / 评论洞察 / 规则说明
+
+这四类如果你认可，我下一步就可以继续往下，把它直接落成：
+
+最终版 SQL
+FastAPI 目录结构
+接口设计
+任务流转
+检索与生成编排
+
+你先确认这四个一级分类是否就是你要的。
+
+好的
+
+很好，那我们就不再发散，直接在你确认的四个一级分类基础上，给出一版：
+
+可以直接开写代码、能跑通、全链路闭合的最终方案
+
+严格遵守你要求：
+
+不做补丁方案
+不做过度设计
+不引入额外需求
+每一步都能串起来
+一、最终系统定义（锁死）
+
+你的系统只做一件事：
+
+把内容 → 转成结构化知识 → 用来生成文案
+
+二、唯一主链路（必须按这个实现）
+采集 / 贴链接
+    ↓
+source_contents
+    ↓
+normalized_contents（清洗）
+    ↓
+material_items（素材库）
+    ↓
+knowledge_documents（分类）
+    ↓
+knowledge_chunks（分片 + embedding）
+    ↓
+混合检索（按平台/账号/人群）
+    ↓
+规则 + prompt
+    ↓
+生成文案
+
+收件箱只是：
+
+material_items 的一个视图
+三、数据库最终版（可直接执行）
+1️⃣ 原始内容
+CREATE TABLE source_contents (
+    id BIGSERIAL PRIMARY KEY,
+    source_type VARCHAR(20), -- crawler / manual
+    source_platform VARCHAR(50),
+    source_id VARCHAR(128),
+    source_url TEXT,
+
+    raw_title TEXT,
+    raw_content TEXT,
+    raw_payload JSONB,
+
+    author_name VARCHAR(255),
+    publish_time VARCHAR(64),
+
+    like_count INT DEFAULT 0,
+    comment_count INT DEFAULT 0,
+    favorite_count INT DEFAULT 0,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+2️⃣ 清洗后内容
+CREATE TABLE normalized_contents (
+    id BIGSERIAL PRIMARY KEY,
+    source_content_id BIGINT,
+
+    title TEXT,
+    content_text TEXT,
+    content_preview TEXT,
+
+    content_hash VARCHAR(64),
+
+    platform VARCHAR(50),
+    author_name VARCHAR(255),
+
+    publish_time VARCHAR(64),
+
+    like_count INT,
+    comment_count INT,
+    favorite_count INT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+3️⃣ 素材库（核心）
+CREATE TABLE material_items (
+    id BIGSERIAL PRIMARY KEY,
+    normalized_content_id BIGINT,
+
+    title TEXT,
+    content_text TEXT,
+    content_preview TEXT,
+
+    platform VARCHAR(50),
+    source_url TEXT,
+
+    comment_count INT,
+    like_count INT,
+    favorite_count INT,
+
+    hot_level VARCHAR(10),
+    lead_level VARCHAR(10),
+    lead_reason TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+4️⃣ 知识库（结构化）
+CREATE TABLE knowledge_documents (
+    id BIGSERIAL PRIMARY KEY,
+    material_item_id BIGINT,
+
+    platform VARCHAR(50),        -- 一级分类
+    account_type VARCHAR(50),    -- 一级分类
+    target_audience VARCHAR(50), -- 一级分类
+    content_type VARCHAR(50),    -- 一级分类
+
+    topic TEXT,
+
+    title TEXT,
+    summary TEXT,
+    content_text TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+5️⃣ 分片（用于检索）
+CREATE TABLE knowledge_chunks (
+    id BIGSERIAL PRIMARY KEY,
+    knowledge_document_id BIGINT,
+
+    chunk_text TEXT,
+    chunk_index INT,
+
+    embedding VECTOR(1536), -- pgvector
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+6️⃣ 规则库
+CREATE TABLE rules (
+    id BIGSERIAL PRIMARY KEY,
+
+    rule_type VARCHAR(50),
+    platform VARCHAR(50),
+    account_type VARCHAR(50),
+    target_audience VARCHAR(50),
+
+    content TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+7️⃣ 提示词库
+CREATE TABLE prompt_templates (
+    id BIGSERIAL PRIMARY KEY,
+
+    task_type VARCHAR(50),
+    platform VARCHAR(50),
+    account_type VARCHAR(50),
+    target_audience VARCHAR(50),
+
+    system_prompt TEXT,
+    user_prompt_template TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+8️⃣ 生成任务
+CREATE TABLE generation_tasks (
+    id BIGSERIAL PRIMARY KEY,
+
+    material_item_id BIGINT,
+
+    platform VARCHAR(50),
+    account_type VARCHAR(50),
+    target_audience VARCHAR(50),
+
+    output_text TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+四、核心处理代码（最小实现）
+1️⃣ 入库 pipeline
+def process_content(raw):
+    # 1. 存原始
+    source_id = save_source(raw)
+
+    # 2. 清洗
+    content = raw.get("content_text") or raw.get("snippet") or ""
+    title = raw.get("title") or content[:20]
+
+    normalized_id = save_normalized({
+        "source_content_id": source_id,
+        "title": title,
+        "content_text": content,
+        "content_preview": content[:80],
+        "content_hash": hash(content),
+        "platform": raw.get("platform"),
+        "comment_count": raw.get("comment_count", 0),
+    })
+
+    # 3. 生成素材
+    hot = calc_hot_level(raw.get("comment_count", 0))
+    lead, reason = calc_lead_level(title + content)
+
+    material_id = save_material({
+        "normalized_content_id": normalized_id,
+        "title": title,
+        "content_text": content,
+        "content_preview": content[:80],
+        "platform": raw.get("platform"),
+        "comment_count": raw.get("comment_count", 0),
+        "hot_level": hot,
+        "lead_level": lead,
+        "lead_reason": reason,
+    })
+
+    # 4. 自动进入知识库（关键点）
+    create_knowledge(material_id, title, content, raw.get("platform"))
+
+    return material_id
+2️⃣ 自动分类（最小版本）
+def create_knowledge(material_id, title, content, platform):
+
+    text = title + content
+
+    # 一级分类（必须做）
+    account_type = "顾问号" if "怎么办" in text else "科普号"
+
+    if "逾期" in text:
+        audience = "负债逾期"
+    elif "贷款" in text:
+        audience = "贷款人群"
+    else:
+        audience = "泛人群"
+
+    content_type = "正文"
+
+    doc_id = save_knowledge_document({
+        "material_item_id": material_id,
+        "platform": platform,
+        "account_type": account_type,
+        "target_audience": audience,
+        "content_type": content_type,
+        "title": title,
+        "summary": content[:100],
+        "content_text": content,
+    })
+
+    # 分片
+    chunks = split_text(content, 300)
+
+    for i, chunk in enumerate(chunks):
+        embedding = embed(chunk)
+
+        save_chunk({
+            "knowledge_document_id": doc_id,
+            "chunk_text": chunk,
+            "chunk_index": i,
+            "embedding": embedding,
+        })
+五、混合检索（必须按顺序）
+def retrieve(query, platform, account_type, audience):
+
+    # 1. 结构过滤（必须先做）
+    candidates = filter_docs(
+        platform=platform,
+        account_type=account_type,
+        target_audience=audience
+    )
+
+    # 2. 关键词筛选
+    candidates = keyword_match(candidates, query)
+
+    # 3. 向量检索
+    vector = embed(query)
+    results = vector_search(candidates, vector)
+
+    # 4. 排序（固定规则）
+    results = sorted(results, key=lambda x: (
+        x.similarity,
+        x.comment_count,
+        x.lead_level == "high"
+    ), reverse=True)
+
+    return results[:5]
+六、生成编排（核心）
+def generate(material_id, platform, account_type, audience):
+
+    material = get_material(material_id)
+
+    refs = retrieve(
+        query=material["content_text"],
+        platform=platform,
+        account_type=account_type,
+        audience=audience
+    )
+
+    rules = get_rules(platform, account_type, audience)
+
+    prompt = get_prompt(platform, account_type, audience)
+
+    final_prompt = build_prompt(
+        material=material,
+        refs=refs,
+        rules=rules,
+        template=prompt
+    )
+
+    output = call_llm(final_prompt)
+
+    save_generation(material_id, output)
+
+    return output
+七、收件箱最终版（锁死）
+列表只显示：
+标题
+内容摘要
+评论数
+热度
+吸引力
+按钮：详情 / 去改写
+详情（按钮打开）
+标题
+正文
+评论/点赞
+吸引力 + 原因
+八、系统现在是闭合的
+
+检查链路：
+
+✔ 采集 → 入库
+✔ 清洗 → 标准化
+✔ 自动进素材
+✔ 自动进知识库
+✔ 分类完成
+✔ 分片 + embedding
+✔ 可检索
+✔ 可生成
+
+没有任何断点。
+
+九、你现在可以直接开工的顺序
+
+只做这 5 步：
+
+Step 1
+
+建 5 张表：
+
+source_contents
+normalized_contents
+material_items
+knowledge_documents
+knowledge_chunks
+Step 2
+
+写 process_content()
+
+Step 3
+
+写 create_knowledge()
+
+Step 4
+
+写 retrieve()
+
+Step 5
+
+写 generate()

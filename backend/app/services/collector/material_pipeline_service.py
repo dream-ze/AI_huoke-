@@ -8,7 +8,7 @@ import re
 from typing import Any, Optional
 
 from sqlalchemy import desc
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     CollectTask,
@@ -22,6 +22,7 @@ from app.models import (
     Rule,
     SourceContent,
 )
+from app.services.compliance_service import ComplianceService
 from app.services.collector.browser_collector_client import BrowserCollectorClient
 
 
@@ -52,6 +53,47 @@ class AcquisitionIntakeService:
         ("评论洞察", ("评论区", "网友", "留言", "评论")),
         ("规则说明", ("规则", "要求", "条件", "门槛")),
     ]
+    _TOPIC_RULES: list[tuple[str, tuple[str, ...]]] = [
+        ("车贷", ("车贷", "按揭车", "绿本", "解押", "提前还款")),
+        ("房贷", ("房贷", "公积金", "首付", "月供", "商贷")),
+        ("网贷", ("网贷", "借呗", "花呗", "360借条", "微粒贷")),
+        ("信用卡", ("信用卡", "账单", "分期", "停息挂账", "逾期")),
+        ("征信", ("征信", "查询次数", "风控", "黑户", "白户")),
+    ]
+    _INTENT_RULES: list[tuple[str, tuple[str, ...]]] = [
+        ("求助", ("怎么办", "咋办", "怎么解决", "求助", "能不能")),
+        ("被拒", ("被拒", "拒贷", "下不来", "审核不过")),
+        ("避坑", ("避坑", "套路", "被骗", "千万别", "后悔")),
+        ("经验分享", ("攻略", "经验", "分享", "终于懂了", "提前还款")),
+        ("转化引导", ("推荐", "中介", "私信", "咨询我", "联系我")),
+    ]
+    _CROWD_RULES: list[tuple[str, tuple[str, ...]]] = [
+        ("负债人群", ("负债", "欠款", "还不上", "逾期")),
+        ("征信问题人群", ("征信花", "大数据花", "查询多", "白户", "黑户")),
+        ("购车人群", ("买车", "提车", "按揭车", "车贷")),
+        ("购房人群", ("买房", "首付", "上车", "房贷")),
+    ]
+    _HIGH_RISK_TERMS: tuple[str, ...] = (
+        "套现",
+        "洗白",
+        "黑户秒过",
+        "包装资料",
+        "刷流水",
+        "百分百下款",
+        "无视风控",
+        "无视征信",
+        "内部渠道",
+    )
+    _MEDIUM_RISK_TERMS: tuple[str, ...] = (
+        "私信",
+        "加v",
+        "加微",
+        "VX",
+        "微信",
+        "联系我",
+        "中介",
+    )
+    _DEFAULT_COMPLIANCE_BLOCK_SCORE: int = 60
 
     @staticmethod
     def _to_int(value: Any) -> int:
@@ -277,6 +319,241 @@ class AcquisitionIntakeService:
         if current:
             chunks.append(current)
         return chunks[:20]
+
+    @staticmethod
+    def _contains_any(text: str, keywords: tuple[str, ...] | list[str]) -> bool:
+        return any(keyword and keyword in text for keyword in keywords)
+
+    @staticmethod
+    def _count_any(text: str, keywords: tuple[str, ...] | list[str]) -> int:
+        return sum(text.count(keyword) for keyword in keywords if keyword)
+
+    @staticmethod
+    def _detect_tag_by_rules(
+        text: str,
+        rules: list[tuple[str, tuple[str, ...]]],
+        default_label: str,
+    ) -> str:
+        for label, words in rules:
+            if AcquisitionIntakeService._contains_any(text, words):
+                return label
+        return default_label
+
+    @staticmethod
+    def build_material_tags(title: str, content_text: str) -> dict[str, Any]:
+        merged = f"{title}\n{content_text}".strip()
+        merged = re.sub(r"\s+", " ", merged)
+
+        topic_tag = AcquisitionIntakeService._detect_tag_by_rules(
+            merged,
+            AcquisitionIntakeService._TOPIC_RULES,
+            "贷款泛话题",
+        )
+        intent_tag = AcquisitionIntakeService._detect_tag_by_rules(
+            merged,
+            AcquisitionIntakeService._INTENT_RULES,
+            "普通讨论",
+        )
+        crowd_tag = AcquisitionIntakeService._detect_tag_by_rules(
+            merged,
+            AcquisitionIntakeService._CROWD_RULES,
+            "泛需求人群",
+        )
+
+        risk_tag = "low"
+        if AcquisitionIntakeService._contains_any(merged, AcquisitionIntakeService._HIGH_RISK_TERMS):
+            risk_tag = "high"
+        elif AcquisitionIntakeService._contains_any(merged, AcquisitionIntakeService._MEDIUM_RISK_TERMS):
+            risk_tag = "medium"
+
+        heat_score = 30
+        heat_score += min(
+            AcquisitionIntakeService._count_any(merged, ("贷款", "车贷", "房贷", "网贷", "征信")) * 5,
+            20,
+        )
+        heat_score += min(
+            AcquisitionIntakeService._count_any(merged, ("怎么办", "被拒", "逾期", "套路", "提前还款")) * 8,
+            30,
+        )
+        if len(merged) > 200:
+            heat_score += 10
+        if len(merged) > 500:
+            heat_score += 10
+        heat_score = min(heat_score, 100)
+
+        reason = (
+            f"识别为【{topic_tag}】话题，"
+            f"用户意图偏【{intent_tag}】，"
+            f"目标人群属于【{crowd_tag}】，"
+            f"风险等级为【{risk_tag}】。"
+        )
+
+        return {
+            "topic_tag": topic_tag,
+            "intent_tag": intent_tag,
+            "crowd_tag": crowd_tag,
+            "risk_tag": risk_tag,
+            "heat_score": heat_score,
+            "reason": reason,
+        }
+
+    @staticmethod
+    def _normalize_hashtags(tags: list[str], limit: int = 6) -> list[str]:
+        result: list[str] = []
+        for tag in tags:
+            text = AcquisitionIntakeService._normalize_text(tag).replace("#", "")
+            if not text:
+                continue
+            final_tag = f"#{text}"
+            if final_tag not in result:
+                result.append(final_tag)
+            if len(result) >= limit:
+                break
+        return result
+
+    @staticmethod
+    def _shorten_text(text: str, max_len: int = 180) -> str:
+        body = AcquisitionIntakeService._normalize_text(text).replace("\n", " ")
+        return body[:max_len]
+
+    @staticmethod
+    def generate_copy_variants(
+        platform: str,
+        title: str,
+        content_text: str,
+        tags: dict[str, Any],
+        keyword: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        topic = str(tags.get("topic_tag") or "贷款泛话题")
+        crowd = str(tags.get("crowd_tag") or "泛需求人群")
+        source = AcquisitionIntakeService._shorten_text(content_text, 180 if platform == "xiaohongshu" else 120)
+        normalized_title = AcquisitionIntakeService._normalize_text(title) or topic
+
+        if platform == "douyin":
+            variants = [
+                {
+                    "variant_name": "口播版1",
+                    "title": f"{topic}别瞎弄",
+                    "content": (
+                        f"{normalized_title}，很多人一上来就做错了。"
+                        f"尤其是{crowd}，最怕的不是没办法，而是顺序搞错。"
+                        f"这条素材里最关键的一点其实是：{source}。"
+                        f"先把自己的情况看明白，再决定下一步。"
+                    ),
+                    "hashtags": AcquisitionIntakeService._normalize_hashtags([topic, crowd, platform]),
+                },
+                {
+                    "variant_name": "口播版2",
+                    "title": f"{topic}一定要先看这个",
+                    "content": (
+                        f"很多人问{topic}怎么处理，"
+                        f"其实不是不会做，是不知道先做哪一步。"
+                        f"这篇内容里讲到：{source}。"
+                        f"真遇到这种情况，先别急。"
+                    ),
+                    "hashtags": AcquisitionIntakeService._normalize_hashtags([topic, "避坑", platform]),
+                },
+                {
+                    "variant_name": "口播版3",
+                    "title": f"{topic}经验分享",
+                    "content": (
+                        f"今天聊一下{topic}。"
+                        f"很多人容易忽略真实成本和后续影响。"
+                        f"素材核心内容是：{source}。"
+                        f"这种事一定先判断，再行动。"
+                    ),
+                    "hashtags": AcquisitionIntakeService._normalize_hashtags([topic, "经验", platform]),
+                },
+            ]
+            return variants
+
+        variants = [
+            {
+                "variant_name": "爆款版",
+                "title": f"{topic}真的别乱做，我是怎么一步步避坑的",
+                "content": (
+                    f"最近看到很多人在聊“{normalized_title}”，其实这种事我之前也踩过坑。\n\n"
+                    f"尤其是像【{crowd}】这种情况，很多人第一反应就是急着做决定，"
+                    f"但越着急越容易被带偏。\n\n"
+                    f"我后来才发现，先把自己的情况拆清楚，比到处乱问更重要。\n"
+                    f"比如这类问题里，最容易忽略的就是还款方式、实际成本、征信影响这几个点。\n\n"
+                    f"素材里提到的点是：{source}...\n\n"
+                    f"如果你也在碰到类似问题，真的建议先把自己的情况理一遍，"
+                    f"别一上来就被别人节奏带走。"
+                ),
+                "hashtags": AcquisitionIntakeService._normalize_hashtags([keyword or "", topic, crowd, platform]),
+            },
+            {
+                "variant_name": "引流版",
+                "title": f"{topic}这件事，我劝你先别急着做决定",
+                "content": (
+                    f"很多人表面看是在问“{normalized_title}”，"
+                    f"其实真正卡住的是：不知道自己适合哪种方案。\n\n"
+                    f"像【{crowd}】这类情况，处理顺序很关键，顺序错了，后面会更麻烦。\n\n"
+                    "我把这类内容反复看了很多，发现大家最容易踩的就是：\n"
+                    "1. 只看表面利率\n"
+                    "2. 忽略隐藏成本\n"
+                    "3. 没提前判断自己条件\n\n"
+                    f"原素材核心是：{source}...\n\n"
+                    "有同样情况的，先别乱操作，先把自己的问题点搞清楚。"
+                ),
+                "hashtags": AcquisitionIntakeService._normalize_hashtags([keyword or "", topic, "避坑", platform]),
+            },
+            {
+                "variant_name": "安全版",
+                "title": f"关于{topic}，分享几个容易被忽略的点",
+                "content": (
+                    f"今天整理了一下关于“{normalized_title}”这类内容。\n\n"
+                    "发现很多讨论其实都集中在几个问题上：\n"
+                    "- 真实成本怎么看\n"
+                    "- 还款节奏怎么判断\n"
+                    "- 不同人群适不适合当前方案\n\n"
+                    f"像这篇素材里提到：{source}...\n\n"
+                    f"如果你最近也在关注【{topic}】相关内容，建议多对比、多判断，"
+                    "先把信息看完整，再做决定。"
+                ),
+                "hashtags": AcquisitionIntakeService._normalize_hashtags([topic, crowd, "经验分享", platform]),
+            },
+        ]
+        return variants
+
+    @staticmethod
+    def compliance_review_and_rewrite(content: str, policy: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        policy = policy or {}
+        threshold = int(policy.get("block_score_threshold") or AcquisitionIntakeService._DEFAULT_COMPLIANCE_BLOCK_SCORE)
+        custom_risk_words = [str(word).strip() for word in (policy.get("custom_risk_words") or []) if str(word).strip()]
+
+        reviewed_input = content
+        for risk_word in custom_risk_words:
+            if risk_word in reviewed_input:
+                reviewed_input = reviewed_input.replace(risk_word, "合规表达")
+
+        first_pass = ComplianceService.check_compliance(reviewed_input)
+        reviewed_content = reviewed_input
+        corrected = False
+
+        if not bool(first_pass.get("is_compliant")):
+            for risk_point in first_pass.get("risk_points") or []:
+                reviewed_content = ComplianceService.suggest_correction(reviewed_content, risk_point)
+            corrected = reviewed_content != reviewed_input
+
+        second_pass = ComplianceService.check_compliance(reviewed_content)
+        risk_score = second_pass.get("risk_score") if second_pass.get("risk_score") is not None else first_pass.get("risk_score")
+        risk_level = second_pass.get("risk_level") or first_pass.get("risk_level") or "low"
+        publish_blocked = bool(risk_level == "high" or (risk_score is not None and float(risk_score) >= float(threshold)))
+        return {
+            "content": reviewed_content,
+            "corrected": corrected,
+            "before": first_pass,
+            "after": second_pass,
+            "is_compliant": bool(second_pass.get("is_compliant")),
+            "risk_level": risk_level,
+            "risk_score": risk_score,
+            "risk_points": second_pass.get("risk_points") or [],
+            "suggestions": second_pass.get("suggestions") or [],
+            "publish_blocked": publish_blocked,
+            "block_threshold": threshold,
+        }
 
     @staticmethod
     def _decide_status(
@@ -829,8 +1106,19 @@ class AcquisitionIntakeService:
         is_duplicate: Optional[bool] = None,
         skip: int = 0,
         limit: int = 50,
+        include_source_content: bool = False,
+        include_knowledge: bool = False,
+        include_generation: bool = False,
+        include_chunks: bool = False,
     ) -> list[MaterialItem]:
-        query = db.query(MaterialItem).filter(MaterialItem.owner_id == owner_id)
+        query = AcquisitionIntakeService._material_item_query(
+            db=db,
+            owner_id=owner_id,
+            include_source_content=include_source_content,
+            include_knowledge=include_knowledge,
+            include_generation=include_generation,
+            include_chunks=include_chunks,
+        )
         if status:
             query = query.filter(MaterialItem.status == status)
         if platform:
@@ -846,16 +1134,68 @@ class AcquisitionIntakeService:
         return query.order_by(desc(MaterialItem.created_at)).offset(skip).limit(limit).all()
 
     @staticmethod
-    def get_inbox_item(db: Session, owner_id: int, inbox_id: int) -> Optional[MaterialItem]:
+    def _material_item_query(
+        db: Session,
+        owner_id: int,
+        include_source_content: bool = False,
+        include_knowledge: bool = False,
+        include_generation: bool = False,
+        include_chunks: bool = False,
+    ):
+        query = db.query(MaterialItem).filter(MaterialItem.owner_id == owner_id)
+        if include_source_content:
+            query = query.options(selectinload(MaterialItem.source_content))
+        if include_knowledge or include_chunks:
+            knowledge_loader = selectinload(MaterialItem.knowledge_documents)
+            if include_chunks:
+                knowledge_loader = knowledge_loader.selectinload(KnowledgeDocument.knowledge_chunks)
+            query = query.options(knowledge_loader)
+        if include_generation:
+            query = query.options(selectinload(MaterialItem.generation_tasks))
+        return query
+
+    @staticmethod
+    def get_inbox_item(
+        db: Session,
+        owner_id: int,
+        inbox_id: int,
+        include_source_content: bool = False,
+        include_knowledge: bool = False,
+        include_generation: bool = False,
+        include_chunks: bool = False,
+    ) -> Optional[MaterialItem]:
         return (
-            db.query(MaterialItem)
-            .filter(MaterialItem.owner_id == owner_id, MaterialItem.id == inbox_id)
+            AcquisitionIntakeService._material_item_query(
+                db=db,
+                owner_id=owner_id,
+                include_source_content=include_source_content,
+                include_knowledge=include_knowledge,
+                include_generation=include_generation,
+                include_chunks=include_chunks,
+            )
+            .filter(MaterialItem.id == inbox_id)
             .first()
         )
 
     @staticmethod
-    def get_material_item(db: Session, owner_id: int, material_id: int) -> Optional[MaterialItem]:
-        return AcquisitionIntakeService.get_inbox_item(db, owner_id, material_id)
+    def get_material_item(
+        db: Session,
+        owner_id: int,
+        material_id: int,
+        include_source_content: bool = False,
+        include_knowledge: bool = False,
+        include_generation: bool = False,
+        include_chunks: bool = False,
+    ) -> Optional[MaterialItem]:
+        return AcquisitionIntakeService.get_inbox_item(
+            db=db,
+            owner_id=owner_id,
+            inbox_id=material_id,
+            include_source_content=include_source_content,
+            include_knowledge=include_knowledge,
+            include_generation=include_generation,
+            include_chunks=include_chunks,
+        )
 
     @staticmethod
     def reindex_material(db: Session, owner_id: int, material_id: int) -> dict[str, Any]:
@@ -1077,6 +1417,41 @@ class AcquisitionIntakeService:
         return template
 
     @staticmethod
+    def _load_compliance_policy(
+        db: Session,
+        owner_id: int,
+        platform: str,
+    ) -> dict[str, Any]:
+        threshold = AcquisitionIntakeService._DEFAULT_COMPLIANCE_BLOCK_SCORE
+        custom_words: set[str] = set()
+
+        rules = (
+            db.query(Rule)
+            .filter(
+                Rule.owner_id == owner_id,
+                Rule.rule_type.in_(["compliance_threshold", "compliance_risk_word"]),
+                (Rule.platform == platform) | (Rule.platform.is_(None)),
+            )
+            .order_by(desc(Rule.priority), desc(Rule.id))
+            .all()
+        )
+
+        for rule in rules:
+            if rule.rule_type == "compliance_threshold":
+                try:
+                    threshold = max(0, min(100, int((rule.content or "").strip())))
+                except Exception:
+                    continue
+            elif rule.rule_type == "compliance_risk_word":
+                words = [seg.strip() for seg in re.split(r"[,，;；\s]+", rule.content or "") if seg.strip()]
+                custom_words.update(words)
+
+        return {
+            "block_score_threshold": threshold,
+            "custom_risk_words": sorted(custom_words),
+        }
+
+    @staticmethod
     async def generate(
         db: Session,
         owner_id: int,
@@ -1101,6 +1476,7 @@ class AcquisitionIntakeService:
             limit=5,
         )
         rules = AcquisitionIntakeService._load_rules(db, owner_id, platform, account_type, target_audience)
+        compliance_policy = AcquisitionIntakeService._load_compliance_policy(db, owner_id, platform)
         template = AcquisitionIntakeService._select_prompt_template(db, owner_id, task_type, platform, account_type, target_audience)
 
         reference_lines = []
@@ -1137,6 +1513,77 @@ class AcquisitionIntakeService:
             scene=f"generation_{task_type}",
         )
 
+        tags = AcquisitionIntakeService.build_material_tags(
+            title=material.title or "",
+            content_text=output_text or material.content_text or "",
+        )
+        variants = AcquisitionIntakeService.generate_copy_variants(
+            platform=platform,
+            title=material.title or "",
+            content_text=output_text or material.content_text or "",
+            tags=tags,
+            keyword=material.keyword,
+        )
+
+        reviewed_variants: list[dict[str, Any]] = []
+        for variant in variants:
+            compliance = AcquisitionIntakeService.compliance_review_and_rewrite(variant["content"], compliance_policy)
+            reviewed_variants.append(
+                {
+                    "variant_name": variant["variant_name"],
+                    "title": variant["title"],
+                    "content": compliance["content"],
+                    "hashtags": variant.get("hashtags") or [],
+                    "compliance": {
+                        "corrected": compliance["corrected"],
+                        "is_compliant": compliance["is_compliant"],
+                        "risk_level": compliance["risk_level"],
+                        "risk_score": compliance["risk_score"],
+                        "risk_points": compliance["risk_points"],
+                        "suggestions": compliance["suggestions"],
+                        "publish_blocked": compliance["publish_blocked"],
+                        "block_threshold": compliance["block_threshold"],
+                    },
+                }
+            )
+
+        preferred_variant = next(
+            (
+                item
+                for item in reviewed_variants
+                if item["compliance"]["is_compliant"] and not item["compliance"].get("publish_blocked")
+            ),
+            None,
+        )
+        if preferred_variant is None:
+            preferred_variant = reviewed_variants[0] if reviewed_variants else {
+                "variant_name": "默认版",
+                "title": material.title or "改写结果",
+                "content": output_text,
+                "hashtags": [],
+                "compliance": {
+                    "corrected": False,
+                    "is_compliant": True,
+                    "risk_level": "low",
+                    "risk_score": 0,
+                    "risk_points": [],
+                    "suggestions": [],
+                    "publish_blocked": False,
+                    "block_threshold": compliance_policy.get("block_score_threshold", AcquisitionIntakeService._DEFAULT_COMPLIANCE_BLOCK_SCORE),
+                },
+            }
+
+        selected_output_text = preferred_variant["content"]
+        final_compliance = preferred_variant["compliance"]
+        selected_variant_index = next(
+            (idx for idx, item in enumerate(reviewed_variants) if item.get("variant_name") == preferred_variant.get("variant_name")),
+            None,
+        )
+
+        if final_compliance.get("publish_blocked"):
+            material.status = "review"
+            material.review_note = "改写结果风险高，已阻断发布并转入复核队列"
+
         generation = GenerationTask(
             owner_id=owner_id,
             material_item_id=material.id,
@@ -1145,8 +1592,14 @@ class AcquisitionIntakeService:
             target_audience=target_audience,
             task_type=task_type,
             prompt_snapshot=final_prompt,
-            output_text=output_text,
+            output_text=selected_output_text,
             reference_document_ids=[ref["document_id"] for ref in references],
+            tags_json=tags,
+            copies_json=reviewed_variants,
+            compliance_json=final_compliance,
+            selected_variant=preferred_variant.get("variant_name"),
+            selected_variant_index=selected_variant_index,
+            adoption_status="pending",
         )
         db.add(generation)
         db.commit()
@@ -1159,6 +1612,11 @@ class AcquisitionIntakeService:
             "account_type": account_type,
             "target_audience": target_audience,
             "task_type": task_type,
-            "output_text": output_text,
+            "output_text": selected_output_text,
+            "llm_output": output_text,
+            "tags": tags,
+            "copies": reviewed_variants,
+            "selected_variant": preferred_variant.get("variant_name"),
+            "compliance": final_compliance,
             "references": references,
         }

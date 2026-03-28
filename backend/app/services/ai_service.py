@@ -41,7 +41,7 @@ class AIService:
         try:
             full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
             
-            async with httpx.AsyncClient(timeout=60) as client:
+            async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
                 response = await client.post(
                     f"{self.ollama_url}/api/generate",
                     json={

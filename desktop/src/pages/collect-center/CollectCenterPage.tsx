@@ -82,7 +82,7 @@ export function CollectCenterPage() {
     <div className="page grid">
       <h2>采集中心</h2>
       <p className="muted" style={{ marginTop: 0, marginBottom: 16, fontSize: 13 }}>
-        采集结果统一进入收件箱，在<a href="/inbox" style={{ color: "var(--brand)" }}>收件箱</a>中审核后方可入素材库。
+        采集结果统一进入收件箱，在<a href="/inbox" style={{ color: "var(--brand)" }}>收件箱</a>中审核后方可入素材库。当前默认会执行详情补采（need_detail=true）。
       </p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -155,7 +155,7 @@ export function CollectCenterPage() {
         <section className="card">
           <h3 style={{ marginBottom: 12 }}>关键词批量采集</h3>
           <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
-            按关键词批量抓取平台内容，采集结果自动进入收件箱待审核。耗时 30~120 秒，请耐心等待。
+            按关键词批量抓取平台内容，采集结果自动进入收件箱待审核。默认补采详情页后再入库，耗时 30~120 秒，请耐心等待。
           </p>
           <form onSubmit={onKeywordSubmit} className="grid">
             <div className="form-row">

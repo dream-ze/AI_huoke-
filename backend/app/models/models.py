@@ -737,6 +737,14 @@ class GenerationTask(Base):
     prompt_snapshot = Column(Text, nullable=True)
     output_text = Column(Text, nullable=False)
     reference_document_ids = Column(JSON, default=list)
+    tags_json = Column(JSON, default=dict)
+    copies_json = Column(JSON, default=list)
+    compliance_json = Column(JSON, default=dict)
+    selected_variant = Column(String(64), nullable=True)
+    selected_variant_index = Column(Integer, nullable=True)
+    adoption_status = Column(String(20), nullable=False, default="pending", index=True)
+    adopted_at = Column(DateTime, nullable=True)
+    adopted_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

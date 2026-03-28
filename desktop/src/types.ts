@@ -110,6 +110,34 @@ export type CollectGenerationTask = {
   task_type: string;
   output_text: string;
   reference_document_ids: number[];
+  tags?: Record<string, any>;
+  copies?: Array<{
+    variant_name: string;
+    title: string;
+    content: string;
+    hashtags: string[];
+    compliance?: {
+      corrected?: boolean;
+      is_compliant?: boolean;
+      risk_level?: string;
+      risk_score?: number;
+      publish_blocked?: boolean;
+      suggestions?: string[];
+    };
+  }>;
+  compliance?: {
+    corrected?: boolean;
+    is_compliant?: boolean;
+    risk_level?: string;
+    risk_score?: number;
+    publish_blocked?: boolean;
+    block_threshold?: number;
+  };
+  selected_variant?: string | null;
+  selected_variant_index?: number | null;
+  adoption_status?: string;
+  adopted_at?: string | null;
+  adopted_by_user_id?: number | null;
   created_at?: string | null;
 };
 
@@ -142,6 +170,12 @@ export type CollectDetail = {
   knowledge?: CollectItem["knowledge"];
   knowledge_documents: CollectKnowledgeDocument[];
   generation_tasks: CollectGenerationTask[];
+  generation_variant_stats?: Array<{
+    variant_name: string;
+    total: number;
+    adopted: number;
+    adoption_rate: number;
+  }>;
   created_at?: string;
   updated_at?: string;
 };

@@ -1,5 +1,7 @@
 from typing import Any, Optional
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -26,6 +28,11 @@ class MaterialRewriteRequest(BaseModel):
     task_type: str = Field(default="rewrite")
 
 
+class GenerationAdoptRequest(BaseModel):
+    adopt: bool = Field(default=True)
+    reason: Optional[str] = None
+
+
 materials_routes = APIRouter(prefix="/materials", tags=["materials-v2"])
 
 
@@ -48,6 +55,7 @@ def _knowledge_document_row(document: KnowledgeDocument) -> dict[str, Any]:
 
 def _generation_task_row(task: GenerationTask) -> dict[str, Any]:
     created_at = getattr(task, "created_at", None)
+    adopted_at = getattr(task, "adopted_at", None)
     return {
         "generation_task_id": task.id,
         "platform": task.platform,
@@ -56,8 +64,41 @@ def _generation_task_row(task: GenerationTask) -> dict[str, Any]:
         "task_type": task.task_type,
         "output_text": task.output_text,
         "reference_document_ids": task.reference_document_ids or [],
+        "tags": task.tags_json or {},
+        "copies": task.copies_json or [],
+        "compliance": task.compliance_json or {},
+        "selected_variant": task.selected_variant,
+        "selected_variant_index": task.selected_variant_index,
+        "adoption_status": task.adoption_status,
+        "adopted_at": adopted_at.isoformat() if adopted_at else None,
+        "adopted_by_user_id": task.adopted_by_user_id,
         "created_at": created_at.isoformat() if created_at else None,
     }
+
+
+def _generation_variant_stats(tasks: list[GenerationTask]) -> list[dict[str, Any]]:
+    variant_total: dict[str, int] = {}
+    variant_adopted: dict[str, int] = {}
+
+    for task in tasks:
+        variant = (task.selected_variant or "默认版").strip() or "默认版"
+        variant_total[variant] = variant_total.get(variant, 0) + 1
+        if task.adoption_status == "adopted":
+            variant_adopted[variant] = variant_adopted.get(variant, 0) + 1
+
+    rows: list[dict[str, Any]] = []
+    for variant, total in sorted(variant_total.items(), key=lambda kv: kv[0]):
+        adopted = variant_adopted.get(variant, 0)
+        rate = round((adopted / total) * 100, 2) if total > 0 else 0.0
+        rows.append(
+            {
+                "variant_name": variant,
+                "total": total,
+                "adopted": adopted,
+                "adoption_rate": rate,
+            }
+        )
+    return rows
 
 
 def _material_row(item: MaterialItem, include_detail: bool = False) -> dict[str, Any]:
@@ -87,6 +128,7 @@ def _material_row(item: MaterialItem, include_detail: bool = False) -> dict[str,
         generations = sorted(item.generation_tasks or [], key=lambda value: value.id, reverse=True)
         payload["knowledge_documents"] = [_knowledge_document_row(document) for document in documents]
         payload["generation_tasks"] = [_generation_task_row(task) for task in generations[:10]]
+        payload["generation_variant_stats"] = _generation_variant_stats(generations)
     return payload
 
 
@@ -112,6 +154,9 @@ def list_materials(
         risk_status=risk_status,
         skip=skip,
         limit=limit,
+        include_knowledge=True,
+        include_generation=True,
+        include_chunks=True,
     )
     return [_material_row(item, include_detail=False) for item in items]
 
@@ -122,7 +167,14 @@ def get_material(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    item = AcquisitionIntakeService.get_material_item(db, current_user["user_id"], material_id)
+    item = AcquisitionIntakeService.get_material_item(
+        db=db,
+        owner_id=current_user["user_id"],
+        material_id=material_id,
+        include_knowledge=True,
+        include_generation=True,
+        include_chunks=True,
+    )
     if not item:
         raise HTTPException(status_code=404, detail="素材不存在")
     return _material_row(item, include_detail=True)
@@ -214,6 +266,79 @@ async def rewrite_material(
         task_type=req.task_type,
         ai_service=ai_service,
     )
+
+
+@materials_routes.post("/{material_id}/generation/{generation_task_id}/adopt")
+def adopt_generation_task(
+    material_id: int,
+    generation_task_id: int,
+    req: GenerationAdoptRequest,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    item = AcquisitionIntakeService.get_material_item(db, current_user["user_id"], material_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="素材不存在")
+
+    task = (
+        db.query(GenerationTask)
+        .filter(
+            GenerationTask.id == generation_task_id,
+            GenerationTask.material_item_id == material_id,
+            GenerationTask.owner_id == current_user["user_id"],
+        )
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="改写记录不存在")
+
+    if req.adopt:
+        now = datetime.utcnow()
+        all_tasks = (
+            db.query(GenerationTask)
+            .filter(
+                GenerationTask.material_item_id == material_id,
+                GenerationTask.owner_id == current_user["user_id"],
+            )
+            .all()
+        )
+        for row in all_tasks:
+            if row.id == generation_task_id:
+                row.adoption_status = "adopted"
+                row.adopted_at = now
+                row.adopted_by_user_id = current_user["user_id"]
+            elif row.adoption_status == "adopted":
+                row.adoption_status = "rolled_back"
+
+        item.content_text = task.output_text
+        item.content_preview = (task.output_text or "")[:100]
+        item.status = "pending"
+        item.review_note = req.reason or "已采纳该改写版本"
+
+        normalized = item.normalized_content
+        if normalized is not None:
+            normalized.content_text = item.content_text
+            normalized.content_preview = item.content_preview
+
+        db.commit()
+        db.refresh(task)
+        db.refresh(item)
+        return {
+            "material_id": material_id,
+            "generation_task_id": generation_task_id,
+            "adoption_status": task.adoption_status,
+            "message": "已采纳该版本并更新素材正文",
+        }
+
+    task.adoption_status = "rolled_back"
+    db.commit()
+    db.refresh(task)
+    return {
+        "material_id": material_id,
+        "generation_task_id": generation_task_id,
+        "adoption_status": task.adoption_status,
+        "message": "已取消该版本采纳状态",
+    }
 
 
 v2_materials_router = APIRouter()

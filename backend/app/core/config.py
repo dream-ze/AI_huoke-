@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     DATABASE_PASSWORD: str = "password"
     DATABASE_NAME: str = "zhihuokeke"
     DB_AUTO_CREATE_TABLES: bool = False
+    ENABLE_STARTUP_USER_SEQUENCE_HEALTHCHECK: bool = True
 
     # JWT
     SECRET_KEY: str = "CHANGE_ME_SECRET_KEY_MIN_32_CHARS"

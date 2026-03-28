@@ -73,6 +73,12 @@ from app.schemas.schemas import (
     InsightRetrieveResponse,
     WecomOAuthConfigResponse,
     WecomBindRequest,
+    MaterialTagRequest,
+    TagResult,
+    TagResponse,
+    CopyGenerateRequest,
+    CopyVariant,
+    CopyGenerateResponse,
 )
 
 __all__ = [
@@ -149,4 +155,10 @@ __all__ = [
     "InsightRetrieveResponse",
     "WecomOAuthConfigResponse",
     "WecomBindRequest",
+    "MaterialTagRequest",
+    "TagResult",
+    "TagResponse",
+    "CopyGenerateRequest",
+    "CopyVariant",
+    "CopyGenerateResponse",
 ]

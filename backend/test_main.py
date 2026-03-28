@@ -4,12 +4,15 @@ Pytest test suite
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from fastapi import HTTPException
+from sqlalchemy import create_engine, event
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from main import app
 from app.core.database import Base, get_db
-from app.models import User
+from app.models import GenerationTask, MaterialItem, User
+from app.services.user_service import UserService
 
 
 # Test database
@@ -122,6 +125,103 @@ class TestAuth:
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
+
+
+class TestUserServiceRegression:
+    class _FakeQuery:
+        def __init__(self, existing_user=None):
+            self._existing_user = existing_user
+
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return self._existing_user
+
+    class _FakeDB:
+        def __init__(self, commit_side_effects=None, existing_user=None):
+            self._commit_side_effects = list(commit_side_effects or [])
+            self._existing_user = existing_user
+            self.added_users = []
+            self.commit_calls = 0
+            self.rollback_calls = 0
+            self.refresh_calls = 0
+
+        def query(self, _model):
+            return TestUserServiceRegression._FakeQuery(existing_user=self._existing_user)
+
+        def add(self, obj):
+            self.added_users.append(obj)
+
+        def commit(self):
+            self.commit_calls += 1
+            if self._commit_side_effects:
+                effect = self._commit_side_effects.pop(0)
+                if isinstance(effect, Exception):
+                    raise effect
+
+        def rollback(self):
+            self.rollback_calls += 1
+
+        def refresh(self, _obj):
+            self.refresh_calls += 1
+
+    @staticmethod
+    def _make_integrity_error(detail: str) -> IntegrityError:
+        return IntegrityError("INSERT INTO users ...", {}, Exception(detail))
+
+    @pytest.mark.regression
+    def test_create_user_recovers_from_users_pkey_sequence_drift(self, monkeypatch):
+        db = self._FakeDB(
+            commit_side_effects=[
+                self._make_integrity_error('duplicate key value violates unique constraint "users_pkey"'),
+                None,
+            ]
+        )
+
+        sync_called = {"count": 0}
+
+        def fake_sync(_db):
+            sync_called["count"] += 1
+            return True
+
+        monkeypatch.setattr(UserService, "_sync_user_id_sequence", staticmethod(fake_sync))
+
+        user = UserService.create_user(
+            db,
+            username="seq_fix_user",
+            email="seq_fix_user@example.com",
+            password=TEST_PASSWORD,
+        )
+
+        assert user.username == "seq_fix_user"
+        assert user.email == "seq_fix_user@example.com"
+        assert sync_called["count"] == 1
+        assert db.commit_calls == 2
+        assert db.rollback_calls == 1
+        assert db.refresh_calls == 1
+        assert len(db.added_users) == 2
+
+    @pytest.mark.regression
+    def test_create_user_unique_constraint_still_returns_400(self):
+        db = self._FakeDB(
+            commit_side_effects=[
+                self._make_integrity_error('duplicate key value violates unique constraint "users_email_key"')
+            ]
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            UserService.create_user(
+                db,
+                username="dup_user",
+                email="dup_user@example.com",
+                password=TEST_PASSWORD,
+            )
+
+        assert exc.value.status_code == 400
+        assert exc.value.detail == "Username or email already exists"
+        assert db.commit_calls == 1
+        assert db.rollback_calls == 1
 
 
 class TestContent:
@@ -485,6 +585,67 @@ class TestV1Routing:
             json={},
         )
         assert repeat_resp.status_code == 409
+
+
+class TestMaterialsQueryOptimization:
+    def test_v2_materials_list_avoids_n_plus_one_queries(self, auth_headers):
+        for idx in range(3):
+            submit_resp = client.post(
+                "/api/v1/material/inbox/manual",
+                headers=auth_headers,
+                json={
+                    "platform": "xiaohongshu",
+                    "title": f"素材优化测试-{idx}",
+                    "content": f"这是第 {idx} 条素材，用于验证列表查询预加载能力。",
+                    "tags": ["opt"],
+                },
+            )
+            assert submit_resp.status_code == 200
+
+        with TestingSessionLocal() as db:
+            user = db.query(User).filter(User.username == "testuser").first()
+            assert user is not None
+
+            materials = (
+                db.query(MaterialItem)
+                .filter(MaterialItem.owner_id == user.id)
+                .order_by(MaterialItem.id.asc())
+                .all()
+            )
+            assert len(materials) >= 3
+
+            for material in materials:
+                db.add(
+                    GenerationTask(
+                        owner_id=user.id,
+                        material_item_id=material.id,
+                        platform=material.platform or "xiaohongshu",
+                        account_type="科普号",
+                        target_audience="泛人群",
+                        task_type="rewrite",
+                        output_text=f"改写结果-{material.id}",
+                    )
+                )
+            db.commit()
+
+        select_count = {"value": 0}
+
+        def _before_cursor_execute(_conn, _cursor, statement, _parameters, _context, _executemany):
+            sql = (statement or "").lstrip().upper()
+            if sql.startswith("SELECT"):
+                select_count["value"] += 1
+
+        event.listen(engine, "before_cursor_execute", _before_cursor_execute)
+        try:
+            response = client.get("/api/v2/materials", headers=auth_headers)
+        finally:
+            event.remove(engine, "before_cursor_execute", _before_cursor_execute)
+
+        assert response.status_code == 200
+        rows = response.json()
+        assert len(rows) >= 3
+        assert all("generation_count" in row for row in rows)
+        assert select_count["value"] <= 8
 
 
 class TestPublishTaskWorkflow:

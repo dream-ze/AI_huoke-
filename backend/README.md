@@ -185,6 +185,14 @@ mypy .
 
 # 单元测试
 pytest
+
+# 必跑回归（注册序列漂移自愈 + 唯一约束 400）
+pytest -q test_main.py -k "sequence_drift or unique_constraint"
+
+# PostgreSQL 集成回归（需可用的 PostgreSQL）
+set RUN_POSTGRES_REGRESSION=1
+set TEST_POSTGRES_DATABASE_URL=postgresql://postgres:password@localhost/zhihuokeke
+pytest -q -m "postgres_regression" test_user_service_postgres_regression.py
 ```
 
 ## 生产部署

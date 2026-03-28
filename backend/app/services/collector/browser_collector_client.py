@@ -18,6 +18,10 @@ class BrowserCollectorClient:
             "platform": platform,
             "keyword": keyword,
             "max_items": max_items,
+            "need_detail": True,
+            "need_comments": False,
+            "dedup": True,
+            "timeout_sec": self.timeout_seconds,
         }
         url = f"{self.base_url}/api/collect/run"
         with httpx.Client(timeout=self.timeout_seconds) as client:

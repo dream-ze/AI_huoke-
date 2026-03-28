@@ -894,3 +894,59 @@ class InsightRetrieveResponse(BaseModel):
     style_summary: str
     risk_reminder: str
     reference_count: int
+
+
+# ===== 文案改写 Schemas =====
+Platform = Literal["xiaohongshu", "douyin"]
+AccountType = Literal["personal_ip", "sales", "agency"]
+ToneType = Literal["natural", "emotional", "professional"]
+
+
+class MaterialTagRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    content_text: str = Field(..., min_length=1)
+    platform: Platform = "xiaohongshu"
+    keyword: Optional[str] = None
+    author_name: Optional[str] = None
+    publish_time: Optional[str] = None
+
+
+class TagResult(BaseModel):
+    topic_tag: str
+    intent_tag: str
+    crowd_tag: str
+    risk_tag: str
+    heat_score: int
+    reason: str
+
+
+class TagResponse(BaseModel):
+    success: bool = True
+    data: TagResult
+
+
+class CopyGenerateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    content_text: str = Field(..., min_length=1)
+    platform: Platform = "xiaohongshu"
+    account_type: AccountType = "sales"
+    target_audience: str = "负债人群"
+    tone: ToneType = "natural"
+
+    topic_tag: Optional[str] = None
+    intent_tag: Optional[str] = None
+    crowd_tag: Optional[str] = None
+    keyword: Optional[str] = None
+
+
+class CopyVariant(BaseModel):
+    variant_name: str
+    title: str
+    content: str
+    hashtags: List[str]
+
+
+class CopyGenerateResponse(BaseModel):
+    success: bool = True
+    tags: TagResult
+    copies: List[CopyVariant]

@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +10,29 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.database import Base, engine
+from app.core.metrics import get_user_sequence_metrics_snapshot
 from app.api.router import register_routers
+from app.services.user_service import UserService
+from sqlalchemy.orm import sessionmaker
+
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Run best-effort startup checks before serving requests."""
+    if settings.ENABLE_STARTUP_USER_SEQUENCE_HEALTHCHECK:
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        db = SessionLocal()
+        try:
+            UserService.ensure_user_id_sequence_health(db)
+        except Exception:
+            logger.exception("startup users.id sequence health check failed")
+        finally:
+            db.close()
+
+    yield
 
 # Resolve the frontend build directory (desktop/dist)
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "desktop" / "dist"
@@ -23,6 +47,7 @@ app = FastAPI(
     title=settings.API_TITLE,
     version=settings.API_VERSION,
     description="AI Content Acquisition System Backend",
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -46,9 +71,10 @@ register_routers(app)
 @app.get("/health")
 def health_check():
     """Health check endpoint"""
-    return {"status": "ok"}
-
-
+    return {
+        "status": "ok",
+        "sequence_metrics": get_user_sequence_metrics_snapshot(),
+    }
 # ── Serve frontend static files ─────────────────────────────────
 if _FRONTEND_DIR.is_dir() and _FRONTEND_INDEX.is_file():
     # Mount assets with cache-friendly headers

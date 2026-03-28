@@ -38,3 +38,9 @@ mypy = "^1.7.1"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+markers = [
+	"regression: backend regression test suite",
+	"postgres_regression: requires PostgreSQL and explicit RUN_POSTGRES_REGRESSION=1",
+]

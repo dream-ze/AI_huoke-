@@ -1,6 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { listMaterialInbox, updateMaterialInboxStatus } from "../../lib/api";
+import {
+  adoptGenerationVersion,
+  getCollectDetail,
+  listMaterialInbox,
+  rewriteCollect,
+  updateMaterialInboxStatus,
+} from "../../lib/api";
+import { CollectDetail, CollectGenerationTask } from "../../types";
 
 type InboxRow = {
   id: number;
@@ -32,6 +39,21 @@ type InboxRow = {
   review_note?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+type RewriteCopy = {
+  variant_name: string;
+  title: string;
+  content: string;
+  hashtags: string[];
+  compliance?: {
+    corrected?: boolean;
+    is_compliant?: boolean;
+    risk_level?: string;
+    risk_score?: number;
+    publish_blocked?: boolean;
+    suggestions?: string[];
+  };
 };
 
 const SOURCE_CHANNEL_LABELS: Record<string, string> = {
@@ -107,6 +129,15 @@ export function InboxPage() {
   const [message, setMessage] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
 
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detail, setDetail] = useState<CollectDetail | null>(null);
+  const [rewriteLoading, setRewriteLoading] = useState(false);
+  const [rewritePlatform, setRewritePlatform] = useState<"xiaohongshu" | "douyin" | "zhihu">("xiaohongshu");
+  const [rewriteCopies, setRewriteCopies] = useState<RewriteCopy[]>([]);
+  const [compareLeftId, setCompareLeftId] = useState<number | null>(null);
+  const [compareRightId, setCompareRightId] = useState<number | null>(null);
+  const [adoptLoading, setAdoptLoading] = useState<number | null>(null);
+
   const [filterStatus, setFilterStatus] = useState("");
   const [filterPlatform, setFilterPlatform] = useState("");
   const [filterChannel, setFilterChannel] = useState("");
@@ -140,9 +171,42 @@ export function InboxPage() {
     }
   }
 
+  async function loadDetail(id: number) {
+    setDetailLoading(true);
+    try {
+      const payload = await getCollectDetail(id);
+      setDetail(payload);
+      const generations = payload?.generation_tasks || [];
+      if (generations.length >= 2) {
+        setCompareLeftId(generations[0].generation_task_id);
+        setCompareRightId(generations[1].generation_task_id);
+      } else if (generations.length === 1) {
+        setCompareLeftId(generations[0].generation_task_id);
+        setCompareRightId(null);
+      } else {
+        setCompareLeftId(null);
+        setCompareRightId(null);
+      }
+    } catch (err: any) {
+      setMessage(err?.response?.data?.detail || "加载素材详情失败");
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadItems();
   }, [filterStatus, filterPlatform, filterChannel, filterRiskStatus, filterDuplicate]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      return;
+    }
+    setRewriteCopies([]);
+    loadDetail(selectedId);
+  }, [selectedId]);
 
   async function applyStatus(id: number, status: "pending" | "review" | "discard", reviewNote: string) {
     setBusyId(id);
@@ -151,6 +215,9 @@ export function InboxPage() {
       await updateMaterialInboxStatus(id, { status, review_note: reviewNote });
       setMessage(`#${id} 已更新为${STATUS_LABELS[status] ?? status}`);
       await loadItems();
+      if (selectedId === id) {
+        await loadDetail(id);
+      }
     } catch (err: any) {
       setMessage(err?.response?.data?.detail || `#${id} 更新失败`);
     } finally {
@@ -158,9 +225,55 @@ export function InboxPage() {
     }
   }
 
+  async function onRewrite() {
+    if (!selectedId) return;
+    setRewriteLoading(true);
+    setMessage("");
+    try {
+      const result = await rewriteCollect(selectedId, rewritePlatform);
+      setRewriteCopies(Array.isArray(result?.copies) ? result.copies : []);
+      setMessage("改写已完成，结果已进入历史记录");
+      await loadDetail(selectedId);
+      await loadItems();
+    } catch (err: any) {
+      setMessage(err?.response?.data?.detail || "改写失败");
+    } finally {
+      setRewriteLoading(false);
+    }
+  }
+
+  async function onAdoptVersion(generationTaskId: number) {
+    if (!selectedId) return;
+    setAdoptLoading(generationTaskId);
+    setMessage("");
+    try {
+      await adoptGenerationVersion(selectedId, generationTaskId, "收件箱一键回滚/采纳");
+      setMessage("已采纳所选版本并更新当前素材正文");
+      await loadDetail(selectedId);
+      await loadItems();
+    } catch (err: any) {
+      setMessage(err?.response?.data?.detail || "采纳失败");
+    } finally {
+      setAdoptLoading(null);
+    }
+  }
+
   const pendingCount = items.filter((item) => item.status === "pending").length;
   const reviewCount = items.filter((item) => item.status === "review").length;
   const selectedItem = items.find((item) => item.id === selectedId) || null;
+
+  const generationTasks = detail?.generation_tasks || [];
+  const compareLeft = generationTasks.find((task) => task.generation_task_id === compareLeftId) || null;
+  const compareRight = generationTasks.find((task) => task.generation_task_id === compareRightId) || null;
+  const adoptedTaskId = generationTasks.find((task) => task.adoption_status === "adopted")?.generation_task_id;
+
+  const variantsFromLatest = useMemo(() => {
+    if (generationTasks.length === 0) return [] as RewriteCopy[];
+    const latest = generationTasks[0];
+    const copies = latest.copies;
+    if (!Array.isArray(copies) || copies.length === 0) return [] as RewriteCopy[];
+    return copies as RewriteCopy[];
+  }, [generationTasks]);
 
   return (
     <div className="page grid">
@@ -277,166 +390,164 @@ export function InboxPage() {
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 0 }}>
           <div style={{ overflowX: "auto", borderRight: "1px solid var(--border)" }}>
             <table className="table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>标题 / 正文</th>
-              <th>平台 / 作者</th>
-              <th>关键词 / 来源</th>
-              <th>评分</th>
-              <th>技术状态</th>
-              <th>业务状态</th>
-              <th>时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={9} style={{ textAlign: "center", padding: 24 }}>加载中…</td>
-              </tr>
-            ) : items.length === 0 ? (
-              <tr>
-                <td colSpan={9} style={{ textAlign: "center", padding: 24 }} className="muted">暂无数据</td>
-              </tr>
-            ) : (
-              items.map((item) => {
-                const busy = busyId === item.id;
-                const colors = statusColor(item.status);
-                const isActive = selectedId === item.id;
-                return (
-                  <tr
-                    key={item.id}
-                    onClick={() => setSelectedId(item.id)}
-                    style={{ background: isActive ? "#f6fbff" : "transparent", cursor: "pointer" }}
-                  >
-                    <td className="muted" style={{ fontSize: 12 }}>{item.id}</td>
-                    <td style={{ minWidth: 280, maxWidth: 360 }}>
-                      <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                        {item.url ? (
-                          <a href={item.url} target="_blank" rel="noreferrer noopener" style={{ color: "var(--brand-2)" }}>
-                            {item.title || "(无标题)"}
-                          </a>
-                        ) : (
-                          item.title || "(无标题)"
-                        )}
-                      </div>
-                      <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
-                        {(item.content || "").slice(0, 120) || "无正文"}
-                      </div>
-                      <div style={{ marginTop: 8, fontSize: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        <span className="muted">👍 {item.like_count}</span>
-                        <span className="muted">💬 {item.comment_count}</span>
-                        <span className="muted">⭐ {item.collect_count}</span>
-                        {item.is_duplicate && (
-                          <span style={{ background: "#fde2e4", color: "#9d0208", borderRadius: 6, padding: "2px 6px" }}>
-                            重复
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td style={{ minWidth: 120 }}>
-                      <div>{PLATFORM_LABELS[item.platform] ?? item.platform}</div>
-                      <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{item.author || "-"}</div>
-                    </td>
-                    <td style={{ minWidth: 160 }}>
-                      <div>{item.keyword || "-"}</div>
-                      <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                        {SOURCE_CHANNEL_LABELS[item.source_channel] ?? item.source_channel}
-                      </div>
-                    </td>
-                    <td style={{ minWidth: 120, fontSize: 12 }}>
-                      <div>质量 {item.quality_score}</div>
-                      <div>相关 {item.relevance_score}</div>
-                      <div>线索 {item.lead_score}</div>
-                    </td>
-                    <td style={{ minWidth: 150, fontSize: 12 }}>
-                      <div>解析: {item.parse_status}</div>
-                      <div style={{ marginTop: 6 }}>风险: {RISK_LABELS[item.risk_status] ?? item.risk_status}</div>
-                      <div className="muted" style={{ marginTop: 6 }}>
-                        {FILTER_REASON_LABELS[item.filter_reason || ""] ?? item.filter_reason ?? "-"}
-                      </div>
-                    </td>
-                    <td style={{ minWidth: 110 }}>
-                      <span
-                        style={{
-                          fontSize: 12,
-                          padding: "2px 8px",
-                          borderRadius: 6,
-                          background: colors.background,
-                          color: colors.color,
-                        }}
-                      >
-                        {STATUS_LABELS[item.status] ?? item.status}
-                      </span>
-                      {item.review_note && (
-                        <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                          {item.review_note}
-                        </div>
-                      )}
-                    </td>
-                    <td className="muted" style={{ fontSize: 12 }}>
-                      {item.created_at ? item.created_at.slice(0, 10) : "-"}
-                    </td>
-                    <td style={{ minWidth: 160 }}>
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {item.status !== "pending" && (
-                          <button
-                            className="secondary"
-                            type="button"
-                            disabled={busy}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              applyStatus(item.id, "pending", "前端联调：转为待处理");
-                            }}
-                            style={{ fontSize: 12, padding: "4px 8px" }}
-                          >
-                            设为待处理
-                          </button>
-                        )}
-                        {item.status !== "review" && (
-                          <button
-                            className="ghost"
-                            type="button"
-                            disabled={busy}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              applyStatus(item.id, "review", "前端联调：转为待审核");
-                            }}
-                            style={{ fontSize: 12, padding: "4px 8px" }}
-                          >
-                            设为待审核
-                          </button>
-                        )}
-                        {item.status !== "discard" && (
-                          <button
-                            className="ghost"
-                            type="button"
-                            disabled={busy}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              applyStatus(item.id, "discard", "前端联调：标记丢弃");
-                            }}
-                            style={{ fontSize: 12, padding: "4px 8px", color: "var(--muted)" }}
-                          >
-                            标记丢弃
-                          </button>
-                        )}
-                      </div>
-                    </td>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>标题 / 正文</th>
+                  <th>平台 / 作者</th>
+                  <th>关键词 / 来源</th>
+                  <th>评分</th>
+                  <th>技术状态</th>
+                  <th>业务状态</th>
+                  <th>时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={9} style={{ textAlign: "center", padding: 24 }}>加载中…</td>
                   </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                ) : items.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} style={{ textAlign: "center", padding: 24 }} className="muted">暂无数据</td>
+                  </tr>
+                ) : (
+                  items.map((item) => {
+                    const busy = busyId === item.id;
+                    const colors = statusColor(item.status);
+                    const isActive = selectedId === item.id;
+                    return (
+                      <tr
+                        key={item.id}
+                        onClick={() => setSelectedId(item.id)}
+                        style={{ background: isActive ? "#f6fbff" : "transparent", cursor: "pointer" }}
+                      >
+                        <td className="muted" style={{ fontSize: 12 }}>{item.id}</td>
+                        <td style={{ minWidth: 280, maxWidth: 360 }}>
+                          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                            {item.url ? (
+                              <a href={item.url} target="_blank" rel="noreferrer noopener" style={{ color: "var(--brand-2)" }}>
+                                {item.title || "(无标题)"}
+                              </a>
+                            ) : (
+                              item.title || "(无标题)"
+                            )}
+                          </div>
+                          <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                            {(item.content || "").slice(0, 120) || "无正文"}
+                          </div>
+                          <div style={{ marginTop: 8, fontSize: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            <span className="muted">👍 {item.like_count}</span>
+                            <span className="muted">💬 {item.comment_count}</span>
+                            <span className="muted">⭐ {item.collect_count}</span>
+                            {item.is_duplicate && (
+                              <span style={{ background: "#fde2e4", color: "#9d0208", borderRadius: 6, padding: "2px 6px" }}>
+                                重复
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ minWidth: 120 }}>
+                          <div>{PLATFORM_LABELS[item.platform] ?? item.platform}</div>
+                          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{item.author || "-"}</div>
+                        </td>
+                        <td style={{ minWidth: 160 }}>
+                          <div>{item.keyword || "-"}</div>
+                          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                            {SOURCE_CHANNEL_LABELS[item.source_channel] ?? item.source_channel}
+                          </div>
+                        </td>
+                        <td style={{ minWidth: 120, fontSize: 12 }}>
+                          <div>质量 {item.quality_score}</div>
+                          <div>相关 {item.relevance_score}</div>
+                          <div>线索 {item.lead_score}</div>
+                        </td>
+                        <td style={{ minWidth: 150, fontSize: 12 }}>
+                          <div>解析: {item.parse_status}</div>
+                          <div style={{ marginTop: 6 }}>风险: {RISK_LABELS[item.risk_status] ?? item.risk_status}</div>
+                          <div className="muted" style={{ marginTop: 6 }}>
+                            {FILTER_REASON_LABELS[item.filter_reason || ""] ?? item.filter_reason ?? "-"}
+                          </div>
+                        </td>
+                        <td style={{ minWidth: 110 }}>
+                          <span
+                            style={{
+                              fontSize: 12,
+                              padding: "2px 8px",
+                              borderRadius: 6,
+                              background: colors.background,
+                              color: colors.color,
+                            }}
+                          >
+                            {STATUS_LABELS[item.status] ?? item.status}
+                          </span>
+                        </td>
+                        <td className="muted" style={{ fontSize: 12 }}>
+                          {item.created_at ? item.created_at.slice(0, 10) : "-"}
+                        </td>
+                        <td style={{ minWidth: 160 }}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {item.status !== "pending" && (
+                              <button
+                                className="secondary"
+                                type="button"
+                                disabled={busy}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  applyStatus(item.id, "pending", "转为待处理");
+                                }}
+                                style={{ fontSize: 12, padding: "4px 8px" }}
+                              >
+                                设为待处理
+                              </button>
+                            )}
+                            {item.status !== "review" && (
+                              <button
+                                className="ghost"
+                                type="button"
+                                disabled={busy}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  applyStatus(item.id, "review", "转为待审核");
+                                }}
+                                style={{ fontSize: 12, padding: "4px 8px" }}
+                              >
+                                设为待审核
+                              </button>
+                            )}
+                            {item.status !== "discard" && (
+                              <button
+                                className="ghost"
+                                type="button"
+                                disabled={busy}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  applyStatus(item.id, "discard", "标记丢弃");
+                                }}
+                                style={{ fontSize: 12, padding: "4px 8px", color: "var(--muted)" }}
+                              >
+                                标记丢弃
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
-          <aside style={{ padding: 16, minHeight: 520, background: "#fafbfd" }}>
-            <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>详情面板</h3>
+
+          <aside style={{ padding: 16, minHeight: 720, background: "#fafbfd", overflowY: "auto" }}>
+            <h3 style={{ margin: "0 0 12px", fontSize: 16 }}>详情与改写</h3>
             {!selectedItem ? (
               <div className="muted" style={{ fontSize: 13 }}>请选择左侧一条内容查看详情。</div>
+            ) : detailLoading ? (
+              <div className="muted" style={{ fontSize: 13 }}>详情加载中...</div>
             ) : (
-              <div style={{ display: "grid", gap: 10, fontSize: 13 }}>
+              <div style={{ display: "grid", gap: 12, fontSize: 13 }}>
                 <div>
                   <div className="muted" style={{ marginBottom: 4 }}>标题</div>
                   <div style={{ fontWeight: 700 }}>{selectedItem.title || "(无标题)"}</div>
@@ -447,52 +558,109 @@ export function InboxPage() {
                     {selectedItem.content || "无正文"}
                   </div>
                 </div>
+
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <div>
-                    <div className="muted">平台</div>
-                    <div>{PLATFORM_LABELS[selectedItem.platform] ?? selectedItem.platform}</div>
-                  </div>
-                  <div>
-                    <div className="muted">作者</div>
-                    <div>{selectedItem.author || "-"}</div>
-                  </div>
-                  <div>
-                    <div className="muted">关键词</div>
-                    <div>{selectedItem.keyword || "-"}</div>
-                  </div>
-                  <div>
-                    <div className="muted">来源ID</div>
-                    <div>{selectedItem.source_id || "-"}</div>
-                  </div>
-                  <div>
-                    <div className="muted">解析状态</div>
-                    <div>{selectedItem.parse_status}</div>
-                  </div>
-                  <div>
-                    <div className="muted">风险状态</div>
-                    <div>{RISK_LABELS[selectedItem.risk_status] ?? selectedItem.risk_status}</div>
-                  </div>
+                  <div><div className="muted">平台</div><div>{PLATFORM_LABELS[selectedItem.platform] ?? selectedItem.platform}</div></div>
+                  <div><div className="muted">作者</div><div>{selectedItem.author || "-"}</div></div>
+                  <div><div className="muted">关键词</div><div>{selectedItem.keyword || "-"}</div></div>
+                  <div><div className="muted">来源ID</div><div>{selectedItem.source_id || "-"}</div></div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                  <div style={{ background: "#fff", border: "1px solid var(--border)", borderRadius: 8, padding: 8 }}>
-                    <div className="muted" style={{ fontSize: 12 }}>质量</div>
-                    <div style={{ fontWeight: 700 }}>{selectedItem.quality_score}</div>
-                  </div>
-                  <div style={{ background: "#fff", border: "1px solid var(--border)", borderRadius: 8, padding: 8 }}>
-                    <div className="muted" style={{ fontSize: 12 }}>相关</div>
-                    <div style={{ fontWeight: 700 }}>{selectedItem.relevance_score}</div>
-                  </div>
-                  <div style={{ background: "#fff", border: "1px solid var(--border)", borderRadius: 8, padding: 8 }}>
-                    <div className="muted" style={{ fontSize: 12 }}>线索</div>
-                    <div style={{ fontWeight: 700 }}>{selectedItem.lead_score}</div>
-                  </div>
-                </div>
-                <div>
-                  <div className="muted" style={{ marginBottom: 4 }}>过滤原因</div>
-                  <div>{FILTER_REASON_LABELS[selectedItem.filter_reason || ""] ?? selectedItem.filter_reason ?? "-"}</div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
+
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <select
+                    value={rewritePlatform}
+                    onChange={(e) => setRewritePlatform(e.target.value as "xiaohongshu" | "douyin" | "zhihu")}
+                    style={{ width: 140 }}
+                  >
+                    <option value="xiaohongshu">改写-小红书</option>
+                    <option value="douyin">改写-抖音</option>
+                    <option value="zhihu">改写-知乎</option>
+                  </select>
+                  <button className="secondary" type="button" disabled={rewriteLoading} onClick={onRewrite}>
+                    {rewriteLoading ? "改写中..." : "单条一键送改写"}
+                  </button>
                   <button className="ghost" type="button" onClick={() => selectedItem.url && window.open(selectedItem.url, "_blank", "noreferrer")}>打开原链接</button>
+                </div>
+
+                {(rewriteCopies.length > 0 || variantsFromLatest.length > 0) && (
+                  <div className="card" style={{ padding: 10 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>三版文案</div>
+                    {(rewriteCopies.length > 0 ? rewriteCopies : variantsFromLatest).map((copy, idx) => (
+                      <div key={`${copy.variant_name}-${idx}`} style={{ marginBottom: 10, border: "1px solid var(--border)", borderRadius: 8, padding: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                          <div>{copy.variant_name} · {copy.title}</div>
+                          <button
+                            className="ghost"
+                            type="button"
+                            onClick={() => navigator.clipboard.writeText(`${copy.title}\n\n${copy.content}`)}
+                            style={{ fontSize: 12, padding: "4px 8px" }}
+                          >
+                            复制
+                          </button>
+                        </div>
+                        <div className="muted" style={{ marginTop: 4 }}>
+                          风险：{copy.compliance?.risk_level || "low"} / 分数：{copy.compliance?.risk_score ?? "-"}
+                          {copy.compliance?.publish_blocked ? " / 已阻断发布" : ""}
+                        </div>
+                        <textarea readOnly value={copy.content || ""} style={{ marginTop: 6 }} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="card" style={{ padding: 10 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>历史版本（对比与回滚）</div>
+                  {generationTasks.length === 0 ? (
+                    <div className="muted">暂无改写记录</div>
+                  ) : (
+                    <>
+                      {!!detail?.generation_variant_stats?.length && (
+                        <div style={{ marginBottom: 10, display: "grid", gap: 6 }}>
+                          <div className="muted">variant 采纳率</div>
+                          {detail.generation_variant_stats.map((row) => (
+                            <div key={row.variant_name} style={{ fontSize: 12 }}>
+                              {row.variant_name}: {row.adopted}/{row.total} ({row.adoption_rate}%)
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {generationTasks.map((task: CollectGenerationTask) => (
+                          <div key={task.generation_task_id} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 8 }}>
+                            <div className="muted" style={{ marginBottom: 6 }}>
+                              #{task.generation_task_id} · {task.platform} · {task.created_at ? new Date(task.created_at).toLocaleString() : "-"} · 采纳状态: {task.adoption_status || "pending"}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button className="ghost" type="button" onClick={() => setCompareLeftId(task.generation_task_id)}>设为左侧对比</button>
+                              <button className="ghost" type="button" onClick={() => setCompareRightId(task.generation_task_id)}>设为右侧对比</button>
+                              <button
+                                className="secondary"
+                                type="button"
+                                disabled={adoptLoading === task.generation_task_id || adoptedTaskId === task.generation_task_id}
+                                onClick={() => onAdoptVersion(task.generation_task_id)}
+                              >
+                                {adoptLoading === task.generation_task_id ? "处理中..." : adoptedTaskId === task.generation_task_id ? "当前生效" : "一键回滚到此版本"}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                          <div>
+                            <div className="muted" style={{ marginBottom: 4 }}>左侧版本 #{compareLeft?.generation_task_id || "-"}</div>
+                            <textarea readOnly value={compareLeft?.output_text || ""} placeholder="选择左侧版本进行对比" />
+                          </div>
+                          <div>
+                            <div className="muted" style={{ marginBottom: 4 }}>右侧版本 #{compareRight?.generation_task_id || "-"}</div>
+                            <textarea readOnly value={compareRight?.output_text || ""} placeholder="选择右侧版本进行对比" />
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}

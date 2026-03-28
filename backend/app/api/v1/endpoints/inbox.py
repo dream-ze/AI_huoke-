@@ -64,6 +64,7 @@ def list_material_inbox(
         is_duplicate=is_duplicate,
         skip=skip,
         limit=limit,
+        include_source_content=True,
     )
     return [_to_row(item) for item in items]
 
@@ -123,7 +124,12 @@ def get_material_inbox_detail(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    item = AcquisitionIntakeService.get_inbox_item(db, current_user["user_id"], inbox_id)
+    item = AcquisitionIntakeService.get_inbox_item(
+        db=db,
+        owner_id=current_user["user_id"],
+        inbox_id=inbox_id,
+        include_source_content=True,
+    )
     if item is None:
         raise HTTPException(status_code=404, detail="收件箱内容不存在")
     return _to_row(item)

@@ -1,0 +1,251 @@
+本服务为 **AI获客系统** 提供小红书内容采集能力，以 HTTP API 形式对外暴露。
+> 仓库地址：<https://github.com/dream-ze/AI_huoke-/tree/main>
+
+---
+
+## 1. 环境要求
+
+| 项目 | 要求 |
+|------|------|
+| Python | >= 3.10 |
+| 依赖管理 | pip |
+| 浏览器引擎 | Playwright Chromium |
+| 默认端口 | **8005** |
+
+## 2. 快速部署
+
+```bash
+# 1) 安装依赖
+pip install -r requirements.txt
+
+# 2) 安装 Playwright 浏览器
+playwright install chromium
+
+# 3) 首次登录 —— 保存小红书登录态（弹出浏览器手动扫码）
+python save_login.py
+
+# 4) 启动服务
+uvicorn app.main:app --host 0.0.0.0 --port 8005
+```
+
+启动后访问 `http://<服务IP>:8005/docs` 查看 Swagger 文档。
+
+## 3. 环境变量（可选）
+
+在项目根目录创建 `.env` 文件：
+
+```envAPP_PORT=8005
+BROWSER_HEADLESS=false
+BROWSER_TIMEOUT_MS=60000
+BROWSER_VIEWPORT_WIDTH=1440
+BROWSER_VIEWPORT_HEIGHT=900
+```
+
+---
+
+## 4. API 接口一览
+
+### 4.1 健康检查
+
+```
+GET /health
+```
+
+**响应示例：**
+```json
+{
+  "success": true,
+  "message": "ok",
+  "browser_ready": true,
+  "login_state_ready": true,
+  "storage_state_exists": true
+}
+```
+
+### 4.2 平台列表
+
+```
+GET /api/platforms
+```
+
+**响应示例：**
+```json
+[
+  {
+    "platform": "xiaohongshu",
+    "enabled": true,
+    "capabilities": ["search", "detail"],
+    "need_login": true
+  }
+]
+```
+
+### 4.3 关键词采集（核心接口）
+
+```
+POST /api/collect/run
+Content-Type: application/json
+```
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| platform | string | 是 | — | 固定 `"xiaohongshu"` |
+| keyword | string | 是 | — | 搜索关键词（1-100字符） |
+| max_items | int | 否 | 10 | 最大采集数量（1-50） |
+| need_detail | bool | 否 | true | 是否补采详情页 |
+| need_comments | bool | 否 | false | 是否补采评论数 |
+| dedup | bool | 否 | true | 是否对结果去重 |
+| timeout_sec | int | 否 | 120 | 采集总超时（30-300秒） |
+
+**请求示例：**
+```json
+{
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "max_items": 10,
+  "need_detail": true,
+  "need_comments": true,
+  "dedup": true,
+  "timeout_sec": 180
+}
+```
+
+**响应结构：**
+```json
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "keyword": "贷款",
+  "task_id": "uuid-xxx",
+  "count": 10,
+  "items": [ /* ContentItem 数组，见下方字段说明 */ ],
+  "stats": {
+    "discovered": 12,
+    "list_success": 10,
+    "detail_attempted": 10,
+    "detail_success": 9,
+    "detail_failed": 1,
+    "dropped": 0
+  },
+  "message": "",
+  "request_id": "uuid-xxx",
+  "cost_ms": 25000,
+  "collected_at": "2026-03-27T10:00:00"
+}
+```
+
+### 4.4 单篇详情采集
+
+```
+POST /api/collect/detail
+Content-Type: application/json
+```
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| platform | string | 是 | 固定 `"xiaohongshu"` |
+| url | string | 二选一 | 笔记链接 |
+| source_id | string | 二选一 | 笔记 source_id |
+
+> `url` 和 `source_id` 至少传一个。
+
+**响应结构：**
+```json
+{
+  "success": true,
+  "platform": "xiaohongshu",
+  "url": "https://www.xiaohongshu.com/explore/xxx",
+  "source_id": "xxx",
+  "data": { /* ContentItem */ },
+  "message": "",
+  "raw_data": {}
+}
+```
+
+---
+
+## 5. ContentItem 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| source_platform | string | 来源平台 |
+| source_id | string | 平台侧唯一ID |
+| url | string | 笔记链接 |
+| title | string | 标题 |
+| snippet | string | 摘要 |
+| content_text | string | 正文全文（详情页补采） |
+| cover_url | string | 封面图 |
+| author_name | string | 作者昵称 |
+| author_id | string | 作者ID |
+| author_home_url | string | 作者主页 |
+| like_count | int | 点赞数 |
+| comment_count | int | 评论数 |
+| share_count | int | 分享数 |
+| collect_count | int | 收藏数 |
+| image_urls | list | 图片列表 |
+| image_count | int | 图片数量 |
+| publish_time | string | 发布时间 |
+| tags | list | 标签列表 |
+| parse_stage | string | `list` / `detail` |
+| parse_status | string | `list_only` / `detail_success` / `detail_failed` / `dropped` |
+| engagement_score | float | 互动评分 |
+| quality_score | float | 质量评分 |
+| lead_score | float | 获客线索评分 |
+| risk_level | string | 风险等级 `low`/`medium`/`high` |
+| has_contact_hint | bool | 是否包含联系方式线索 |
+| collected_at | datetime | 采集时间 |
+
+---
+
+## 6. Python 客户端接入示例
+
+项目已提供封装好的客户端 `scripts/ai_huoke_integration_client.py`，可直接使用：
+
+```python
+from scripts.ai_huoke_integration_client import BrowserCollectorClient
+
+client = BrowserCollectorClient(base_url="http://127.0.0.1:8005", timeout=240)
+
+# 健康检查
+print(client.health())
+
+# 关键词采集
+result = client.collect_content(
+    keyword="贷款",
+    max_items=10,
+    need_detail=True,
+    need_comments=True,
+    dedup=True,
+    timeout_sec=180,
+)
+print(f"采集到 {result['count']} 条内容")
+
+# 单篇详情
+detail = client.collect_detail(url="https://www.xiaohongshu.com/explore/xxx")
+print(detail)
+```
+
+### 其他语言接入
+
+只需向 `http://<服务IP>:8005/api/collect/run` 发送 POST JSON 请求即可，无语言限制。
+
+**cURL 示例：**
+```bash
+curl -X POST http://127.0.0.1:8005/api/collect/run \
+  -H "Content-Type: application/json" \
+  -d '{"platform":"xiaohongshu","keyword":"贷款","max_items":5}'
+```
+
+---
+
+## 7. 注意事项
+
+1. **登录态**：首次部署必须执行 `python save_login.py` 完成小红书扫码登录，生成 `xiaohongshu_state.json`
+2. **超时设置**：采集为同步阻塞调用，建议客户端 timeout ≥ `timeout_sec + 60s`
+3. **频率控制**：服务内部已做页面级限速，无需外部额外限流
+4. **去重**：`dedup=true` 时按 `source_id` 去重，重复内容不计入 `count`
+5. **部署建议**：生产环境建议 `BROWSER_HEADLESS=true`，并通过 systemd 管理进程（参考 `browser_collector.service`）

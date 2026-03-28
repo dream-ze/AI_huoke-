@@ -10,6 +10,41 @@ const CONTENT_LIMITS: Record<string, number> = {
   xianyu: 2000,
 };
 
+type RewriteCopy = {
+  variant_name: string;
+  title: string;
+  content: string;
+  hashtags: string[];
+  compliance?: {
+    corrected?: boolean;
+    is_compliant?: boolean;
+    risk_level?: string;
+    risk_score?: number;
+    suggestions?: string[];
+  };
+};
+
+type RewriteResult = {
+  rewritten: string;
+  llm_output?: string;
+  tags?: {
+    topic_tag?: string;
+    intent_tag?: string;
+    crowd_tag?: string;
+    risk_tag?: string;
+    heat_score?: number;
+    reason?: string;
+  } | null;
+  copies: RewriteCopy[];
+  selected_variant?: string | null;
+  compliance?: {
+    corrected?: boolean;
+    is_compliant?: boolean;
+    risk_level?: string;
+    risk_score?: number;
+  } | null;
+};
+
 export function MaterialsPage() {
   const [items, setItems] = useState<CollectItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -23,6 +58,7 @@ export function MaterialsPage() {
   const [rewriting, setRewriting] = useState(false);
   const [rewritePlatform, setRewritePlatform] = useState<"xiaohongshu" | "douyin" | "zhihu">("xiaohongshu");
   const [rewrittenText, setRewrittenText] = useState("");
+  const [rewriteResult, setRewriteResult] = useState<RewriteResult | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [platform, setPlatform] = useState("xiaohongshu");
@@ -91,6 +127,7 @@ export function MaterialsPage() {
     setDetailLoading(true);
     setActionMessage("");
     setRewrittenText("");
+    setRewriteResult(null);
     try {
       const data = await getCollectDetail(id);
       setDetail(data);
@@ -127,6 +164,14 @@ export function MaterialsPage() {
     try {
       const data = await rewriteCollect(detail.id, rewritePlatform);
       setRewrittenText(data?.rewritten || "");
+      setRewriteResult({
+        rewritten: data?.rewritten || "",
+        llm_output: data?.llm_output || "",
+        tags: data?.tags || null,
+        copies: data?.copies || [],
+        selected_variant: data?.selected_variant || null,
+        compliance: data?.compliance || null,
+      });
       setActionMessage("改写完成");
       setActiveTab("generation");
     } catch (err: any) {
@@ -354,9 +399,73 @@ export function MaterialsPage() {
 
             {activeTab === "generation" && (
               <div className="grid" style={{ gap: 8 }}>
+                {rewriteResult?.tags && (
+                  <div className="card" style={{ padding: 10 }}>
+                    <div className="muted" style={{ marginBottom: 6 }}>本次标签识别</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 13 }}>
+                      <span>topic: {rewriteResult.tags.topic_tag || "-"}</span>
+                      <span>intent: {rewriteResult.tags.intent_tag || "-"}</span>
+                      <span>crowd: {rewriteResult.tags.crowd_tag || "-"}</span>
+                      <span>risk: {rewriteResult.tags.risk_tag || "-"}</span>
+                      <span>heat: {rewriteResult.tags.heat_score ?? "-"}</span>
+                    </div>
+                    {rewriteResult.tags.reason && <div className="muted" style={{ marginTop: 6 }}>{rewriteResult.tags.reason}</div>}
+                  </div>
+                )}
+
+                {(rewriteResult?.copies || []).length > 0 && (
+                  <div className="grid" style={{ gap: 10 }}>
+                    <h4 style={{ margin: 0 }}>本次三版文案（已做合规复检）</h4>
+                    {rewriteResult?.copies.map((copy, index) => {
+                      const compliant = copy.compliance?.is_compliant;
+                      const riskLevel = copy.compliance?.risk_level || "low";
+                      const riskColor =
+                        riskLevel === "high" ? "#b00020" : riskLevel === "medium" ? "#b26a00" : "#1b5e20";
+                      const riskBg =
+                        riskLevel === "high" ? "#ffebee" : riskLevel === "medium" ? "#fff8e1" : "#e8f5e9";
+                      return (
+                        <div key={`${copy.variant_name}-${index}`} className="card" style={{ padding: 10 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <div style={{ fontWeight: 700 }}>{copy.variant_name} · {copy.title}</div>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                              <span style={{ background: riskBg, color: riskColor, borderRadius: 8, padding: "2px 8px", fontSize: 12 }}>
+                                {compliant ? "合规" : "需复核"} · {riskLevel}
+                              </span>
+                              {copy.compliance?.corrected && (
+                                <span style={{ background: "#e3f2fd", color: "#1565c0", borderRadius: 8, padding: "2px 8px", fontSize: 12 }}>
+                                  已自动降风险
+                                </span>
+                              )}
+                              <button
+                                className="ghost"
+                                type="button"
+                                onClick={() => navigator.clipboard.writeText(`${copy.title}\n\n${copy.content}`)}
+                                style={{ fontSize: 12, padding: "4px 8px" }}
+                              >
+                                复制
+                              </button>
+                            </div>
+                          </div>
+                          {!!copy.hashtags?.length && (
+                            <div className="muted" style={{ marginTop: 6 }}>
+                              {copy.hashtags.join(" ")}
+                            </div>
+                          )}
+                          <textarea readOnly value={copy.content || ""} style={{ marginTop: 8 }} />
+                          {!!copy.compliance?.suggestions?.length && (
+                            <div className="muted" style={{ marginTop: 6 }}>
+                              合规建议：{copy.compliance?.suggestions?.join("；")}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {rewrittenText && (
                   <div className="grid" style={{ gap: 8 }}>
-                    <h4 style={{ margin: 0 }}>本次改写</h4>
+                    <h4 style={{ margin: 0 }}>推荐发布版</h4>
                     <textarea readOnly value={rewrittenText} />
                   </div>
                 )}

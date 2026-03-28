@@ -149,6 +149,24 @@ export async function rewriteCollect(id: number, targetPlatform: "xiaohongshu" |
   return {
     ...data,
     rewritten: data?.output_text || "",
+    llm_output: data?.llm_output || "",
+    tags: data?.tags || null,
+    copies: Array.isArray(data?.copies) ? data.copies : [],
+    selected_variant: data?.selected_variant || null,
+    compliance: data?.compliance || null,
+  };
+}
+
+export async function adoptGenerationVersion(materialId: number, generationTaskId: number, reason?: string) {
+  const { data } = await api.post(`/api/v2/materials/${materialId}/generation/${generationTaskId}/adopt`, {
+    adopt: true,
+    reason,
+  });
+  return data as {
+    material_id: number;
+    generation_task_id: number;
+    adoption_status: string;
+    message: string;
   };
 }
 
