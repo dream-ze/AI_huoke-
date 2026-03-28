@@ -326,3 +326,251 @@ export type LeadItem = {
   note?: string;
   created_at: string;
 };
+
+// ═══════════ MVP 核心类型 ═══════════
+
+export interface KnowledgeLibraryStat {
+  library_type: string;
+  label: string;
+  count: number;
+}
+
+export interface KnowledgeChunk {
+  id: number;
+  knowledge_id: number;
+  chunk_type: string;
+  chunk_index: number;
+  content: string;
+  metadata_json?: string;
+  has_embedding: boolean;
+  token_count: number;
+  created_at?: string;
+}
+
+export type MvpInboxItem = {
+  id: number;
+  platform: string;
+  title: string;
+  content: string;
+  author?: string;
+  source_url?: string;
+  source_type: string;
+  keyword?: string;
+  risk_level: string;
+  duplicate_status: string;
+  score: number;
+  tech_status: string;
+  biz_status: string;
+  created_at: string;
+};
+
+export type MvpMaterialItem = {
+  id: number;
+  platform: string;
+  title: string;
+  content: string;
+  source_url?: string;
+  like_count: number;
+  comment_count: number;
+  author?: string;
+  is_hot: boolean;
+  risk_level: string;
+  use_count: number;
+  source_inbox_id?: number;
+  tags: MvpTag[];
+  created_at: string;
+};
+
+export type MvpTag = {
+  id: number;
+  name: string;
+  type: string;  // platform / audience / style / topic / scenario / content_type
+  created_at: string;
+};
+
+export type MvpKnowledgeItem = {
+  id: number;
+  title: string;
+  content: string;
+  category?: string;
+  platform?: string;
+  audience?: string;
+  style?: string;
+  source_material_id?: number;
+  use_count: number;
+  created_at: string;
+};
+
+export type MvpGenerateRequest = {
+  source_type: string;  // inbox / material / manual
+  source_id?: number;
+  manual_text?: string;
+  target_platform: string;
+  audience: string;
+  style: string;
+  enable_knowledge: boolean;
+  enable_rewrite: boolean;
+  version_count: number;
+  extra_requirements?: string;
+};
+
+export type MvpGenerationVersion = {
+  title: string;
+  text: string;
+  version: string;
+  style_label: string;
+};
+
+export type MvpGenerateResult = {
+  versions: MvpGenerationVersion[];
+  tags: {
+    platform: string;
+    audience: string;
+    style: string;
+    scenario: string;
+    content_type: string;
+  };
+};
+
+export type MvpComplianceResult = {
+  risk_level: string;
+  risk_points: Array<{
+    keyword: string;
+    reason: string;
+    suggestion: string;
+  }>;
+  suggestions: string[];
+  rewritten_text: string;
+};
+
+export type MvpFinalGenerateResult = {
+  versions: MvpGenerationVersion[];
+  selected_version?: MvpGenerationVersion;
+  compliance?: MvpComplianceResult;
+  final_text?: string;
+  tags: {
+    platform: string;
+    audience: string;
+    style: string;
+    scenario: string;
+    content_type: string;
+  };
+};
+
+export type MvpStatsOverview = {
+  inbox_pending: number;
+  material_count: number;
+  knowledge_count: number;
+  today_generation_count: number;
+  risk_content_count: number;
+  recent_generations: Array<{
+    id: number;
+    title: string;
+    version: string;
+    created_at: string;
+  }>;
+  recent_materials: Array<{
+    id: number;
+    title: string;
+    platform: string;
+    created_at: string;
+  }>;
+};
+
+export type MvpHotRewriteResult = {
+  structure_analysis: {
+    hook: string;
+    pain_point: string;
+    scenario: string;
+    solution: string;
+    cta: string;
+  };
+  versions: MvpGenerationVersion[];
+};
+
+export type MvpPaginatedResponse<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+};
+
+// ===== 全流程生成接口类型 =====
+export interface FullPipelineRequest {
+  platform: string;
+  account_type: string;
+  audience: string;
+  topic: string;
+  goal?: string;
+  model?: string;  // "volcano" | "local"
+  extra_requirements?: string;
+  tone?: string;  // 新增
+}
+
+export interface FullPipelineVersion {
+  style: string;  // professional | casual | seeding
+  text: string;
+  compliance?: {
+    risk_level: string;
+    risk_points: Array<{ keyword: string; reason: string; source: string }>;
+    suggestions: string[];
+    auto_fixed_text?: string;
+  };
+}
+
+export interface FullPipelineRiskPoint {
+  keyword: string;
+  reason: string;
+  source: string;
+}
+
+export interface FullPipelineCompliance {
+  risk_level: string;
+  risk_points: FullPipelineRiskPoint[];
+  suggestions: string[];
+  auto_fixed_text?: string;
+  llm_analysis?: string;
+}
+
+export interface FullPipelineResponse {
+  versions: FullPipelineVersion[];
+  compliance: FullPipelineCompliance;
+  final_text: string;
+  rewrite_base?: string;
+  knowledge_context_used: boolean;
+}
+
+// ── 采集中心类型 ──────────────────────────────────────────
+
+export interface CollectorSearchRequest {
+  platform: string;
+  keyword: string;
+  count: number;
+  fetch_detail?: boolean;
+  fetch_comments?: boolean;
+  source_type?: string;
+}
+
+export interface CollectorResult {
+  id: number;
+  title: string;
+  platform: string;
+  author?: string;
+  content?: string;
+  summary?: string;
+  tags?: string[];
+  risk_level?: string;  // low / medium / high
+  ingest_status: string;  // pending / processing / completed
+  source_url?: string;
+  created_at: string;
+}
+
+export interface DashboardStats {
+  today_collected: number;
+  today_knowledge_ingested: number;
+  today_generated: number;
+  risk_content_count: number;
+  total_knowledge: number;
+  total_materials: number;
+  date: string;
+}

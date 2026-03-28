@@ -13,6 +13,16 @@ export default defineConfig({
     port: 4173,
     strictPort: true
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          axios: ['axios'],
+        }
+      }
+    }
+  },
   test: {
     globals: true,
     environment: "jsdom",

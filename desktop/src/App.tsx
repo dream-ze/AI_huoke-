@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   clearToken,
@@ -7,21 +7,31 @@ import {
   saveRedirectPath,
 } from "./lib/auth";
 import { AppLayout } from "./components/AppLayout";
-import { LoginPage } from "./pages/LoginPage";
-import { DashboardPage } from "./pages/dashboard/DashboardPage";
-import { CollectCenterPage } from "./pages/collect-center/CollectCenterPage";
-import { InboxPage } from "./pages/inbox/InboxPage";
-import { MaterialsPage } from "./pages/materials/MaterialsPage";
-import { AIWorkbenchPage } from "./pages/ai-workbench/AIWorkbenchPage";
-import { AIHubPage } from "./pages/ai-hub/AIHubPage";
-import { CompliancePage } from "./pages/CompliancePage";
-import { CustomersPage } from "./pages/CustomersPage";
-import { PublishPage } from "./pages/PublishPage";
-import { LeadsPage } from "./pages/leads/LeadsPage";
-import { SetupPage } from "./pages/SetupPage";
-import { InsightPage } from "./pages/InsightPage";
-import { OpsPage } from "./pages/OpsPage";
-import { WorkflowPage } from "./pages/WorkflowPage";
+
+// 懒加载页面组件
+const LoginPage = React.lazy(() => import("./pages/LoginPage").then(m => ({ default: m.LoginPage })));
+const DashboardPage = React.lazy(() => import("./pages/dashboard/DashboardPage").then(m => ({ default: m.DashboardPage })));
+const CollectCenterPage = React.lazy(() => import("./pages/collect-center/CollectCenterPage").then(m => ({ default: m.CollectCenterPage })));
+const AIHubPage = React.lazy(() => import("./pages/ai-hub/AIHubPage").then(m => ({ default: m.AIHubPage })));
+const KnowledgePage = React.lazy(() => import("./pages/knowledge/KnowledgePage"));
+const CustomersPage = React.lazy(() => import("./pages/CustomersPage").then(m => ({ default: m.CustomersPage })));
+const LeadsPage = React.lazy(() => import("./pages/leads/LeadsPage").then(m => ({ default: m.LeadsPage })));
+const SetupPage = React.lazy(() => import("./pages/SetupPage").then(m => ({ default: m.SetupPage })));
+
+// MVP 页面（核心）
+const MvpInboxPage = React.lazy(() => import("./pages/inbox/MvpInboxPage"));
+const MvpMaterialsPage = React.lazy(() => import("./pages/materials/MvpMaterialsPage"));
+const MvpWorkbenchPage = React.lazy(() => import("./pages/ai-workbench/MvpWorkbenchPage"));
+
+// 旧版页面（暂时保留import，路由已注释）
+// const InboxPage = React.lazy(() => import("./pages/inbox/InboxPage").then(m => ({ default: m.InboxPage })));
+// const MaterialsPage = React.lazy(() => import("./pages/materials/MaterialsPage").then(m => ({ default: m.MaterialsPage })));
+// const AIWorkbenchPage = React.lazy(() => import("./pages/ai-workbench/AIWorkbenchPage").then(m => ({ default: m.AIWorkbenchPage })));
+// const PublishPage = React.lazy(() => import("./pages/PublishPage").then(m => ({ default: m.PublishPage })));
+// const InsightPage = React.lazy(() => import("./pages/InsightPage").then(m => ({ default: m.InsightPage })));
+// const OpsPage = React.lazy(() => import("./pages/OpsPage").then(m => ({ default: m.OpsPage })));
+// const WorkflowPage = React.lazy(() => import("./pages/WorkflowPage").then(m => ({ default: m.WorkflowPage })));
+// const MvpKnowledgePage = React.lazy(() => import("./pages/knowledge/MvpKnowledgePage"));
 
 // 是否运行在 Electron 中
 const isElectron = typeof window !== "undefined" && !!(window as any).desktop?.isElectron;
@@ -124,39 +134,60 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/*"
-        element={
-          <Protected>
-            <AppLayout
-              onLogout={() => {
-                clearToken("manual");
-                navigate("/login");
-              }}
-            >
-              <Routes>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/workflow" element={<WorkflowPage />} />
-                <Route path="/collect-center" element={<CollectCenterPage />} />
-                <Route path="/inbox" element={<InboxPage />} />
-                <Route path="/materials" element={<MaterialsPage />} />
-                <Route path="/insight" element={<InsightPage />} />
-                <Route path="/ai-hub" element={<AIHubPage />} />
-                <Route path="/ai-workbench" element={<AIWorkbenchPage />} />
-                <Route path="/compliance" element={<CompliancePage />} />
-                <Route path="/leads" element={<LeadsPage />} />
-                <Route path="/customers" element={<CustomersPage />} />
-                <Route path="/publish" element={<PublishPage />} />
-                <Route path="/ops" element={<OpsPage />} />
-              </Routes>
-            </AppLayout>
-          </Protected>
-        }
-      />
-    </Routes>
+    <Suspense fallback={
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', color: '#8B7355' }}>
+        加载中...
+      </div>
+    }>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/*"
+          element={
+            <Protected>
+              <AppLayout
+                onLogout={() => {
+                  clearToken("manual");
+                  navigate("/login");
+                }}
+              >
+                <Routes>
+                  {/* 默认重定向到 AI中枢 */}
+                  <Route path="/" element={<Navigate to="/ai-hub" replace />} />
+                  
+                  {/* === 内容生产 === */}
+                  <Route path="/ai-hub" element={<AIHubPage />} />
+                  <Route path="/collect-center" element={<CollectCenterPage />} />
+                  <Route path="/mvp-workbench" element={<MvpWorkbenchPage />} />
+                  <Route path="/knowledge" element={<KnowledgePage />} />
+                  
+                  {/* === 内容管理 === */}
+                  <Route path="/mvp-inbox" element={<MvpInboxPage />} />
+                  <Route path="/mvp-materials" element={<MvpMaterialsPage />} />
+                  
+                  {/* === 业务管理 === */}
+                  <Route path="/leads" element={<LeadsPage />} />
+                  <Route path="/customers" element={<CustomersPage />} />
+                  
+                  {/* === 管理层 === */}
+                  <Route path="/dashboard" element={<DashboardPage />} />
+                  
+                  {/* === 旧版路由（已注释） === */}
+                  {/* <Route path="/inbox" element={<InboxPage />} /> */}
+                  {/* <Route path="/materials" element={<MaterialsPage />} /> */}
+                  {/* <Route path="/ai-workbench" element={<AIWorkbenchPage />} /> */}
+                  {/* <Route path="/mvp-knowledge" element={<MvpKnowledgePage />} /> */}
+                  {/* <Route path="/publish" element={<PublishPage />} /> */}
+                  {/* <Route path="/insight" element={<InsightPage />} /> */}
+                  {/* <Route path="/workflow" element={<WorkflowPage />} /> */}
+                  {/* <Route path="/ops" element={<OpsPage />} /> */}
+                </Routes>
+              </AppLayout>
+            </Protected>
+          }
+        />
+      </Routes>
+    </Suspense>
   );
 }
 

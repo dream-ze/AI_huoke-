@@ -18,11 +18,13 @@ from app.models import (
     KnowledgeChunk,
     KnowledgeDocument,
     MaterialItem,
+    MvpKnowledgeItem,
     NormalizedContent,
     PromptTemplate,
     Rule,
     SourceContent,
 )
+from app.services.mvp_compliance_service import MvpComplianceService
 from app.services.compliance_service import ComplianceService
 from app.collector.services.browser_client import BrowserCollectorClient
 
@@ -102,6 +104,50 @@ class AcquisitionIntakeService:
         r"^(https?://\S+)$",
         r"^(#\S+\s*){1,8}$",
     )
+
+    # MVP知识库 - topic主题抽取规则
+    _MVP_TOPIC_RULES: list[tuple[str, tuple[str, ...]]] = [
+        ("loan", ("贷款", "借贷", "额度", "放款", "审批")),
+        ("credit", ("征信", "信用报告", "信用记录", "央行征信")),
+        ("online_loan", ("网贷", "花呗", "借呗", "信用卡套现", "网络借贷")),
+        ("housing_fund", ("公积金", "住房公积金", "公积金贷款")),
+    ]
+
+    # MVP知识库 - audience人群抽取规则
+    _MVP_AUDIENCE_RULES: list[tuple[str, tuple[str, ...]]] = [
+        ("bad_credit", ("征信花", "征信不好", "征信差", "逾期")),
+        ("high_debt", ("负债高", "负债率", "以贷养贷", "欠款多")),
+        ("office_worker", ("上班族", "打工人", "工薪", "月薪", "工资")),
+        ("self_employed", ("个体户", "个体", "做生意", "老板", "经营")),
+    ]
+
+    # MVP知识库 - content_type内容类型推断规则
+    _MVP_CONTENT_TYPE_RULES: list[tuple[str, tuple[str, ...]]] = [
+        ("案例", ("案例", "经历", "分享", "真实")),
+        ("知识", ("知识", "科普", "了解", "什么是")),
+        ("规则", ("注意", "避免", "风险", "小心", "警惕")),
+    ]
+
+    # MVP知识库 - opening_type开头方式推断规则
+    _MVP_OPENING_TYPE_RULES: list[tuple[str, tuple[str, ...]]] = [
+        ("提问", ("吗", "呢", "为什么")),
+        ("故事", ("我", "朋友", "客户", "遇到")),
+        ("痛点", ("很多人", "大部分", "别再")),
+    ]
+
+    # MVP知识库 - cta_style转化方式推断规则
+    _MVP_CTA_RULES: list[tuple[str, tuple[str, ...]]] = [
+        ("私信", ("私信", "DM", "私我")),
+        ("评论", ("评论", "留言", "扣")),
+        ("关注", ("关注", "收藏", "点赞")),
+    ]
+
+    # MVP知识库 - category分类映射
+    _MVP_CATEGORY_MAP: dict[str, str] = {
+        "案例": "行业案例",
+        "知识": "贷款知识",
+        "规则": "风险提示",
+    }
 
     @staticmethod
     def _to_int(value: Any) -> int:
@@ -808,6 +854,234 @@ class AcquisitionIntakeService:
         return document
 
     @staticmethod
+    def _extract_mvp_topic(text: str) -> str:
+        """MVP知识库 - 提取topic主题"""
+        for label, words in AcquisitionIntakeService._MVP_TOPIC_RULES:
+            if AcquisitionIntakeService._contains_any(text, words):
+                return label
+        return "loan"  # 默认
+
+    @staticmethod
+    def _extract_mvp_audience(text: str) -> str:
+        """MVP知识库 - 提取audience人群"""
+        for label, words in AcquisitionIntakeService._MVP_AUDIENCE_RULES:
+            if AcquisitionIntakeService._contains_any(text, words):
+                return label
+        return "office_worker"  # 默认
+
+    @staticmethod
+    def _infer_mvp_content_type(text: str) -> str:
+        """MVP知识库 - 推断content_type内容类型"""
+        for label, words in AcquisitionIntakeService._MVP_CONTENT_TYPE_RULES:
+            if AcquisitionIntakeService._contains_any(text, words):
+                return label
+        return "知识"  # 默认
+
+    @staticmethod
+    def _infer_mvp_opening_type(text: str) -> str:
+        """MVP知识库 - 推断opening_type开头方式（检查前50字）"""
+        opening = text[:50] if len(text) > 50 else text
+        # 检查是否以问号结尾或含提问关键词
+        if "？" in opening or "?" in opening:
+            return "提问"
+        for label, words in AcquisitionIntakeService._MVP_OPENING_TYPE_RULES:
+            if AcquisitionIntakeService._contains_any(opening, words):
+                return label
+        # 检查是否含数字或百分号
+        if re.search(r"\d+", opening) or "%" in opening or "％" in opening:
+            return "数据"
+        return "痛点"  # 默认
+
+    @staticmethod
+    def _extract_hook_sentence(text: str) -> str:
+        """MVP知识库 - 提取第一个完整句子作为hook_sentence"""
+        if not text:
+            return ""
+        # 找到第一个句号/叹号/问号
+        match = re.search(r"^[^\u3002\uff01\uff1f!?]+[\u3002\uff01\uff1f!?]", text)
+        if match:
+            sentence = match.group(0).strip()
+            return sentence[:100] if len(sentence) > 100 else sentence
+        # 如果没有找到句子结束符，取前100字
+        return text[:100].strip()
+
+    @staticmethod
+    def _infer_mvp_cta_style(text: str) -> str:
+        """MVP知识库 - 推断cta_style转化方式"""
+        for label, words in AcquisitionIntakeService._MVP_CTA_RULES:
+            if AcquisitionIntakeService._contains_any(text, words):
+                return label
+        return "私信"  # 默认
+
+    @staticmethod
+    def _generate_mvp_summary(text: str) -> str:
+        """MVP知识库 - 生成摘要（取前200字）"""
+        if not text:
+            return ""
+        # 去除换行符
+        cleaned = text.replace("\n", " ").replace("\r", " ").strip()
+        if len(cleaned) > 200:
+            return cleaned[:200] + "..."
+        return cleaned
+
+    @staticmethod
+    def _infer_mvp_category(content_type: str, text: str) -> str:
+        """MVP知识库 - 推断category分类"""
+        # 先根据content_type映射
+        if content_type in AcquisitionIntakeService._MVP_CATEGORY_MAP:
+            return AcquisitionIntakeService._MVP_CATEGORY_MAP[content_type]
+        # 也可根据内容特征判断
+        if any(kw in text for kw in ("平台", "算法", "推荐机制")):
+            return "平台规则"
+        if any(kw in text for kw in ("语气", "话术", "模板")):
+            return "语气模板"
+        if any(kw in text for kw in ("CTA", "引导", "号召")):
+            return "CTA模板"
+        return "贷款知识"  # 默认
+
+    @staticmethod
+    def _extract_mvp_platform(source_url: Optional[str], platform: str) -> str:
+        """MVP知识库 - 提取platform"""
+        if platform:
+            return platform
+        if source_url:
+            if "xiaohongshu" in source_url or "xhslink" in source_url:
+                return "xiaohongshu"
+            if "douyin" in source_url:
+                return "douyin"
+            if "zhihu" in source_url:
+                return "zhihu"
+        return "other"
+
+    @staticmethod
+    def auto_ingest_to_mvp_knowledge(
+        db: Session,
+        source_content: SourceContent,
+        normalized_content: NormalizedContent,
+    ) -> Optional[MvpKnowledgeItem]:
+        """
+        采集内容自动入库到 mvp_knowledge_items 表。
+        跳过收件箱审批环节，直接写入知识库。
+        去重逻辑：检查 title + platform 是否已存在。
+        """
+        try:
+            title = normalized_content.title or ""
+            content_text = normalized_content.content_text or ""
+            merged_text = f"{title} {content_text}".strip()
+
+            if not merged_text:
+                return None
+
+            # 提取platform
+            platform = AcquisitionIntakeService._extract_mvp_platform(
+                source_content.source_url,
+                source_content.source_platform
+            )
+
+            # 去重检查：title + platform
+            existing = (
+                db.query(MvpKnowledgeItem)
+                .filter(
+                    MvpKnowledgeItem.title == title,
+                    MvpKnowledgeItem.platform == platform,
+                )
+                .first()
+            )
+            if existing:
+                return existing  # 已存在，不重复创建
+
+            # 提取结构化字段
+            topic = AcquisitionIntakeService._extract_mvp_topic(merged_text)
+            audience = AcquisitionIntakeService._extract_mvp_audience(merged_text)
+            content_type = AcquisitionIntakeService._infer_mvp_content_type(merged_text)
+            opening_type = AcquisitionIntakeService._infer_mvp_opening_type(merged_text)
+            hook_sentence = AcquisitionIntakeService._extract_hook_sentence(content_text)
+            cta_style = AcquisitionIntakeService._infer_mvp_cta_style(merged_text)
+            summary = AcquisitionIntakeService._generate_mvp_summary(content_text)
+            category = AcquisitionIntakeService._infer_mvp_category(content_type, merged_text)
+            
+            # 推断分库类型
+            library_type = "industry_phrases"  # 默认
+            category_lower = (category or "").lower()
+            if any(kw in category_lower for kw in ["爆款", "案例", "热门"]):
+                library_type = "hot_content"
+            elif any(kw in category_lower for kw in ["人群", "画像", "洞察"]):
+                library_type = "audience_profile"
+            elif any(kw in category_lower for kw in ["平台规则", "平台表达"]):
+                library_type = "platform_rules"
+            elif any(kw in category_lower for kw in ["风险", "合规", "审核", "敏感"]):
+                library_type = "compliance_rules"
+            elif any(kw in category_lower for kw in ["语气", "账号", "定位", "角色"]):
+                library_type = "account_positioning"
+            elif any(kw in category_lower for kw in ["模板", "提示词", "prompt", "cta"]):
+                library_type = "prompt_templates"
+            
+            # 推断层级
+            layer = "structured"
+            if library_type in ("compliance_rules", "platform_rules"):
+                layer = "rule"
+            elif library_type in ("prompt_templates", "account_positioning"):
+                layer = "generation"
+            
+            # 计算风险等级：调用合规服务
+            risk_level = "medium"  # 默认值
+            try:
+                compliance_svc = MvpComplianceService(db)
+                compliance_result = compliance_svc.check(merged_text)
+                risk_level = compliance_result.get("risk_level", "medium")
+            except Exception:
+                pass  # 合规服务调用失败，使用默认值
+            
+            # 创建 MvpKnowledgeItem
+            knowledge_item = MvpKnowledgeItem(
+                title=title[:500] if title else "无标题",
+                content=content_text,
+                category=category,
+                platform=platform,
+                audience=audience,
+                topic=topic,
+                content_type=content_type,
+                opening_type=opening_type,
+                hook_sentence=hook_sentence,
+                cta_style=cta_style,
+                risk_level=risk_level,
+                summary=summary,
+                library_type=library_type,
+                layer=layer,
+                source_url=normalized_content.source_url,
+                author=normalized_content.author_name,
+                like_count=normalized_content.like_count or 0,
+                comment_count=normalized_content.comment_count or 0,
+                collect_count=normalized_content.favorite_count or 0,
+            )
+            db.add(knowledge_item)
+            db.flush()
+            
+            # 异步切块+向量化
+            try:
+                from app.services.chunking_service import get_chunking_service
+                import asyncio
+                chunking = get_chunking_service(db)
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.ensure_future(chunking.process_and_store_chunks(knowledge_item.id))
+                    else:
+                        loop.run_until_complete(chunking.process_and_store_chunks(knowledge_item.id))
+                except RuntimeError:
+                    # 没有事件循环，跳过异步切块
+                    pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"采集入库切块失败(不影响主流程): {e}")
+            
+            return knowledge_item
+
+        except Exception:
+            # 任何错误不应阻断整个采集流程
+            return None
+
+    @staticmethod
     def _process_item(
         db: Session,
         owner_id: int,
@@ -908,6 +1182,8 @@ class AcquisitionIntakeService:
         db.add(material)
         db.flush()
         AcquisitionIntakeService._replace_knowledge(db, owner_id, material)
+        # 自动入库到 MVP 知识库（跳过收件箱审批）
+        AcquisitionIntakeService.auto_ingest_to_mvp_knowledge(db, source, normalized_content)
 
         return {
             "created": True,

@@ -1,8 +1,15 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Float, JSON, Enum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from datetime import datetime
 import enum
 from app.core.database import Base
+
+# pgvector 向量支持（可选，未安装时降级）
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:
+    Vector = None  # pgvector未安装时降级
 
 
 class User(Base):
@@ -925,3 +932,181 @@ class ArkCallLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     user = relationship("User", back_populates="ark_call_logs")
+
+
+# ═══════════ MVP 核心模型 ═══════════
+
+class MvpInboxItem(Base):
+    """MVP收件箱条目 - 采集内容进入的第一站"""
+    __tablename__ = "mvp_inbox_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    platform = Column(String(50), nullable=False, default="xiaohongshu")
+    title = Column(String(500), nullable=False)
+    content = Column(Text, nullable=False)
+    author = Column(String(200), nullable=True)
+    source_url = Column(String(1000), nullable=True)
+    source_type = Column(String(50), nullable=False, default="collect")  # collect / manual
+    keyword = Column(String(200), nullable=True)
+    risk_level = Column(String(20), nullable=False, default="low")  # low / medium / high
+    duplicate_status = Column(String(20), nullable=False, default="unique")  # unique / suspected / duplicate
+    score = Column(Float, nullable=False, default=0.0)
+    tech_status = Column(String(30), nullable=False, default="parsed")  # raw / parsed / enriched
+    biz_status = Column(String(30), nullable=False, default="pending")  # pending / to_material / discarded
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class MvpMaterialItem(Base):
+    """MVP素材库条目 - 经过筛选的优质素材"""
+    __tablename__ = "mvp_material_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    platform = Column(String(50), nullable=False)
+    title = Column(String(500), nullable=False)
+    content = Column(Text, nullable=False)
+    source_url = Column(String(1000), nullable=True)
+    like_count = Column(Integer, nullable=False, default=0)
+    comment_count = Column(Integer, nullable=False, default=0)
+    author = Column(String(200), nullable=True)
+    is_hot = Column(Boolean, nullable=False, default=False)
+    risk_level = Column(String(20), nullable=False, default="low")
+    use_count = Column(Integer, nullable=False, default=0)
+    source_inbox_id = Column(Integer, ForeignKey("mvp_inbox_items.id"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    # relationships
+    tags = relationship("MvpTag", secondary="mvp_material_tag_rel", back_populates="materials")
+    knowledge_items = relationship("MvpKnowledgeItem", back_populates="source_material")
+    generation_results = relationship("MvpGenerationResult", back_populates="source_material")
+
+
+class MvpTag(Base):
+    """MVP标签 - 用于素材分类"""
+    __tablename__ = "mvp_tags"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    type = Column(String(50), nullable=False)  # platform / audience / style / topic / scenario / content_type
+    created_at = Column(DateTime, server_default=func.now())
+
+    # unique constraint on (name, type)
+    __table_args__ = (UniqueConstraint("name", "type", name="uq_mvp_tag_name_type"),)
+
+    materials = relationship("MvpMaterialItem", secondary="mvp_material_tag_rel", back_populates="tags")
+
+
+class MvpMaterialTagRel(Base):
+    """MVP素材-标签关联表"""
+    __tablename__ = "mvp_material_tag_rel"
+
+    material_id = Column(Integer, ForeignKey("mvp_material_items.id", ondelete="CASCADE"), primary_key=True)
+    tag_id = Column(Integer, ForeignKey("mvp_tags.id", ondelete="CASCADE"), primary_key=True)
+
+
+class MvpKnowledgeItem(Base):
+    """MVP知识库条目 - 提取的可复用知识"""
+    __tablename__ = "mvp_knowledge_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(500), nullable=False)
+    content = Column(Text, nullable=False)
+    category = Column(String(100), nullable=True)
+    platform = Column(String(50), nullable=True)
+    audience = Column(String(100), nullable=True)
+    style = Column(String(100), nullable=True)
+    source_material_id = Column(Integer, ForeignKey("mvp_material_items.id"), nullable=True)
+    use_count = Column(Integer, nullable=False, default=0)
+    embedding = Column(Text, nullable=True)  # 预留向量化字段，暂存JSON
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # 增强字段 - 结构化内容分类
+    topic = Column(String(100), nullable=True, comment="内容主题：loan/credit/online_loan/housing_fund")
+    content_type = Column(String(50), nullable=True, comment="内容类型：案例/知识/规则/模板")
+    opening_type = Column(String(50), nullable=True, comment="开头方式：提问/数据/故事/痛点")
+    hook_sentence = Column(Text, nullable=True, comment="爆点句/钩子句")
+    cta_style = Column(String(100), nullable=True, comment="转化方式：私信/评论/关注")
+    risk_level = Column(String(20), nullable=True, comment="风险等级：low/medium/high")
+    summary = Column(Text, nullable=True, comment="内容摘要")
+
+    source_material = relationship("MvpMaterialItem", back_populates="knowledge_items")
+
+    # 分库与层级
+    library_type = Column(String(50), default='industry_phrases', index=True)  # hot_content/industry_phrases/platform_rules/audience_profile/account_positioning/prompt_templates/compliance_rules
+    layer = Column(String(30), default='structured')  # raw/structured/rule/generation
+
+    # 原始素材信息
+    source_url = Column(String(500), nullable=True)
+    author = Column(String(200), nullable=True)
+
+    # 互动数据
+    like_count = Column(Integer, default=0)
+    comment_count = Column(Integer, default=0)
+    collect_count = Column(Integer, default=0)
+
+    # 增强字段
+    emotion_intensity = Column(String(20), nullable=True)  # low/medium/high
+    conversion_goal = Column(String(50), nullable=True)  # private_message/consultation/conversion
+    is_hot = Column(Boolean, default=False)
+
+
+class MvpKnowledgeChunk(Base):
+    """MVP知识库切块表 - 支持向量检索"""
+    __tablename__ = "mvp_knowledge_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    knowledge_id = Column(Integer, ForeignKey("mvp_knowledge_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_type = Column(String(30), nullable=False)  # post/paragraph/rule/template
+    chunk_index = Column(Integer, default=0)  # 切块序号
+    content = Column(Text, nullable=False)  # 切块内容
+    metadata_json = Column(Text, nullable=True)  # JSON格式元数据
+    # 向量数据：先用Text存JSON，pgvector启用后可切换为 Vector(1536) 类型
+    # 使用 pgvector 时: embedding = Column(Vector(1536), nullable=True)
+    embedding = Column(Text, nullable=True)
+    token_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+
+    # 关系
+    knowledge_item = relationship("MvpKnowledgeItem", backref="chunks")
+
+
+class MvpPromptTemplate(Base):
+    """MVP提示词模板"""
+    __tablename__ = "mvp_prompt_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    platform = Column(String(50), nullable=True)
+    audience = Column(String(100), nullable=True)
+    style = Column(String(100), nullable=True)
+    template = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class MvpGenerationResult(Base):
+    """MVP内容生成结果"""
+    __tablename__ = "mvp_generation_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_material_id = Column(Integer, ForeignKey("mvp_material_items.id"), nullable=True)
+    input_text = Column(Text, nullable=False)
+    output_title = Column(String(500), nullable=True)
+    output_text = Column(Text, nullable=False)
+    version = Column(String(50), nullable=False)  # professional / casual / seeding
+    platform = Column(String(50), nullable=True)
+    audience = Column(String(100), nullable=True)
+    style = Column(String(100), nullable=True)
+    is_final = Column(Boolean, nullable=False, default=False)
+    compliance_status = Column(String(30), nullable=True)  # passed / warning / blocked
+    created_at = Column(DateTime, server_default=func.now())
+
+    source_material = relationship("MvpMaterialItem", back_populates="generation_results")
+
+
+class MvpComplianceRule(Base):
+    """MVP合规规则"""
+    __tablename__ = "mvp_compliance_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rule_type = Column(String(50), nullable=False)  # keyword / regex / semantic
+    keyword = Column(String(200), nullable=False)
+    suggestion = Column(Text, nullable=True)
+    risk_level = Column(String(20), nullable=False, default="medium")  # low / medium / high

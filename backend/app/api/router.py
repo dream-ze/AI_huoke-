@@ -10,6 +10,7 @@ from app.api.endpoints.dashboard import router as dashboard_router
 from app.api.endpoints.insight import router as insight_router
 from app.api.endpoints.system import router as system_router
 from app.api.endpoints.wecom import router as wecom_router
+from app.api.endpoints.mvp_routes import router as mvp_router
 from app.api.v1 import api_v1_router
 from app.api.v2 import api_v2_router
 
@@ -24,6 +25,7 @@ ALL_ROUTERS = (
     insight_router,
     system_router,
     wecom_router,
+    mvp_router,
     api_v1_router,
     api_v2_router,
 )

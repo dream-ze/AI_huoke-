@@ -67,28 +67,22 @@ class AIService:
         user_id: int | None = None,
         scene: str = "general",
     ) -> str:
-        """Call Volcano Engine (Fire Engine)"""
+        """Call Volcano Engine (Fire Engine) using OpenAI-compatible chat/completions API"""
         if not settings.ARK_API_KEY:
             raise Exception("ARK_API_KEY is not configured")
 
-        user_text = prompt if not system_prompt else f"{system_prompt}\n\n{prompt}"
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
         payload = {
             "model": settings.ARK_MODEL,
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": user_text,
-                        }
-                    ],
-                }
-            ],
+            "messages": messages,
         }
 
-        data = await self._post_ark_responses(payload, user_id=user_id, scene=scene)
-        return self._extract_ark_text(data)
+        data = await self._post_ark_chat_completions(payload, user_id=user_id, scene=scene)
+        return self._extract_chat_completions_text(data)
 
     async def analyze_image_with_ark(
         self,
@@ -97,22 +91,22 @@ class AIService:
         model: str | None = None,
         user_id: int | None = None,
     ) -> Dict[str, Any]:
-        """Analyze image content with Ark multimodal responses API."""
+        """Analyze image content with Ark multimodal chat/completions API."""
         if not settings.ARK_API_KEY:
             raise Exception("ARK_API_KEY is not configured")
 
         payload = {
             "model": model or settings.ARK_MODEL,
-            "input": [
+            "messages": [
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "input_image",
-                            "image_url": image_url,
+                            "type": "image_url",
+                            "image_url": {"url": image_url},
                         },
                         {
-                            "type": "input_text",
+                            "type": "text",
                             "text": text,
                         },
                     ],
@@ -120,8 +114,8 @@ class AIService:
             ],
         }
 
-        data = await self._post_ark_responses(payload, user_id=user_id, scene="vision")
-        answer = self._extract_ark_text(data)
+        data = await self._post_ark_chat_completions(payload, user_id=user_id, scene="vision")
+        answer = self._extract_chat_completions_text(data)
         return {
             "model": payload["model"],
             "image_url": image_url,
@@ -129,13 +123,13 @@ class AIService:
             "answer": answer,
         }
 
-    async def _post_ark_responses(
+    async def _post_ark_chat_completions(
         self,
         payload: Dict[str, Any],
         user_id: int | None = None,
         scene: str = "general",
     ) -> Dict[str, Any]:
-        """Send request to Ark /responses endpoint."""
+        """Send request to Ark /chat/completions endpoint (OpenAI-compatible)."""
         base_url = settings.ARK_BASE_URL.rstrip("/")
         headers = {
             "Authorization": f"Bearer {settings.ARK_API_KEY}",
@@ -146,7 +140,7 @@ class AIService:
         model = payload.get("model", settings.ARK_MODEL)
 
         logger.info(
-            "ark_request_start request_id=%s scene=%s user_id=%s model=%s",
+            "ark_chat_request_start request_id=%s scene=%s user_id=%s model=%s",
             request_id,
             scene,
             user_id,
@@ -156,13 +150,13 @@ class AIService:
         try:
             async with httpx.AsyncClient(timeout=settings.ARK_TIMEOUT_SECONDS) as client:
                 response = await client.post(
-                    f"{base_url}/responses",
+                    f"{base_url}/chat/completions",
                     json=payload,
                     headers=headers,
                 )
             response.raise_for_status()
             data = response.json()
-            usage = self._extract_ark_usage(data)
+            usage = self._extract_chat_completions_usage(data)
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             self._save_ark_call_log(
                 user_id=user_id,
@@ -171,20 +165,20 @@ class AIService:
                 success=True,
                 status_code=response.status_code,
                 latency_ms=elapsed_ms,
-                input_tokens=int(usage.get("input_tokens") or 0),
-                output_tokens=int(usage.get("output_tokens") or 0),
+                input_tokens=int(usage.get("prompt_tokens") or 0),
+                output_tokens=int(usage.get("completion_tokens") or 0),
                 total_tokens=int(usage.get("total_tokens") or 0),
                 error_message=None,
             )
             logger.info(
-                "ark_request_success request_id=%s scene=%s user_id=%s model=%s elapsed_ms=%s input_tokens=%s output_tokens=%s total_tokens=%s",
+                "ark_chat_request_success request_id=%s scene=%s user_id=%s model=%s elapsed_ms=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s",
                 request_id,
                 scene,
                 user_id,
                 model,
                 elapsed_ms,
-                usage.get("input_tokens"),
-                usage.get("output_tokens"),
+                usage.get("prompt_tokens"),
+                usage.get("completion_tokens"),
                 usage.get("total_tokens"),
             )
             return data
@@ -204,7 +198,7 @@ class AIService:
                 error_message=detail[:2000],
             )
             logger.warning(
-                "ark_request_http_error request_id=%s scene=%s user_id=%s model=%s elapsed_ms=%s status=%s detail=%s",
+                "ark_chat_request_http_error request_id=%s scene=%s user_id=%s model=%s elapsed_ms=%s status=%s detail=%s",
                 request_id,
                 scene,
                 user_id,
@@ -229,7 +223,7 @@ class AIService:
                 error_message=str(e)[:2000],
             )
             logger.exception(
-                "ark_request_failed request_id=%s scene=%s user_id=%s model=%s elapsed_ms=%s",
+                "ark_chat_request_failed request_id=%s scene=%s user_id=%s model=%s elapsed_ms=%s",
                 request_id,
                 scene,
                 user_id,
@@ -237,6 +231,53 @@ class AIService:
                 elapsed_ms,
             )
             raise Exception(f"Failed to call Ark API: {str(e)}")
+
+    def _extract_chat_completions_text(self, data: Dict[str, Any]) -> str:
+        """Extract text from OpenAI-compatible chat/completions response.
+        
+        Expected format:
+        {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "..."
+                    }
+                }
+            ]
+        }
+        """
+        try:
+            choices = data.get("choices", [])
+            if choices and len(choices) > 0:
+                message = choices[0].get("message", {})
+                content = message.get("content", "")
+                if content:
+                    return content
+        except Exception as e:
+            logger.warning("Failed to extract text from chat/completions response: %s", e)
+
+        # Fallback: return raw data as JSON string
+        return json.dumps(data, ensure_ascii=False)
+
+    def _extract_chat_completions_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract usage from OpenAI-compatible chat/completions response.
+        
+        Expected format:
+        {
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150
+            }
+        }
+        """
+        usage = data.get("usage") or {}
+        return {
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+        }
 
     def _extract_ark_text(self, data: Dict[str, Any]) -> str:
         """Extract text from Ark responses payload with compatible fallback parsing."""
@@ -287,7 +328,7 @@ class AIService:
                 scene=scene,
                 provider="ark",
                 model=model,
-                endpoint="/responses",
+                endpoint="/chat/completions",
                 success=success,
                 status_code=status_code,
                 latency_ms=max(int(latency_ms), 0),

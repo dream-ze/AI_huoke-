@@ -9,41 +9,37 @@ type NavGroup = {
 
 const navGroups: NavGroup[] = [
   {
-    title: "工作台",
+    title: "内容生产",
     items: [
-      { to: "/dashboard", label: "首页看板", icon: "📊" },
-      { to: "/workflow", label: "业务闭环", icon: "🔄", badge: "新" },
+      { to: "/ai-hub", label: "AI中枢", icon: "📊" },
+      { to: "/collect-center", label: "采集中心", icon: "🔍" },
+      { to: "/mvp-workbench", label: "AI工作台", icon: "✨" },
     ],
   },
   {
-    title: "内容获取",
+    title: "知识管理",
     items: [
-      { to: "/collect-center", label: "采集中心", icon: "🎯" },
-      { to: "/inbox", label: "收件箱", icon: "📥" },
-      { to: "/materials", label: "素材库", icon: "📦" },
-      { to: "/insight", label: "爆款洞察", icon: "🔥" },
+      { to: "/knowledge", label: "知识库", icon: "📚" },
     ],
   },
   {
-    title: "AI 能力",
+    title: "内容管理",
     items: [
-      { to: "/ai-hub", label: "AI 中枢", icon: "🤖", badge: "新" },
-      { to: "/ai-workbench", label: "改写工作台", icon: "✏️" },
-      { to: "/compliance", label: "合规审核", icon: "🛡️" },
+      { to: "/mvp-inbox", label: "收件箱", icon: "📥" },
+      { to: "/mvp-materials", label: "素材库", icon: "📂" },
     ],
   },
   {
-    title: "客户转化",
+    title: "业务管理",
     items: [
-      { to: "/publish", label: "发布任务", icon: "📤" },
-      { to: "/leads", label: "线索池", icon: "💎" },
+      { to: "/leads", label: "线索管理", icon: "👤" },
       { to: "/customers", label: "客户管理", icon: "👥" },
     ],
   },
   {
-    title: "系统运维",
+    title: "管理层",
     items: [
-      { to: "/ops", label: "运维看板", icon: "⚙️", badge: "新" },
+      { to: "/dashboard", label: "老板看板", icon: "📈" },
     ],
   },
 ];

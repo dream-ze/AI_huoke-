@@ -69,6 +69,11 @@ export async function getDashboardSummary() {
   return data;
 }
 
+export async function getDashboardStats() {
+  const { data } = await api.get("/api/mvp/dashboard/stats");
+  return data;
+}
+
 export async function getTrend(days = 7) {
   const { data } = await api.get(`/api/dashboard/trend?days=${days}`);
   return data;
@@ -599,5 +604,195 @@ export async function updateMaterialInboxStatus(id: number, payload: {
   review_note?: string;
 }) {
   const { data } = await api.patch(`/api/v1/material/inbox/${id}/status`, payload);
+  return data;
+}
+
+// ═══════════ MVP API ═══════════
+
+// 收件箱
+export async function mvpListInbox(params?: Record<string, any>) {
+  const { data } = await api.get("/api/mvp/inbox", { params });
+  return data;
+}
+export async function mvpGetInbox(id: number) {
+  const { data } = await api.get(`/api/mvp/inbox/${id}`);
+  return data;
+}
+export async function mvpInboxToMaterial(id: number) {
+  const { data } = await api.post(`/api/mvp/inbox/${id}/to-material`);
+  return data;
+}
+export async function mvpInboxMarkHot(id: number) {
+  const { data } = await api.post(`/api/mvp/inbox/${id}/mark-hot`);
+  return data;
+}
+export async function mvpInboxDiscard(id: number) {
+  const { data } = await api.post(`/api/mvp/inbox/${id}/discard`);
+  return data;
+}
+
+// 素材库
+export async function mvpListMaterials(params?: Record<string, any>) {
+  const { data } = await api.get("/api/mvp/materials", { params });
+  return data;
+}
+export async function mvpGetMaterial(id: number) {
+  const { data } = await api.get(`/api/mvp/materials/${id}`);
+  return data;
+}
+export async function mvpCreateMaterial(payload: Record<string, any>) {
+  const { data } = await api.post("/api/mvp/materials", payload);
+  return data;
+}
+export async function mvpBuildKnowledge(materialId: number) {
+  const { data } = await api.post(`/api/mvp/materials/${materialId}/build-knowledge`);
+  return data;
+}
+export async function mvpRewriteHot(materialId: number) {
+  const { data } = await api.post(`/api/mvp/materials/${materialId}/rewrite`);
+  return data;
+}
+export async function mvpUpdateTags(materialId: number, tagIds: number[]) {
+  const { data } = await api.post(`/api/mvp/materials/${materialId}/tags`, { tag_ids: tagIds });
+  return data;
+}
+
+// 知识库
+export async function mvpListKnowledge(params?: Record<string, any>) {
+  const { data } = await api.get("/api/mvp/knowledge", { params });
+  return data;
+}
+export async function mvpGetKnowledge(id: number) {
+  const { data } = await api.get(`/api/mvp/knowledge/${id}`);
+  return data;
+}
+export async function mvpBuildKnowledgeFromMaterial(payload: { material_id: number }) {
+  const { data } = await api.post("/api/mvp/knowledge/build", payload);
+  return data;
+}
+export async function mvpSearchKnowledge(payload: { query: string; platform?: string; audience?: string }) {
+  const { data } = await api.post("/api/mvp/knowledge/search", payload);
+  return data;
+}
+
+// 知识库分库统计
+export async function getKnowledgeLibraries() {
+  const resp = await api.get("/api/mvp/knowledge/libraries");
+  return resp.data?.libraries || [];
+}
+
+// 知识库切块列表
+export async function getKnowledgeChunks(knowledgeId: number) {
+  const resp = await api.get(`/api/mvp/knowledge/chunks/${knowledgeId}`);
+  return resp.data?.chunks || [];
+}
+
+// 重建知识索引
+export async function reindexKnowledge(payload?: { knowledge_ids?: number[], embedding_model?: string }) {
+  const resp = await api.post("/api/mvp/knowledge/reindex", payload || {});
+  return resp.data;
+}
+
+// AI工作台
+export async function mvpGenerate(payload: Record<string, any>) {
+  const { data } = await api.post("/api/mvp/generate", payload);
+  return data;
+}
+export async function mvpGenerateFinal(payload: Record<string, any>) {
+  const { data } = await api.post("/api/mvp/generate/final", payload);
+  return data;
+}
+
+// 合规审核
+export async function mvpComplianceCheck(payload: { text: string }) {
+  const { data } = await api.post("/api/mvp/compliance/check", payload);
+  return data;
+}
+
+// 标签
+export async function mvpListTags(params?: { type?: string }) {
+  const { data } = await api.get("/api/mvp/tags", { params });
+  return data;
+}
+export async function mvpCreateTag(payload: { name: string; type: string }) {
+  const { data } = await api.post("/api/mvp/tags", payload);
+  return data;
+}
+
+// 统计
+export async function mvpGetStatsOverview() {
+  const { data } = await api.get("/api/mvp/stats/overview");
+  return data;
+}
+
+// 全流程内容生成（6步链路）
+export async function generateFullPipeline(payload: {
+  platform: string;
+  account_type: string;
+  audience: string;
+  topic: string;
+  goal?: string;
+  model?: string;  // "volcano" | "local"
+  extra_requirements?: string;
+  tone?: string;
+}) {
+  const { data } = await api.post("/api/mvp/generate/full-pipeline", payload, {
+    timeout: 120000,  // 全流程生成需要较长时间
+  });
+  return data;
+}
+
+// ── 采集中心 V1 ──────────────────────────────────────────
+
+// 采集搜索
+export async function collectorSearch(params: {
+  platform: string;
+  keyword: string;
+  count: number;
+  fetch_detail?: boolean;
+  fetch_comments?: boolean;
+  source_type?: string;
+}) {
+  const { data } = await api.post('/api/v1/collector/search', params, {
+    timeout: 180000  // 采集可能需要较长时间
+  });
+  return data;
+}
+
+// 获取采集任务列表
+export async function getCollectorTasks(params?: { page?: number; size?: number }) {
+  const { data } = await api.get('/api/v1/collector/tasks', { params });
+  return data;
+}
+
+// 获取采集结果列表
+export async function getCollectorResults(params?: { page?: number; size?: number }) {
+  const { data } = await api.get('/api/v1/collector/results', { params });
+  const list = Array.isArray(data) ? data : data?.items || [];
+  
+  return list.map((item: any) => ({
+    id: item.id,
+    title: item.title,
+    platform: item.platform,
+    author: item.author_name || item.author,
+    content: item.content_preview || item.content,
+    summary: item.content_preview ? item.content_preview.substring(0, 100) : '',
+    tags: item.tags || [],
+    risk_level: item.risk_status || item.risk_level || 'low',
+    ingest_status: item.status || item.ingest_status || 'pending',
+    source_url: item.source_url,
+    created_at: item.created_at || new Date().toISOString(),
+  }));
+}
+
+// 自动入库Pipeline
+export async function autoIngestPipeline(params: {
+  title: string;
+  content: string;
+  platform?: string;
+  source_url?: string;
+  author?: string;
+}) {
+  const { data } = await api.post('/api/mvp/raw-contents/auto-pipeline', params);
   return data;
 }
