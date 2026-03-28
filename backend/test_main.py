@@ -648,6 +648,61 @@ class TestMaterialsQueryOptimization:
         assert select_count["value"] <= 8
 
 
+class TestMaterialPipelineOrchestratorApi:
+    def test_v2_ingest_and_rewrite_cleans_content_and_persists_knowledge(self, auth_headers, monkeypatch):
+        from app.services.ai_service import AIService
+
+        async def fake_call_llm(self, prompt, system_prompt="", use_cloud=False, user_id=None, scene="general"):
+            _ = prompt
+            _ = system_prompt
+            _ = use_cloud
+            _ = user_id
+            _ = scene
+            return "这是一段用于生成测试的模型基础输出。"
+
+        monkeypatch.setattr(AIService, "call_llm", fake_call_llm)
+
+        response = client.post(
+            "/api/v2/materials/ingest-and-rewrite",
+            headers=auth_headers,
+            json={
+                "platform": "xiaohongshu",
+                "title": "  采集测试标题  ",
+                "content_text": (
+                    "作者：张三\n"
+                    "发布时间：今天\n"
+                    "这是正文第一段。\n"
+                    "#贷款 #征信\n"
+                    "展开\n"
+                    "这是正文第一段。\n"
+                    "这是正文第二段。"
+                ),
+                "tags": ["采集", "测试"],
+                "target_platform": "xiaohongshu",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["material_id"] is not None
+        assert payload["knowledge_document_id"] is not None
+        assert payload["generation_task_id"] is not None
+        assert payload["cleaned_title"] == "采集测试标题"
+        assert payload["cleaned_content_text"] == "这是正文第一段。\n这是正文第二段。"
+        assert payload["output_text"]
+
+        detail_resp = client.get(
+            f"/api/v2/materials/{payload['material_id']}",
+            headers=auth_headers,
+        )
+        assert detail_resp.status_code == 200
+        detail = detail_resp.json()
+        assert detail["content_text"] == "这是正文第一段。\n这是正文第二段。"
+        assert len(detail["knowledge_documents"]) >= 1
+        assert detail["knowledge_documents"][0]["content_text"] == "这是正文第一段。\n这是正文第二段。"
+        assert len(detail["generation_tasks"]) >= 1
+
+
 class TestPublishTaskWorkflow:
     def test_publish_task_lifecycle(self, auth_headers):
         create_resp = client.post(

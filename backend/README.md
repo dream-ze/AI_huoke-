@@ -192,8 +192,22 @@ pytest -q test_main.py -k "sequence_drift or unique_constraint"
 # PostgreSQL 集成回归（需可用的 PostgreSQL）
 set RUN_POSTGRES_REGRESSION=1
 set TEST_POSTGRES_DATABASE_URL=postgresql://postgres:password@localhost/zhihuokeke
-pytest -q -m "postgres_regression" test_user_service_postgres_regression.py
+pytest -q -m "postgres_regression" test_user_service_postgres_regression.py test_material_pipeline_postgres_regression.py
+
+# 运维健康检查
+curl http://localhost:8000/api/system/ops/health
+curl http://localhost:8000/api/system/ops/readiness
 ```
+
+说明：
+- 远程部署主路径使用 PostgreSQL，`.github/workflows/backend-regression.yml` 已取消 SQLite/FakeDB 快速回归，改为在 `pull_request`、`push`、`workflow_dispatch` 默认执行 PostgreSQL smoke regression。
+- 当前 PR 默认覆盖两类 PostgreSQL 回归：用户注册唯一约束与主键序列漂移自愈，以及素材清洗 -> 知识沉淀 -> 检索 -> 规则/提示词装配 -> 生成落库主链路。
+- 素材主链路 PostgreSQL 回归已包含 `POST /api/v2/materials/ingest-and-rewrite`、改写采纳回写素材正文、重复素材去重三条关键场景。
+- 额外已覆盖：素材详情手动编辑后重建知识库、规则库/提示词库变更影响生成编排、多用户隔离检索不串数据。
+- PostgreSQL smoke 也已覆盖发布任务提交产出线索，以及线索分配后转客户的业务闭环。
+- 发布任务 `reject/close` 生命周期，以及线索状态更新与转客户幂等，也已纳入 PostgreSQL smoke regression。
+- 新增 PostgreSQL 回归：发布任务重复提交覆盖但不重复产出线索、线索与客户跨用户越权访问受限。
+- 新增运维健康检查端点：`/api/system/ops/health` 与 `/api/system/ops/readiness`，可在部署后直接验证数据库、Redis、Ollama 状态。
 
 ## 生产部署
 
@@ -204,6 +218,7 @@ pytest -q -m "postgres_regression" test_user_service_postgres_regression.py
 5. 设置 DEBUG=False
 6. 配置 HTTPS
 7. 设置适当的 CORS 源
+8. 部署完成后访问 `/api/system/ops/health` 与 `/api/system/ops/readiness`
 
 ## 常见问题
 

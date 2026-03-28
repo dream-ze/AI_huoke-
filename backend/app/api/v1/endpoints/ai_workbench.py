@@ -5,6 +5,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.rate_limit import DistributedRateLimiter
 from app.core.security import verify_token
+from app.domains.acquisition import MaterialPipelineOrchestrator
 from app.domains.ai_workbench.ai_service import AIService
 from app.schemas import (
     AIRewriteRequest,
@@ -13,7 +14,6 @@ from app.schemas import (
     PluginContentCreate,
     PluginContentResponse,
 )
-from app.services.collector import AcquisitionIntakeService
 
 ai_workbench_routes = APIRouter(tags=["ai-workbench"])
 ark_vision_limiter = DistributedRateLimiter(
@@ -31,24 +31,15 @@ async def _rewrite_with_material_pipeline(
     db: Session,
     platform: str,
 ) -> dict:
-    ai_service = AIService(db=db)
-    content = AcquisitionIntakeService.get_material_item(db, current_user["user_id"], request.content_id)
-    if not content:
-        raise HTTPException(status_code=404, detail="素材不存在")
-
-    primary_doc = AcquisitionIntakeService.get_primary_knowledge_document(content)
-    account_type = primary_doc.account_type if primary_doc else "科普号"
-    target_audience = request.target_audience or (primary_doc.target_audience if primary_doc else "泛人群")
-    result = await AcquisitionIntakeService.generate(
-        db=db,
-        owner_id=current_user["user_id"],
-        material_id=content.id,
+    orchestrator = MaterialPipelineOrchestrator(db=db, owner_id=current_user["user_id"], ai_service=AIService(db=db))
+    result = await orchestrator.generate_from_material(
+        material_id=request.content_id,
         platform=platform,
-        account_type=account_type,
-        target_audience=target_audience,
+        account_type=None,
+        target_audience=request.target_audience,
         task_type="rewrite",
-        ai_service=ai_service,
     )
+    content = result["material"]
     return {
         "original": content.content_text,
         "rewritten": result["output_text"],

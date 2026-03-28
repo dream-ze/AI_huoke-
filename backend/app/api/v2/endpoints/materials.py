@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import verify_token
+from app.domains.acquisition import MaterialPipelineOrchestrator
 from app.domains.ai_workbench.ai_service import AIService
 from app.models import GenerationTask, KnowledgeDocument, MaterialItem
 from app.services.collector import AcquisitionIntakeService
@@ -22,6 +23,21 @@ class MaterialUpdateRequest(BaseModel):
 
 
 class MaterialRewriteRequest(BaseModel):
+    target_platform: str = Field(default="xiaohongshu")
+    account_type: Optional[str] = None
+    target_audience: Optional[str] = None
+    task_type: str = Field(default="rewrite")
+
+
+class MaterialIngestAndRewriteRequest(BaseModel):
+    platform: str
+    title: Optional[str] = None
+    content_text: str
+    source_url: Optional[str] = None
+    author_name: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    note: Optional[str] = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
     target_platform: str = Field(default="xiaohongshu")
     account_type: Optional[str] = None
     target_audience: Optional[str] = None
@@ -248,23 +264,47 @@ async def rewrite_material(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    ai_service = AIService(db=db)
-    item = AcquisitionIntakeService.get_material_item(db, current_user["user_id"], material_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="素材不存在")
-
-    primary_doc = AcquisitionIntakeService.get_primary_knowledge_document(item)
-    account_type = req.account_type or (primary_doc.account_type if primary_doc else "科普号")
-    target_audience = req.target_audience or (primary_doc.target_audience if primary_doc else "泛人群")
-    return await AcquisitionIntakeService.generate(
+    orchestrator = MaterialPipelineOrchestrator(
         db=db,
         owner_id=current_user["user_id"],
-        material_id=material_id,
-        platform=req.target_platform,
-        account_type=account_type,
-        target_audience=target_audience,
+        ai_service=AIService(db=db),
+    )
+    try:
+        return await orchestrator.generate_from_material(
+            material_id=material_id,
+            platform=req.target_platform,
+            account_type=req.account_type,
+            target_audience=req.target_audience,
+            task_type=req.task_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@materials_routes.post("/ingest-and-rewrite")
+async def ingest_and_rewrite_material(
+    req: MaterialIngestAndRewriteRequest,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    orchestrator = MaterialPipelineOrchestrator(
+        db=db,
+        owner_id=current_user["user_id"],
+        ai_service=AIService(db=db),
+    )
+    return await orchestrator.ingest_and_generate(
+        source_platform=req.platform,
+        title=req.title,
+        content_text=req.content_text,
+        target_platform=req.target_platform,
+        account_type=req.account_type,
+        target_audience=req.target_audience,
         task_type=req.task_type,
-        ai_service=ai_service,
+        note=req.note,
+        tags=req.tags,
+        source_url=req.source_url,
+        author_name=req.author_name,
+        raw_payload=req.raw_payload,
     )
 
 

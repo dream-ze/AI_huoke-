@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -50,10 +49,10 @@ def list_leads(
     db: Session = Depends(get_db),
 ):
     query = db.query(Lead)
-    if owner_id is None:
-        query = query.filter(Lead.owner_id == current_user["user_id"])
-    else:
-        query = query.filter(Lead.owner_id == owner_id)
+    if owner_id is not None and owner_id != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="No access to this lead scope")
+
+    query = query.filter(Lead.owner_id == current_user["user_id"])
     if status and status != "all":
         query = query.filter(Lead.status == status)
     leads = query.order_by(Lead.created_at.desc()).offset(skip).limit(limit).all()
@@ -79,14 +78,11 @@ def update_lead_status(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    lead = (
-        db.query(Lead)
-        .filter(Lead.id == lead_id)
-        .filter(or_(Lead.owner_id == current_user["user_id"], Lead.publish_task_id.isnot(None)))
-        .first()
-    )
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if lead.owner_id != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="No access to this lead")
 
     setattr(lead, "status", payload.status)
     db.commit()
@@ -104,6 +100,8 @@ def assign_lead_owner(
     lead = db.query(Lead).filter(Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    if lead.owner_id != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="No access to this lead")
 
     new_owner_id = payload.owner_id or current_user["user_id"]
     owner = db.query(User).filter(User.id == new_owner_id).first()

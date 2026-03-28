@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import verify_token
+from app.domains.acquisition import MaterialPipelineOrchestrator
 from app.domains.ai_workbench.ai_service import AIService
 from app.services.collector import AcquisitionIntakeService
 
@@ -146,17 +147,18 @@ async def rewrite_material_from_inbox(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    ai_service = AIService(db=db)
     try:
-        return await AcquisitionIntakeService.generate(
+        orchestrator = MaterialPipelineOrchestrator(
             db=db,
             owner_id=current_user["user_id"],
+            ai_service=AIService(db=db),
+        )
+        return await orchestrator.generate_from_material(
             material_id=inbox_id,
             platform=req.platform,
             account_type=req.account_type,
             target_audience=req.target_audience,
             task_type=req.task_type,
-            ai_service=ai_service,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

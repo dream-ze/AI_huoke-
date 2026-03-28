@@ -1,5 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
 from app.core.config import settings
+from app.core.database import get_db
 from app.core.rate_limit import DistributedRateLimiter
 from app.core.security import verify_token
 from app.schemas import (

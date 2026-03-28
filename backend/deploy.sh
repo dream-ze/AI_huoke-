@@ -55,6 +55,12 @@ else
     echo "[OK] .env 已存在，跳过创建"
 fi
 
+# ── 校验 .env 不包含危险占位值 ───────────────────────────
+if grep -Eq 'CHANGE_ME_DB_PASSWORD|CHANGE_ME_SECRET_KEY_MIN_32_CHARS' .env; then
+    echo "[ERROR] .env 仍包含占位值，请先替换 SECRET_KEY / DATABASE_PASSWORD"
+    exit 1
+fi
+
 # ── 修复 entrypoint.sh 行尾（Windows CRLF → LF）────────
 sed -i 's/\r//' entrypoint.sh
 chmod +x entrypoint.sh
@@ -91,6 +97,14 @@ if [ "$READY" -ne 1 ]; then
     echo "[ERROR] 后端健康检查超时，输出最近日志："
     docker compose -f docker-compose.prod.yml logs --tail 120 backend || true
     exit 1
+fi
+
+echo ""
+echo "[INFO] 运行运维健康检查视图..."
+if curl -sf http://localhost:8000/api/system/ops/health; then
+    echo ""
+else
+    echo "[WARN] /api/system/ops/health 调用失败，请检查 backend/redis/ollama 日志"
 fi
 
 # ── 拉取 AI 模型（后台异步）──────────────────────────────

@@ -13,33 +13,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  auth-regression-fast:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    env:
-      SECRET_KEY: CI_SECRET_KEY_12345678901234567890AB
-      DATABASE_URL: postgresql://postgres:password@localhost/zhihuokeke
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Poetry
-        run: pip install poetry
-
-      - name: Install dependencies
-        run: poetry install --no-interaction
-
-      - name: Run mandatory auth regression tests
-        run: poetry run pytest -q test_main.py -k "sequence_drift or unique_constraint"
-
-  auth-regression-postgres:
-    if: github.event_name == 'workflow_dispatch'
+  backend-postgres-smoke:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -77,5 +51,5 @@ jobs:
       - name: Install dependencies
         run: poetry install --no-interaction
 
-      - name: Run postgres regression tests
-        run: poetry run pytest -q -m "postgres_regression" test_user_service_postgres_regression.py
+      - name: Run postgres smoke regression tests
+        run: poetry run pytest -q -m "postgres_regression" test_user_service_postgres_regression.py test_material_pipeline_postgres_regression.py

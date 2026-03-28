@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 from difflib import SequenceMatcher
+import html
 import hashlib
 import re
 from typing import Any, Optional
@@ -94,6 +95,13 @@ class AcquisitionIntakeService:
         "中介",
     )
     _DEFAULT_COMPLIANCE_BLOCK_SCORE: int = 60
+    _NOISE_LINE_PATTERNS: tuple[str, ...] = (
+        r"^(展开|收起|全文|阅读全文|查看全文|原文|复制链接|网页链接)$",
+        r"^(点赞|收藏|分享|评论|转发|关注|私信|举报|置顶)$",
+        r"^(作者|发布时间|来源|标签|话题|IP属地|地址)[:：].{0,30}$",
+        r"^(https?://\S+)$",
+        r"^(#\S+\s*){1,8}$",
+    )
 
     @staticmethod
     def _to_int(value: Any) -> int:
@@ -123,6 +131,63 @@ class AcquisitionIntakeService:
         if value is None:
             return ""
         return str(value).strip()
+
+    @staticmethod
+    def _strip_html(value: str) -> str:
+        text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", value, flags=re.IGNORECASE | re.DOTALL)
+        return re.sub(r"<[^>]+>", " ", text)
+
+    @staticmethod
+    def _clean_inline_text(value: Any) -> str:
+        text = html.unescape(AcquisitionIntakeService._normalize_text(value))
+        text = (
+            text.replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .replace("\u3000", " ")
+            .replace("\xa0", " ")
+            .replace("\u200b", " ")
+        )
+        text = AcquisitionIntakeService._strip_html(text)
+        return text
+
+    @staticmethod
+    def _clean_title_text(value: Any) -> str:
+        text = AcquisitionIntakeService._clean_inline_text(value)
+        text = re.sub(r"\s+", " ", text).strip(" \n\t-_|")
+        text = re.sub(r"([!?！？。])\1{2,}", r"\1\1", text)
+        return text[:255]
+
+    @staticmethod
+    def _is_noise_line(value: str) -> bool:
+        text = value.strip()
+        if not text:
+            return True
+        for pattern in AcquisitionIntakeService._NOISE_LINE_PATTERNS:
+            if re.fullmatch(pattern, text, re.IGNORECASE):
+                return True
+        return False
+
+    @staticmethod
+    def _clean_content_text(value: Any) -> str:
+        text = AcquisitionIntakeService._clean_inline_text(value)
+        if not text:
+            return ""
+
+        normalized_lines: list[str] = []
+        previous_line = ""
+        for raw_line in text.split("\n"):
+            line = re.sub(r"\s+", " ", raw_line).strip()
+            if AcquisitionIntakeService._is_noise_line(line):
+                continue
+            if line == previous_line:
+                continue
+            normalized_lines.append(line)
+            previous_line = line
+
+        body = "\n".join(normalized_lines).strip()
+        body = re.sub(r"\n{3,}", "\n\n", body)
+        body = re.sub(r"([!?！？。])\1{2,}", r"\1\1", body)
+        return body
 
     @staticmethod
     def _split_keywords(keyword: str) -> list[str]:
@@ -164,8 +229,12 @@ class AcquisitionIntakeService:
     def _normalize_collected_item(platform: str, keyword: str, item: dict[str, Any]) -> dict[str, Any]:
         source_id = item.get("source_id") or item.get("sourceId") or item.get("external_id") or item.get("id")
         url = item.get("url") or item.get("source_url")
-        title = item.get("title") or item.get("raw_title")
-        content_text = item.get("content_text") or item.get("content") or item.get("snippet") or item.get("desc")
+        raw_title = item.get("title") or item.get("raw_title")
+        raw_content_text = item.get("content_text") or item.get("content") or item.get("snippet") or item.get("desc")
+        title = AcquisitionIntakeService._clean_title_text(raw_title)
+        content_text = AcquisitionIntakeService._clean_content_text(raw_content_text)
+        if not title and content_text:
+            title = AcquisitionIntakeService._clean_title_text(content_text[:40])
         normalized_platform = AcquisitionIntakeService._normalize_text(item.get("platform") or platform or "other") or "other"
 
         return {
@@ -173,9 +242,11 @@ class AcquisitionIntakeService:
             "keyword": AcquisitionIntakeService._normalize_text(keyword) or None,
             "source_id": AcquisitionIntakeService._normalize_text(source_id) or None,
             "source_url": AcquisitionIntakeService._normalize_text(url) or None,
-            "title": AcquisitionIntakeService._normalize_text(title) or None,
+            "raw_title": AcquisitionIntakeService._normalize_text(raw_title) or None,
+            "raw_content_text": AcquisitionIntakeService._normalize_text(raw_content_text) or None,
+            "title": title or None,
             "author_name": AcquisitionIntakeService._normalize_text(item.get("author_name") or item.get("author") or item.get("nickname")) or None,
-            "content_text": AcquisitionIntakeService._normalize_text(content_text) or None,
+            "content_text": content_text or None,
             "cover_url": AcquisitionIntakeService._normalize_text(item.get("cover_url")) or None,
             "publish_time": AcquisitionIntakeService._to_datetime(item.get("publish_time") or item.get("upload_time")),
             "like_count": AcquisitionIntakeService._to_int(item.get("like_count") or item.get("liked_count")),
@@ -643,8 +714,8 @@ class AcquisitionIntakeService:
             source_id=normalized.get("source_id"),
             source_url=normalized.get("source_url"),
             keyword=normalized.get("keyword"),
-            raw_title=normalized.get("title"),
-            raw_content=normalized.get("content_text"),
+            raw_title=normalized.get("raw_title") or normalized.get("title"),
+            raw_content=normalized.get("raw_content_text") or normalized.get("content_text"),
             raw_payload=normalized.get("raw_payload") or {},
             author_name=normalized.get("author_name"),
             cover_url=normalized.get("cover_url"),
@@ -757,18 +828,6 @@ class AcquisitionIntakeService:
             normalized.get("source_url"),
         )
 
-        source = AcquisitionIntakeService._create_source_content(
-            db=db,
-            owner_id=owner_id,
-            source_channel=source_channel,
-            normalized=normalized,
-            source_task_id=source_task_id,
-            source_submission_id=source_submission_id,
-            submitted_by_employee_id=submitted_by_employee_id,
-            remark=remark,
-        )
-        normalized_content = AcquisitionIntakeService._create_normalized_content(db, owner_id, source, normalized, content_hash)
-
         duplicate = AcquisitionIntakeService._find_duplicate_material(
             db=db,
             owner_id=owner_id,
@@ -784,6 +843,18 @@ class AcquisitionIntakeService:
                 "status": "discard",
                 "reason": "duplicate",
             }
+
+        source = AcquisitionIntakeService._create_source_content(
+            db=db,
+            owner_id=owner_id,
+            source_channel=source_channel,
+            normalized=normalized,
+            source_task_id=source_task_id,
+            source_submission_id=source_submission_id,
+            submitted_by_employee_id=submitted_by_employee_id,
+            remark=remark,
+        )
+        normalized_content = AcquisitionIntakeService._create_normalized_content(db, owner_id, source, normalized, content_hash)
 
         quality_score = AcquisitionIntakeService._calculate_quality(normalized)
         relevance_score = AcquisitionIntakeService._calculate_relevance(normalized, keyword)
@@ -894,6 +965,39 @@ class AcquisitionIntakeService:
         }
 
     @staticmethod
+    def ingest_item(
+        db: Session,
+        owner_id: int,
+        source_channel: str,
+        raw_item: dict[str, Any],
+        platform: str,
+        keyword: str,
+        source_task_id: Optional[int] = None,
+        source_submission_id: Optional[int] = None,
+        submitted_by_employee_id: Optional[int] = None,
+        remark: Optional[str] = None,
+        auto_commit: bool = False,
+    ) -> dict[str, Any]:
+        result = AcquisitionIntakeService._process_item(
+            db=db,
+            owner_id=owner_id,
+            source_channel=source_channel,
+            raw_item=raw_item,
+            platform=platform,
+            keyword=keyword,
+            source_task_id=source_task_id,
+            source_submission_id=source_submission_id,
+            submitted_by_employee_id=submitted_by_employee_id,
+            remark=remark,
+        )
+        if auto_commit:
+            db.commit()
+            material = result.get("material")
+            if material is not None:
+                db.refresh(material)
+        return result
+
+    @staticmethod
     def _ingest_items(
         db: Session,
         owner_id: int,
@@ -916,7 +1020,7 @@ class AcquisitionIntakeService:
 
         for raw in items:
             try:
-                result = AcquisitionIntakeService._process_item(
+                result = AcquisitionIntakeService.ingest_item(
                     db=db,
                     owner_id=owner_id,
                     source_channel=source_channel,
@@ -927,6 +1031,7 @@ class AcquisitionIntakeService:
                     source_submission_id=source_submission_id,
                     submitted_by_employee_id=submitted_by_employee_id,
                     remark=remark,
+                    auto_commit=False,
                 )
                 if result["duplicate"]:
                     stats["duplicate_count"] += 1
@@ -1081,7 +1186,7 @@ class AcquisitionIntakeService:
             "risk_status": "review",
             "raw_payload": {"tags": tags or []},
         }
-        result = AcquisitionIntakeService._process_item(
+        result = AcquisitionIntakeService.ingest_item(
             db=db,
             owner_id=owner_id,
             source_channel="manual_input",
@@ -1089,8 +1194,8 @@ class AcquisitionIntakeService:
             platform=platform,
             keyword="",
             remark=note,
+            auto_commit=True,
         )
-        db.commit()
         material = result["material"]
         return {"inbox_id": int(material.id), "material_id": int(material.id), "status": str(material.status)}
 
@@ -1294,13 +1399,24 @@ class AcquisitionIntakeService:
         target_audience: str,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        base_query = db.query(KnowledgeDocument).filter(KnowledgeDocument.owner_id == owner_id)
+        base_query = (
+            db.query(KnowledgeDocument)
+            .options(
+                selectinload(KnowledgeDocument.material_item),
+                selectinload(KnowledgeDocument.knowledge_chunks),
+            )
+            .filter(KnowledgeDocument.owner_id == owner_id)
+        )
         filtered_query = AcquisitionIntakeService._apply_structure_filter(base_query, platform, account_type, target_audience)
         candidates = filtered_query.order_by(desc(KnowledgeDocument.id)).limit(100).all()
 
         if not candidates:
             candidates = (
                 db.query(KnowledgeDocument)
+                .options(
+                    selectinload(KnowledgeDocument.material_item),
+                    selectinload(KnowledgeDocument.knowledge_chunks),
+                )
                 .filter(KnowledgeDocument.owner_id == owner_id, KnowledgeDocument.platform == platform)
                 .order_by(desc(KnowledgeDocument.id))
                 .limit(100)
