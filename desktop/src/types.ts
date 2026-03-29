@@ -574,3 +574,55 @@ export interface DashboardStats {
   total_materials: number;
   date: string;
 }
+
+// ========== 原始内容池（收件箱）类型 ==========
+
+/** 原始内容池条目 - 收件箱核心数据结构 */
+export interface RawContentInboxItem {
+  id: number;
+  platform: string;
+  source_id?: string;
+  title: string;
+  content?: string;           // 全文（展开时用）
+  content_preview?: string;   // 摘要
+  author_name?: string;
+  publish_time?: string;
+  url?: string;
+  like_count: number;
+  comment_count: number;
+  favorite_count: number;
+  clean_status: 'pending' | 'cleaned' | 'failed';
+  quality_status: 'pending' | 'good' | 'normal' | 'low';
+  risk_status: 'normal' | 'low_risk' | 'high_risk';
+  quality_score: number;
+  risk_score: number;
+  material_status: 'not_in' | 'in_material' | 'ignored';
+  score?: number;
+  tech_status?: string;
+  biz_status?: string;
+  risk_level?: string;
+  cleaned_at?: string;
+  screened_at?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+/** 收件箱列表查询参数 */
+export interface InboxListParams {
+  page?: number;
+  size?: number;
+  platform?: string;
+  clean_status?: string;
+  quality_status?: string;
+  risk_status?: string;
+  material_status?: string;
+  keyword?: string;
+}
+
+/** 收件箱列表响应 */
+export interface InboxListResponse {
+  items: RawContentInboxItem[];
+  total: number;
+  page: number;
+  size: number;
+}

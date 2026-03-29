@@ -15,7 +15,10 @@ from app.schemas.mvp_schemas import (
     AutoPipelineResponse,
     AutoPipelineBatchRequest,
     AutoPipelineBatchResponse,
+    BatchIdsRequest,
+    IngestRequest,
 )
+from app.services.pipeline_service import PipelineService
 from app.schemas.generate_schema import FullPipelineRequest
 from app.services.mvp_inbox_service import MvpInboxService
 from app.services.mvp_material_service import MvpMaterialService
@@ -24,6 +27,9 @@ from app.services.mvp_knowledge_service import MvpKnowledgeService
 from app.services.mvp_generate_service import MvpGenerateService
 from app.services.mvp_rewrite_service import MvpRewriteService
 from app.services.mvp_compliance_service import MvpComplianceService
+from app.services.cleaning_service import CleaningService
+from app.services.extraction_service import ExtractionService
+from app.services.quality_screening_service import QualityScreeningService
 
 router = APIRouter(prefix="/api/mvp", tags=["MVP"])
 
@@ -39,6 +45,10 @@ def list_inbox(
     risk_level: str = Query(None),
     duplicate_status: str = Query(None),
     keyword: str = Query(None),
+    clean_status: str = Query(None),
+    quality_status: str = Query(None),
+    risk_status: str = Query(None),
+    material_status: str = Query(None),
     db: Session = Depends(get_db)
 ):
     """列出收件箱条目，支持筛选和分页"""
@@ -46,26 +56,44 @@ def list_inbox(
     result = svc.list_inbox(
         page=page, size=size, status=status, platform=platform,
         source_type=source_type, risk_level=risk_level,
-        duplicate_status=duplicate_status, keyword=keyword
+        duplicate_status=duplicate_status, keyword=keyword,
+        clean_status=clean_status, quality_status=quality_status,
+        risk_status=risk_status, material_status=material_status
     )
-    # 序列化items
+    # 序列化items - 包含所有新字段
     items_out = []
     for item in result.get("items", []):
         items_out.append({
             "id": item.id,
             "platform": item.platform,
+            "source_id": item.source_id,
             "title": item.title,
             "content": item.content,
+            "content_preview": item.content_preview,
             "author": item.author,
+            "author_name": item.author_name,
             "source_url": item.source_url,
             "source_type": item.source_type,
             "keyword": item.keyword,
             "risk_level": item.risk_level,
             "duplicate_status": item.duplicate_status,
             "score": item.score,
+            "quality_score": item.quality_score,
+            "risk_score": item.risk_score,
             "tech_status": item.tech_status,
             "biz_status": item.biz_status,
-            "created_at": str(item.created_at) if item.created_at else None
+            "clean_status": item.clean_status,
+            "quality_status": item.quality_status,
+            "risk_status": item.risk_status,
+            "material_status": item.material_status,
+            "like_count": item.like_count,
+            "comment_count": item.comment_count,
+            "favorite_count": item.favorite_count,
+            "publish_time": str(item.publish_time) if item.publish_time else None,
+            "cleaned_at": str(item.cleaned_at) if item.cleaned_at else None,
+            "screened_at": str(item.screened_at) if item.screened_at else None,
+            "created_at": str(item.created_at) if item.created_at else None,
+            "updated_at": str(item.updated_at) if item.updated_at else None
         })
     return {
         "items": items_out,
@@ -101,14 +129,13 @@ def get_inbox_item(item_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/inbox/{item_id}/to-material")
-def inbox_to_material(item_id: int, db: Session = Depends(get_db)):
-    """将收件箱条目入素材库"""
-    try:
-        svc = MvpInboxService(db)
-        material = svc.to_material(item_id)
-        return {"message": "已入素材库", "material_id": material.id}
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+async def inbox_to_material(item_id: int, db: Session = Depends(get_db)):
+    """将收件箱条目入素材库（使用 PipelineService）"""
+    service = PipelineService(db)
+    result = await service.promote_to_material(item_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
 
 
 @router.post("/inbox/{item_id}/mark-hot")
@@ -131,6 +158,115 @@ def inbox_discard(item_id: int, db: Session = Depends(get_db)):
         return {"message": "已废弃"}
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.post("/inbox/{item_id}/ignore")
+async def ignore_inbox_item(item_id: int, db: Session = Depends(get_db)):
+    """单条忽略 - 更新 material_status='ignored'"""
+    from app.models.models import MvpInboxItem
+    item = db.query(MvpInboxItem).filter(MvpInboxItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    item.material_status = 'ignored'
+    db.commit()
+    return {"success": True, "item_id": item_id}
+
+
+@router.post("/inbox/{item_id}/clean")
+def clean_inbox_item(item_id: int, db: Session = Depends(get_db)):
+    """单条收件箱条目清洗"""
+    service = CleaningService(db)
+    result = service.clean_item(item_id)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result.get("error", "Clean failed"))
+    return result
+
+
+@router.post("/inbox/batch-clean")
+def batch_clean_inbox(request: BatchIdsRequest, db: Session = Depends(get_db)):
+    """批量清洗收件箱条目"""
+    service = CleaningService(db)
+    stats = service.batch_clean(request.ids)
+    # 重命名 success -> success_count 避免与布尔 success 冲突
+    return {
+        "success": True,
+        "total": stats["total"],
+        "success_count": stats["success"],
+        "failed_count": stats["failed"],
+        "details": stats.get("details", [])
+    }
+
+
+@router.post("/inbox/{item_id}/screen")
+async def screen_inbox_item(item_id: int, db: Session = Depends(get_db)):
+    """单条质量筛选"""
+    from app.core.config import settings
+    extraction_svc = ExtractionService(
+        ollama_base_url=settings.OLLAMA_BASE_URL,
+        model=settings.OLLAMA_MODEL
+    )
+    service = QualityScreeningService(db, extraction_service=extraction_svc)
+    result = await service.screen_item(item_id)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
+
+
+@router.post("/inbox/batch-screen")
+async def batch_screen_inbox(request: BatchIdsRequest, db: Session = Depends(get_db)):
+    """批量质量筛选"""
+    from app.core.config import settings
+    extraction_svc = ExtractionService(
+        ollama_base_url=settings.OLLAMA_BASE_URL,
+        model=settings.OLLAMA_MODEL
+    )
+    service = QualityScreeningService(db, extraction_service=extraction_svc)
+    stats = await service.batch_screen(request.ids)
+    # 重命名 success -> success_count 避免与布尔 success 冲突
+    return {
+        "success": True,
+        "total": stats["total"],
+        "success_count": stats["success"],
+        "failed_count": stats["failed"],
+        "details": stats.get("details", [])
+    }
+
+
+@router.post("/inbox/ingest")
+async def ingest_to_inbox(request: IngestRequest, db: Session = Depends(get_db)):
+    """采集数据入收件箱（自动触发清洗）"""
+    service = PipelineService(db)
+    return await service.ingest_from_collector(request.model_dump())
+
+
+@router.post("/inbox/batch-to-material")
+async def batch_to_material(request: BatchIdsRequest, db: Session = Depends(get_db)):
+    """批量入素材库"""
+    service = PipelineService(db)
+    stats = await service.batch_promote_to_material(request.ids)
+    # 重命名 success -> success_count 避免与布尔 success 冲突
+    return {
+        "success": True,
+        "total": stats["total"],
+        "success_count": stats["success"],
+        "failed_count": stats["failed"],
+        "details": stats.get("details", [])
+    }
+
+
+@router.post("/inbox/batch-ignore")
+async def batch_ignore_inbox(request: BatchIdsRequest, db: Session = Depends(get_db)):
+    """批量忽略"""
+    service = PipelineService(db)
+    stats = await service.batch_ignore(request.ids)
+    # 重命名 success -> success_count 避免与布尔 success 冲突
+    return {
+        "success": True,
+        "total": stats["total"],
+        "success_count": stats["success"],
+        "failed_count": stats["failed"],
+        "details": stats.get("details", [])
+    }
 
 
 # ── 素材库 ──
@@ -181,6 +317,16 @@ def build_knowledge(material_id: int, db: Session = Depends(get_db)):
         return {"message": "知识构建成功", "knowledge_id": knowledge.id}
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.post("/materials/{material_id}/to-knowledge")
+async def material_to_knowledge(material_id: int, db: Session = Depends(get_db)):
+    """素材入知识库（使用 PipelineService，支持向量切分）"""
+    service = PipelineService(db)
+    result = await service.build_knowledge(material_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
 
 
 @router.post("/materials/{material_id}/rewrite")

@@ -1,43 +1,52 @@
 import { useState, useEffect, useCallback } from "react";
-import { mvpListInbox } from "../../lib/api";
-import { MvpInboxItem } from "../../types";
+import { inboxApi } from "../../api/inboxApi";
+import { RawContentInboxItem, InboxListParams } from "../../types";
 
-const platformOptions = [
+// ========== 常量定义 ==========
+
+const PLATFORM_OPTIONS = [
   { value: "", label: "全部平台" },
-  { value: "小红书", label: "小红书" },
-  { value: "抖音", label: "抖音" },
-  { value: "知乎", label: "知乎" },
-  { value: "微博", label: "微博" },
+  { value: "xiaohongshu", label: "小红书" },
+  { value: "douyin", label: "抖音" },
+  { value: "zhihu", label: "知乎" },
+  { value: "weibo", label: "微博" },
+  { value: "wechat", label: "微信" },
 ];
 
-const statusOptions = [
-  { value: "", label: "全部状态" },
-  { value: "pending", label: "待处理" },
-  { value: "to_material", label: "已入素材库" },
-  { value: "discarded", label: "已废弃" },
+const CLEAN_STATUS_OPTIONS = [
+  { value: "", label: "全部清洗" },
+  { value: "pending", label: "待清洗" },
+  { value: "cleaned", label: "已清洗" },
+  { value: "failed", label: "清洗失败" },
 ];
 
-const channelOptions = [
-  { value: "", label: "全部来源" },
-  { value: "collect", label: "采集" },
-  { value: "manual", label: "手动导入" },
+const QUALITY_STATUS_OPTIONS = [
+  { value: "", label: "全部质量" },
+  { value: "pending", label: "待评估" },
+  { value: "good", label: "优质" },
+  { value: "normal", label: "普通" },
+  { value: "low", label: "低质" },
 ];
 
-const riskOptions = [
+const RISK_STATUS_OPTIONS = [
   { value: "", label: "全部风险" },
-  { value: "low", label: "低风险" },
-  { value: "medium", label: "中风险" },
-  { value: "high", label: "高风险" },
+  { value: "normal", label: "无风险" },
+  { value: "low_risk", label: "低风险" },
+  { value: "high_risk", label: "高风险" },
 ];
 
-const duplicateOptions = [
-  { value: "", label: "全部重复" },
-  { value: "unique", label: "唯一" },
-  { value: "suspected", label: "疑似重复" },
-  { value: "duplicate", label: "重复" },
+const MATERIAL_STATUS_OPTIONS = [
+  { value: "", label: "全部素材" },
+  { value: "not_in", label: "未入库" },
+  { value: "in_material", label: "已入库" },
+  { value: "ignored", label: "已忽略" },
 ];
 
-function formatDate(dateStr: string): string {
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
+// ========== 工具函数 ==========
+
+function formatDate(dateStr?: string): string {
   if (!dateStr) return "-";
   const d = new Date(dateStr);
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -47,100 +56,139 @@ function formatDate(dateStr: string): string {
   return `${mm}-${dd} ${hh}:${min}`;
 }
 
+function formatNumber(n: number): string {
+  if (n >= 10000) return (n / 10000).toFixed(1) + "w";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  return String(n);
+}
+
 function truncate(text: string, len: number): string {
   if (!text) return "";
   return text.length > len ? text.slice(0, len) + "..." : text;
 }
 
-function getRiskColor(level: string): string {
-  switch (level) {
-    case "low": return "var(--ok)";
-    case "medium": return "var(--warn)";
-    case "high": return "var(--danger)";
-    default: return "var(--muted)";
-  }
+function getPlatformLabel(platform: string): string {
+  const map: Record<string, string> = {
+    xiaohongshu: "小红书",
+    douyin: "抖音",
+    zhihu: "知乎",
+    weibo: "微博",
+    wechat: "微信",
+  };
+  return map[platform] || platform;
 }
 
-function getRiskLabel(level: string): string {
-  switch (level) {
-    case "low": return "低";
-    case "medium": return "中";
-    case "high": return "高";
-    default: return level;
-  }
+// ========== 状态标签组件 ==========
+
+interface StatusTagProps {
+  type: "clean" | "quality" | "risk" | "material";
+  status: string;
 }
 
-function getStatusLabel(status: string): string {
-  switch (status) {
-    case "pending": return "待处理";
-    case "to_material": return "已入库";
-    case "discarded": return "已废弃";
-    default: return status;
-  }
+function StatusTag({ type, status }: StatusTagProps) {
+  const getStyle = (): { bg: string; color: string; label: string } => {
+    switch (type) {
+      case "clean":
+        switch (status) {
+          case "pending": return { bg: "#f0f0f0", color: "#666", label: "待清洗" };
+          case "cleaned": return { bg: "#e6f7ed", color: "#2c7a47", label: "已清洗" };
+          case "failed": return { bg: "#ffeaea", color: "#a11d2f", label: "清洗失败" };
+          default: return { bg: "#f0f0f0", color: "#666", label: status };
+        }
+      case "quality":
+        switch (status) {
+          case "pending": return { bg: "#f0f0f0", color: "#666", label: "待评估" };
+          case "good": return { bg: "#e6f7ed", color: "#2c7a47", label: "优质" };
+          case "normal": return { bg: "#e6f4ff", color: "#0f6d7a", label: "普通" };
+          case "low": return { bg: "#fff3e0", color: "#b05a05", label: "低质" };
+          default: return { bg: "#f0f0f0", color: "#666", label: status };
+        }
+      case "risk":
+        switch (status) {
+          case "normal": return { bg: "#e6f7ed", color: "#2c7a47", label: "无风险" };
+          case "low_risk": return { bg: "#fffbe6", color: "#b05a05", label: "低风险" };
+          case "high_risk": return { bg: "#ffeaea", color: "#a11d2f", label: "高风险" };
+          default: return { bg: "#f0f0f0", color: "#666", label: status };
+        }
+      case "material":
+        switch (status) {
+          case "not_in": return { bg: "#f0f0f0", color: "#666", label: "未入库" };
+          case "in_material": return { bg: "#e6f7ed", color: "#2c7a47", label: "已入库" };
+          case "ignored": return { bg: "#f0f0f0", color: "#999", label: "已忽略" };
+          default: return { bg: "#f0f0f0", color: "#666", label: status };
+        }
+      default:
+        return { bg: "#f0f0f0", color: "#666", label: status };
+    }
+  };
+  const { bg, color, label } = getStyle();
+  const isStrikethrough = type === "material" && status === "ignored";
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "2px 8px",
+        borderRadius: "4px",
+        backgroundColor: bg,
+        color: color,
+        fontSize: "12px",
+        fontWeight: 500,
+        textDecoration: isStrikethrough ? "line-through" : "none",
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
-function getStatusColor(status: string): string {
-  switch (status) {
-    case "pending": return "var(--brand)";
-    case "to_material": return "var(--ok)";
-    case "discarded": return "var(--muted)";
-    default: return "var(--text)";
-  }
-}
-
-function getDuplicateLabel(status: string): string {
-  switch (status) {
-    case "unique": return "唯一";
-    case "suspected": return "疑似重复";
-    case "duplicate": return "重复";
-    default: return status;
-  }
-}
-
-function getChannelLabel(type: string): string {
-  switch (type) {
-    case "collect": return "采集";
-    case "manual": return "手动导入";
-    default: return type;
-  }
-}
+// ========== 主组件 ==========
 
 export default function MvpInboxPage() {
   // 数据状态
-  const [items, setItems] = useState<MvpInboxItem[]>([]);
+  const [items, setItems] = useState<RawContentInboxItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState({ text: "", type: "" });
+  const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   // 筛选状态
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterPlatform, setFilterPlatform] = useState("");
-  const [filterChannel, setFilterChannel] = useState("");
-  const [filterRisk, setFilterRisk] = useState("");
-  const [filterDuplicate, setFilterDuplicate] = useState("");
-  const [filterKeyword, setFilterKeyword] = useState("");
-  const [searchInput, setSearchInput] = useState("");
+  const [filters, setFilters] = useState<InboxListParams>({
+    page: 1,
+    size: 20,
+    platform: "",
+    clean_status: "",
+    quality_status: "",
+    risk_status: "",
+    material_status: "",
+    keyword: "",
+  });
+  const [keywordInput, setKeywordInput] = useState("");
+
+  // 选择状态
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+
+  // 操作中状态
+  const [operating, setOperating] = useState<string | null>(null);
 
   // 显示消息
   const showMessage = useCallback((text: string, type: "success" | "error") => {
     setMessage({ text, type });
-    setTimeout(() => setMessage({ text: "", type: "" }), 3000);
+    setTimeout(() => setMessage(null), 3000);
   }, []);
 
   // 加载列表
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const params: Record<string, any> = {};
-      if (filterStatus) params.status = filterStatus;
-      if (filterPlatform) params.platform = filterPlatform;
-      if (filterChannel) params.source_type = filterChannel;
-      if (filterRisk) params.risk_level = filterRisk;
-      if (filterDuplicate) params.duplicate_status = filterDuplicate;
-      if (filterKeyword) params.keyword = filterKeyword;
-      
-      const res = await mvpListInbox(params);
+      const params: InboxListParams = { ...filters };
+      // 清理空值
+      Object.keys(params).forEach((key) => {
+        const k = key as keyof InboxListParams;
+        if (params[k] === "" || params[k] === undefined) {
+          delete params[k];
+        }
+      });
+      const res = await inboxApi.list(params);
       setItems(res.items || []);
       setTotal(res.total || 0);
     } catch (err: any) {
@@ -148,593 +196,672 @@ export default function MvpInboxPage() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, filterPlatform, filterChannel, filterRisk, filterDuplicate, filterKeyword, showMessage]);
+  }, [filters, showMessage]);
 
-  // 监听筛选变化重新加载
+  // 筛选变化时重新加载
   useEffect(() => {
     loadList();
-  }, [loadList]);
+    setSelectedIds(new Set());
+  }, [filters, loadList]);
+
+  // 全选/取消全选
+  const handleSelectAll = () => {
+    if (selectedIds.size === items.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(items.map((item) => item.id)));
+    }
+  };
+
+  // 切换单条选择
+  const toggleSelect = (id: number) => {
+    const newSet = new Set(selectedIds);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setSelectedIds(newSet);
+  };
+
+  // 切换展开
+  const toggleExpand = (id: number) => {
+    const newSet = new Set(expandedIds);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setExpandedIds(newSet);
+  };
+
+  // 执行操作
+  const executeOperation = async (
+    opName: string,
+    opFn: () => Promise<{ success: boolean; message?: string }>,
+    successMsg: string
+  ) => {
+    setOperating(opName);
+    try {
+      const result = await opFn();
+      if (result.success) {
+        showMessage(successMsg, "success");
+        loadList();
+      } else {
+        showMessage(result.message || "操作失败", "error");
+      }
+    } catch (err: any) {
+      showMessage(err.message || "操作失败", "error");
+    } finally {
+      setOperating(null);
+    }
+  };
+
+  // 批量操作
+  const handleBatchClean = () => {
+    if (selectedIds.size === 0) {
+      showMessage("请先选择条目", "error");
+      return;
+    }
+    executeOperation(
+      "batchClean",
+      () => inboxApi.batchClean(Array.from(selectedIds)),
+      `已批量清洗 ${selectedIds.size} 条`
+    );
+  };
+
+  const handleBatchScreen = () => {
+    if (selectedIds.size === 0) {
+      showMessage("请先选择条目", "error");
+      return;
+    }
+    executeOperation(
+      "batchScreen",
+      () => inboxApi.batchScreen(Array.from(selectedIds)),
+      `已批量质量筛选 ${selectedIds.size} 条`
+    );
+  };
+
+  const handleBatchToMaterial = () => {
+    if (selectedIds.size === 0) {
+      showMessage("请先选择条目", "error");
+      return;
+    }
+    executeOperation(
+      "batchToMaterial",
+      () => inboxApi.batchToMaterial(Array.from(selectedIds)),
+      `已批量入素材库 ${selectedIds.size} 条`
+    );
+  };
+
+  const handleBatchIgnore = () => {
+    if (selectedIds.size === 0) {
+      showMessage("请先选择条目", "error");
+      return;
+    }
+    executeOperation(
+      "batchIgnore",
+      () => inboxApi.batchIgnore(Array.from(selectedIds)),
+      `已批量忽略 ${selectedIds.size} 条`
+    );
+  };
+
+  // 单条操作
+  const handleClean = (id: number) => {
+    executeOperation(`clean-${id}`, () => inboxApi.clean(id), "清洗完成");
+  };
+
+  const handleScreen = (id: number) => {
+    executeOperation(`screen-${id}`, () => inboxApi.screen(id), "质量筛选完成");
+  };
+
+  const handleToMaterial = (id: number) => {
+    executeOperation(`toMaterial-${id}`, () => inboxApi.toMaterial(id), "已入素材库");
+  };
+
+  const handleIgnore = (id: number) => {
+    executeOperation(`ignore-${id}`, () => inboxApi.ignore(id), "已忽略");
+  };
 
   // 搜索处理
   const handleSearch = () => {
-    setFilterKeyword(searchInput);
+    setFilters((prev) => ({ ...prev, page: 1, keyword: keywordInput }));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") handleSearch();
   };
 
-  // 展开/折叠处理
-  const toggleExpand = (id: number) => {
-    setExpandedId(expandedId === id ? null : id);
+  // 更新筛选条件
+  const updateFilter = (key: keyof InboxListParams, value: string) => {
+    setFilters((prev) => ({ ...prev, page: 1, [key]: value }));
   };
 
-  // 操作按钮处理
-  const handleToMaterial = (item: MvpInboxItem) => {
-    showMessage(`已将「${truncate(item.title, 20)}」入素材库`, "success");
-    // TODO: 调用实际API
+  // 分页
+  const handlePageChange = (newPage: number) => {
+    setFilters((prev) => ({ ...prev, page: newPage }));
   };
 
-  const handleMarkHot = (item: MvpInboxItem) => {
-    showMessage(`已标记「${truncate(item.title, 20)}」为爆款`, "success");
-    // TODO: 调用实际API
+  const handleSizeChange = (newSize: number) => {
+    setFilters((prev) => ({ ...prev, page: 1, size: newSize }));
   };
 
-  const handleDiscard = (item: MvpInboxItem) => {
-    showMessage(`已废弃「${truncate(item.title, 20)}」`, "success");
-    // TODO: 调用实际API
-  };
+  // 计算分页
+  const totalPages = Math.ceil(total / (filters.size || 20));
+  const currentPage = filters.page || 1;
 
   return (
     <div className="page inbox-page">
       {/* 消息条 */}
-      {message.text && (
-        <div className={`inbox-message inbox-message--${message.type}`}>
+      {message && (
+        <div
+          style={{
+            position: "fixed",
+            top: 20,
+            left: "50%",
+            transform: "translateX(-50%)",
+            padding: "12px 24px",
+            borderRadius: "var(--radius)",
+            fontWeight: 500,
+            zIndex: 1000,
+            background: message.type === "success" ? "var(--ok)" : "var(--danger)",
+            color: "white",
+            animation: "inbox-message-in 0.3s ease",
+          }}
+        >
           {message.text}
         </div>
       )}
 
       {/* 标题区 */}
-      <div className="inbox-header">
-        <h2 className="inbox-title">收件箱 - 素材筛选中心</h2>
-        <span className="inbox-count">共 {total} 条</span>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 24, fontWeight: 700, color: "var(--text)", marginBottom: 4 }}>
+          原始内容池（收件箱）
+        </h2>
+        <p style={{ color: "var(--muted)", fontSize: 14, margin: 0 }}>
+          采集后内容的原始缓冲池，仅用于浏览与筛选
+        </p>
       </div>
 
-      {/* 筛选区 */}
-      <div className="inbox-filter-card">
-        <div className="inbox-filters">
-          <select 
-            className="inbox-select" 
-            value={filterStatus} 
-            onChange={(e) => setFilterStatus(e.target.value)}
+      {/* 筛选区域 */}
+      <div
+        style={{
+          background: "var(--panel)",
+          borderRadius: "var(--radius)",
+          padding: "16px 20px",
+          marginBottom: 16,
+          border: "1px solid var(--line)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 12,
+            alignItems: "center",
+          }}
+        >
+          <select
+            style={selectStyle}
+            value={filters.platform || ""}
+            onChange={(e) => updateFilter("platform", e.target.value)}
           >
-            {statusOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            {PLATFORM_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
           </select>
 
-          <select 
-            className="inbox-select" 
-            value={filterPlatform} 
-            onChange={(e) => setFilterPlatform(e.target.value)}
+          <select
+            style={selectStyle}
+            value={filters.clean_status || ""}
+            onChange={(e) => updateFilter("clean_status", e.target.value)}
           >
-            {platformOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            {CLEAN_STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
           </select>
 
-          <select 
-            className="inbox-select" 
-            value={filterChannel} 
-            onChange={(e) => setFilterChannel(e.target.value)}
+          <select
+            style={selectStyle}
+            value={filters.quality_status || ""}
+            onChange={(e) => updateFilter("quality_status", e.target.value)}
           >
-            {channelOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            {QUALITY_STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
           </select>
 
-          <select 
-            className="inbox-select" 
-            value={filterRisk} 
-            onChange={(e) => setFilterRisk(e.target.value)}
+          <select
+            style={selectStyle}
+            value={filters.risk_status || ""}
+            onChange={(e) => updateFilter("risk_status", e.target.value)}
           >
-            {riskOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            {RISK_STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
           </select>
 
-          <select 
-            className="inbox-select" 
-            value={filterDuplicate} 
-            onChange={(e) => setFilterDuplicate(e.target.value)}
+          <select
+            style={selectStyle}
+            value={filters.material_status || ""}
+            onChange={(e) => updateFilter("material_status", e.target.value)}
           >
-            {duplicateOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            {MATERIAL_STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
           </select>
 
-          <div className="inbox-search-group">
+          <div style={{ display: "flex", gap: 8, flex: 1, minWidth: 200, maxWidth: 300 }}>
             <input
               type="text"
-              className="inbox-search-input"
               placeholder="关键词搜索..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
+              value={keywordInput}
+              onChange={(e) => setKeywordInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              style={{ ...inputStyle, flex: 1 }}
             />
-            <button className="inbox-search-btn" onClick={handleSearch}>
+            <button style={searchBtnStyle} onClick={handleSearch}>
               搜索
             </button>
           </div>
         </div>
       </div>
 
-      {/* 主内容区 */}
-      <div className="inbox-main">
-        <div className="inbox-list-panel">
-          {loading ? (
-            <div className="inbox-loading">加载中...</div>
-          ) : items.length === 0 ? (
-            <div className="inbox-empty">
-              <div className="inbox-empty-icon">📥</div>
-              <div className="inbox-empty-title">暂无收件箱内容</div>
-              <div className="inbox-empty-desc">请前往采集中心导入内容，或手动添加素材</div>
-            </div>
-          ) : (
-            <div className="inbox-card-list">
-              {items.map((item) => (
-                <div
-                  key={item.id}
-                  className={`inbox-card ${expandedId === item.id ? "inbox-card-expanded" : ""}`}
-                  onClick={() => toggleExpand(item.id)}
-                >
-                  {/* 卡片头部 */}
-                  <div className="inbox-card-header">
-                    <div className="inbox-card-main">
-                      <h4 className="inbox-card-title">{item.title || "无标题"}</h4>
-                      <div className="inbox-card-meta">
-                        <span className="inbox-card-platform">{item.platform}</span>
-                        <span className="inbox-card-sep">·</span>
-                        <span className="inbox-card-source">{getChannelLabel(item.source_type)}</span>
-                        {item.author && (
-                          <>
-                            <span className="inbox-card-sep">·</span>
-                            <span className="inbox-card-author">{item.author}</span>
-                          </>
-                        )}
-                        <span className="inbox-card-sep">·</span>
-                        <span className="inbox-card-time">{formatDate(item.created_at)}</span>
-                      </div>
-                    </div>
-                    <div className="inbox-card-badges">
-                      <span 
-                        className="inbox-risk-tag" 
-                        style={{ backgroundColor: getRiskColor(item.risk_level) }}
-                      >
-                        {getRiskLabel(item.risk_level)}
-                      </span>
-                      <span 
-                        className="inbox-status-tag" 
-                        style={{ color: getStatusColor(item.biz_status) }}
-                      >
-                        {getStatusLabel(item.biz_status)}
-                      </span>
-                      {item.score !== undefined && (
-                        <span className="inbox-score-tag">{item.score.toFixed(1)}分</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 内容摘要（始终显示） */}
-                  <div className="inbox-card-summary">
-                    {truncate(item.content, 200)}
-                  </div>
-
-                  {/* 展开后的完整内容 */}
-                  {expandedId === item.id && (
-                    <div className="inbox-card-expanded-content" onClick={(e) => e.stopPropagation()}>
-                      {/* 完整内容 */}
-                      <div className="inbox-card-full-content">
-                        {item.content || "无内容"}
-                      </div>
-
-                      {/* 附加信息 */}
-                      <div className="inbox-card-extra">
-                        {item.keyword && (
-                          <div className="inbox-card-keyword">
-                            关键词：<span className="inbox-keyword-tag">{item.keyword}</span>
-                          </div>
-                        )}
-                        {item.source_url && (
-                          <div className="inbox-card-link">
-                            <a href={item.source_url} target="_blank" rel="noopener noreferrer">
-                              查看原文链接 ↗
-                            </a>
-                          </div>
-                        )}
-                        <div className="inbox-card-analysis">
-                          <span>重复状态：{getDuplicateLabel(item.duplicate_status)}</span>
-                          <span className="inbox-card-analysis-sep">|</span>
-                          <span>技术状态：{item.tech_status || "-"}</span>
-                        </div>
-                      </div>
-
-                      {/* 操作按钮 */}
-                      <div className="inbox-card-actions">
-                        <button 
-                          className="inbox-action-btn inbox-action-primary"
-                          onClick={() => handleToMaterial(item)}
-                        >
-                          入素材库
-                        </button>
-                        <button 
-                          className="inbox-action-btn inbox-action-secondary"
-                          onClick={() => handleMarkHot(item)}
-                        >
-                          标记爆款
-                        </button>
-                        <button 
-                          className="inbox-action-btn inbox-action-danger"
-                          onClick={() => handleDiscard(item)}
-                        >
-                          废弃
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+      {/* 批量操作栏 */}
+      <div
+        style={{
+          background: "var(--panel)",
+          borderRadius: "var(--radius)",
+          padding: "12px 20px",
+          marginBottom: 16,
+          border: "1px solid var(--line)",
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          flexWrap: "wrap",
+        }}
+      >
+        <label
+          style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 500 }}
+        >
+          <input
+            type="checkbox"
+            checked={selectedIds.size === items.length && items.length > 0}
+            onChange={handleSelectAll}
+            style={{ width: 18, height: 18, cursor: "pointer" }}
+          />
+          全选
+        </label>
+        <span style={{ color: "var(--muted)", fontSize: 14 }}>
+          已选 {selectedIds.size} 条 / 共 {total} 条
+        </span>
+        <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+          <button
+            style={batchBtnStyle}
+            onClick={handleBatchClean}
+            disabled={selectedIds.size === 0 || operating === "batchClean"}
+          >
+            {operating === "batchClean" ? "处理中..." : "批量清洗"}
+          </button>
+          <button
+            style={batchBtnStyle}
+            onClick={handleBatchScreen}
+            disabled={selectedIds.size === 0 || operating === "batchScreen"}
+          >
+            {operating === "batchScreen" ? "处理中..." : "批量质量筛选"}
+          </button>
+          <button
+            style={{ ...batchBtnStyle, background: "var(--brand)", color: "white" }}
+            onClick={handleBatchToMaterial}
+            disabled={selectedIds.size === 0 || operating === "batchToMaterial"}
+          >
+            {operating === "batchToMaterial" ? "处理中..." : "批量入素材库"}
+          </button>
+          <button
+            style={{ ...batchBtnStyle, border: "1px solid var(--danger)", color: "var(--danger)", background: "transparent" }}
+            onClick={handleBatchIgnore}
+            disabled={selectedIds.size === 0 || operating === "batchIgnore"}
+          >
+            {operating === "batchIgnore" ? "处理中..." : "批量忽略"}
+          </button>
         </div>
       </div>
 
+      {/* 主体列表 */}
+      <div
+        style={{
+          background: "var(--panel)",
+          borderRadius: "var(--radius)",
+          border: "1px solid var(--line)",
+          minHeight: 400,
+        }}
+      >
+        {loading ? (
+          <div style={{ padding: 60, textAlign: "center", color: "var(--muted)" }}>
+            加载中...
+          </div>
+        ) : items.length === 0 ? (
+          <div style={{ padding: "80px 40px", textAlign: "center" }}>
+            <div style={{ fontSize: 64, marginBottom: 16 }}>📥</div>
+            <div style={{ fontSize: 20, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>
+              暂无收件箱内容
+            </div>
+            <div style={{ color: "var(--muted)", fontSize: 14 }}>
+              请前往采集中心导入内容
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {items.map((item) => {
+              const isExpanded = expandedIds.has(item.id);
+              const isSelected = selectedIds.has(item.id);
+              const isOperating = operating?.includes(`-${item.id}`);
+
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    padding: "16px 20px",
+                    borderBottom: "1px solid var(--line)",
+                    background: isSelected ? "rgba(182, 61, 31, 0.04)" : "transparent",
+                    transition: "background 0.2s",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 16 }}>
+                    {/* 左侧 checkbox */}
+                    <div style={{ paddingTop: 4 }}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelect(item.id)}
+                        style={{ width: 18, height: 18, cursor: "pointer" }}
+                      />
+                    </div>
+
+                    {/* 主内容区 */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {/* 标题 */}
+                      <h4
+                        style={{
+                          fontSize: 16,
+                          fontWeight: 600,
+                          color: "var(--text)",
+                          margin: "0 0 8px",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {item.title || "无标题"}
+                      </h4>
+
+                      {/* 摘要/全文 */}
+                      <div
+                        style={{
+                          color: "var(--muted)",
+                          fontSize: 14,
+                          lineHeight: 1.6,
+                          marginBottom: 12,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {isExpanded
+                          ? (item.content || item.content_preview || "无内容")
+                          : truncate(item.content_preview || item.content || "", 200)}
+                      </div>
+
+                      {/* 展开/收起按钮 */}
+                      {(item.content || (item.content_preview && item.content_preview.length > 200)) && (
+                        <button
+                          onClick={() => toggleExpand(item.id)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "var(--brand-2)",
+                            fontSize: 13,
+                            cursor: "pointer",
+                            padding: "4px 0",
+                            marginBottom: 12,
+                          }}
+                        >
+                          {isExpanded ? "收起" : "展开全文"}
+                        </button>
+                      )}
+
+                      {/* 元信息行 */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          color: "var(--muted)",
+                          fontSize: 13,
+                          marginBottom: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span style={{ color: "var(--brand)", fontWeight: 500 }}>
+                          {getPlatformLabel(item.platform)}
+                        </span>
+                        {item.author_name && (
+                          <>
+                            <span style={{ color: "var(--line)" }}>|</span>
+                            <span>{item.author_name}</span>
+                          </>
+                        )}
+                        {item.publish_time && (
+                          <>
+                            <span style={{ color: "var(--line)" }}>|</span>
+                            <span>{formatDate(item.publish_time)}</span>
+                          </>
+                        )}
+                      </div>
+
+                      {/* 互动数据行 */}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 16,
+                          fontSize: 13,
+                          color: "var(--muted)",
+                          marginBottom: 12,
+                        }}
+                      >
+                        <span>👍 {formatNumber(item.like_count)}</span>
+                        <span>💬 {formatNumber(item.comment_count)}</span>
+                        <span>⭐ {formatNumber(item.favorite_count)}</span>
+                      </div>
+
+                      {/* 状态标签组 */}
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                        <StatusTag type="clean" status={item.clean_status} />
+                        <StatusTag type="quality" status={item.quality_status} />
+                        <StatusTag type="risk" status={item.risk_status} />
+                        <StatusTag type="material" status={item.material_status} />
+                      </div>
+
+                      {/* 分数 */}
+                      <div style={{ display: "flex", gap: 16, fontSize: 13, color: "var(--muted)" }}>
+                        <span>质量分: <strong>{item.quality_score.toFixed(1)}</strong></span>
+                        <span>风险分: <strong>{item.risk_score.toFixed(1)}</strong></span>
+                      </div>
+                    </div>
+
+                    {/* 右侧操作按钮 */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 100 }}>
+                      <button
+                        style={actionBtnStyle}
+                        onClick={() => handleClean(item.id)}
+                        disabled={isOperating}
+                      >
+                        {operating === `clean-${item.id}` ? "处理中..." : "重新清洗"}
+                      </button>
+                      <button
+                        style={actionBtnStyle}
+                        onClick={() => handleScreen(item.id)}
+                        disabled={isOperating}
+                      >
+                        {operating === `screen-${item.id}` ? "处理中..." : "质量筛选"}
+                      </button>
+                      <button
+                        style={{ ...actionBtnStyle, background: "var(--brand)", color: "white" }}
+                        onClick={() => handleToMaterial(item.id)}
+                        disabled={isOperating}
+                      >
+                        {operating === `toMaterial-${item.id}` ? "处理中..." : "加入素材库"}
+                      </button>
+                      <button
+                        style={{ ...actionBtnStyle, border: "1px solid var(--danger)", color: "var(--danger)", background: "transparent" }}
+                        onClick={() => handleIgnore(item.id)}
+                        disabled={isOperating}
+                      >
+                        {operating === `ignore-${item.id}` ? "处理中..." : "忽略"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 分页 */}
+      {total > 0 && (
+        <div
+          style={{
+            marginTop: 16,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: "var(--muted)", fontSize: 14 }}>每页</span>
+            <select
+              value={filters.size || 20}
+              onChange={(e) => handleSizeChange(Number(e.target.value))}
+              style={{ ...selectStyle, width: 80 }}
+            >
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+            <span style={{ color: "var(--muted)", fontSize: 14 }}>条</span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              style={pageBtnStyle}
+              onClick={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage <= 1}
+            >
+              上一页
+            </button>
+            <span style={{ color: "var(--text)", fontSize: 14 }}>
+              第 {currentPage} / {totalPages} 页
+            </span>
+            <button
+              style={pageBtnStyle}
+              onClick={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage >= totalPages}
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 内联样式 */}
       <style>{`
         .inbox-page {
           padding: 24px;
           min-height: 100%;
         }
-
-        /* 消息条 */
-        .inbox-message {
-          position: fixed;
-          top: 20px;
-          left: 50%;
-          transform: translateX(-50%);
-          padding: 12px 24px;
-          border-radius: var(--radius);
-          font-weight: 500;
-          z-index: 1000;
-          animation: inbox-message-in 0.3s ease;
-        }
-        .inbox-message--success {
-          background: var(--ok);
-          color: white;
-        }
-        .inbox-message--error {
-          background: var(--danger);
-          color: white;
-        }
         @keyframes inbox-message-in {
           from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
           to { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-
-        /* 标题区 */
-        .inbox-header {
-          display: flex;
-          align-items: baseline;
-          gap: 16px;
-          margin-bottom: 20px;
-        }
-        .inbox-title {
-          font-size: 24px;
-          font-weight: 700;
-          color: var(--text);
-        }
-        .inbox-count {
-          color: var(--muted);
-          font-size: 14px;
-        }
-
-        /* 筛选区 */
-        .inbox-filter-card {
-          background: var(--panel);
-          border-radius: var(--radius);
-          padding: 16px 20px;
-          margin-bottom: 20px;
-          border: 1px solid var(--line);
-        }
-        .inbox-filters {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 12px;
-          align-items: center;
-        }
-        .inbox-select {
-          padding: 8px 12px;
-          border: 1px solid var(--line);
-          border-radius: 8px;
-          background: white;
-          color: var(--text);
-          font-size: 14px;
-          min-width: 120px;
-          cursor: pointer;
-        }
-        .inbox-select:focus {
-          outline: none;
-          border-color: var(--brand);
-        }
-        .inbox-search-group {
-          display: flex;
-          gap: 8px;
-          flex: 1;
-          min-width: 200px;
-          max-width: 300px;
-        }
-        .inbox-search-input {
-          flex: 1;
-          padding: 8px 12px;
-          border: 1px solid var(--line);
-          border-radius: 8px;
-          font-size: 14px;
-        }
-        .inbox-search-input:focus {
-          outline: none;
-          border-color: var(--brand);
-        }
-        .inbox-search-btn {
-          padding: 8px 16px;
-          background: var(--brand);
-          color: white;
-          border: none;
-          border-radius: 8px;
-          font-size: 14px;
-          cursor: pointer;
-          transition: background 0.2s;
-        }
-        .inbox-search-btn:hover {
-          background: color-mix(in srgb, var(--brand) 85%, black);
-        }
-
-        /* 主内容区 */
-        .inbox-main {
-          min-height: calc(100vh - 280px);
-        }
-
-        /* 列表面板 */
-        .inbox-list-panel {
-          background: var(--panel);
-          border-radius: var(--radius);
-          border: 1px solid var(--line);
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-        }
-        .inbox-loading {
-          padding: 60px;
-          text-align: center;
-          color: var(--muted);
-          font-size: 16px;
-        }
-        .inbox-empty {
-          padding: 80px 40px;
-          text-align: center;
-        }
-        .inbox-empty-icon {
-          font-size: 64px;
-          margin-bottom: 16px;
-        }
-        .inbox-empty-title {
-          font-size: 20px;
-          font-weight: 600;
-          color: var(--text);
-          margin-bottom: 8px;
-        }
-        .inbox-empty-desc {
-          color: var(--muted);
-          font-size: 14px;
-        }
-
-        /* 卡片列表 */
-        .inbox-card-list {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          padding: 16px;
-        }
-        .inbox-card {
-          background: white;
-          border-radius: 12px;
-          border: 1px solid var(--line);
-          padding: 16px;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-        .inbox-card:hover {
-          border-color: var(--brand);
-          box-shadow: 0 2px 8px rgba(182, 61, 31, 0.08);
-        }
-        .inbox-card-expanded {
-          border-color: var(--brand);
-          box-shadow: 0 4px 16px rgba(182, 61, 31, 0.12);
-        }
-        .inbox-card-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 16px;
-          margin-bottom: 12px;
-        }
-        .inbox-card-main {
-          flex: 1;
-          min-width: 0;
-        }
-        .inbox-card-title {
-          font-size: 16px;
-          font-weight: 600;
-          color: var(--text);
-          margin: 0 0 8px 0;
-          line-height: 1.4;
-        }
-        .inbox-card-meta {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          color: var(--muted);
-          font-size: 13px;
-          flex-wrap: wrap;
-        }
-        .inbox-card-sep {
-          color: var(--line);
-        }
-        .inbox-card-platform {
-          color: var(--brand);
-          font-weight: 500;
-        }
-        .inbox-card-source {
-          color: var(--brand-2);
-        }
-        .inbox-card-author {
-          color: var(--text);
-        }
-        .inbox-card-badges {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-shrink: 0;
-        }
-        .inbox-risk-tag {
-          display: inline-block;
-          padding: 2px 8px;
-          border-radius: 4px;
-          color: white;
-          font-size: 12px;
-          font-weight: 500;
-        }
-        .inbox-status-tag {
-          font-weight: 500;
-          font-size: 12px;
-        }
-        .inbox-score-tag {
-          display: inline-block;
-          padding: 2px 8px;
-          border-radius: 4px;
-          background: var(--bg-2);
-          color: var(--text);
-          font-size: 12px;
-          font-weight: 500;
-        }
-        .inbox-card-summary {
-          color: var(--muted);
-          font-size: 14px;
-          line-height: 1.6;
-          white-space: pre-wrap;
-          word-break: break-word;
-        }
-
-        /* 展开内容 */
-        .inbox-card-expanded-content {
-          margin-top: 16px;
-          padding-top: 16px;
-          border-top: 1px solid var(--line);
-          animation: inbox-expand-in 0.2s ease;
-        }
-        @keyframes inbox-expand-in {
-          from { opacity: 0; transform: translateY(-8px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .inbox-card-full-content {
-          color: var(--text);
-          font-size: 14px;
-          line-height: 1.8;
-          white-space: pre-wrap;
-          word-break: break-word;
-          margin-bottom: 16px;
-          max-height: 400px;
-          overflow-y: auto;
-          padding: 12px;
-          background: var(--bg-2);
-          border-radius: 8px;
-        }
-        .inbox-card-extra {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          margin-bottom: 16px;
-          font-size: 13px;
-          color: var(--muted);
-        }
-        .inbox-card-keyword {
-          color: var(--muted);
-        }
-        .inbox-keyword-tag {
-          display: inline-block;
-          padding: 2px 8px;
-          background: var(--bg-2);
-          border-radius: 4px;
-          color: var(--text);
-          margin-left: 4px;
-        }
-        .inbox-card-link a {
-          color: var(--brand-2);
-          text-decoration: none;
-        }
-        .inbox-card-link a:hover {
-          text-decoration: underline;
-        }
-        .inbox-card-analysis {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .inbox-card-analysis-sep {
-          color: var(--line);
-        }
-        .inbox-card-actions {
-          display: flex;
-          gap: 12px;
-          flex-wrap: wrap;
-        }
-
-        /* 操作按钮 */
-        .inbox-action-btn {
-          padding: 10px 20px;
-          border-radius: 8px;
-          font-size: 14px;
-          font-weight: 500;
-          cursor: pointer;
-          border: none;
-          transition: all 0.2s;
-          text-align: center;
-        }
-        .inbox-action-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-        .inbox-action-primary {
-          background: var(--brand);
-          color: white;
-        }
-        .inbox-action-primary:hover:not(:disabled) {
-          background: color-mix(in srgb, var(--brand) 85%, black);
-        }
-        .inbox-action-secondary {
-          background: var(--brand-2);
-          color: white;
-        }
-        .inbox-action-secondary:hover:not(:disabled) {
-          background: color-mix(in srgb, var(--brand-2) 85%, black);
-        }
-        .inbox-action-danger {
-          background: transparent;
-          color: var(--danger);
-          border: 1px solid var(--danger);
-        }
-        .inbox-action-danger:hover:not(:disabled) {
-          background: rgba(161, 29, 47, 0.08);
         }
       `}</style>
     </div>
   );
 }
+
+// ========== 样式常量 ==========
+
+const selectStyle: React.CSSProperties = {
+  padding: "8px 12px",
+  border: "1px solid var(--line)",
+  borderRadius: 8,
+  background: "white",
+  color: "var(--text)",
+  fontSize: 14,
+  minWidth: 100,
+  cursor: "pointer",
+};
+
+const inputStyle: React.CSSProperties = {
+  padding: "8px 12px",
+  border: "1px solid var(--line)",
+  borderRadius: 8,
+  fontSize: 14,
+  background: "#fffdf8",
+};
+
+const searchBtnStyle: React.CSSProperties = {
+  padding: "8px 16px",
+  background: "var(--brand)",
+  color: "white",
+  border: "none",
+  borderRadius: 8,
+  fontSize: 14,
+  fontWeight: 500,
+  cursor: "pointer",
+};
+
+const batchBtnStyle: React.CSSProperties = {
+  padding: "8px 16px",
+  background: "var(--bg-2)",
+  color: "var(--text)",
+  border: "1px solid var(--line)",
+  borderRadius: 8,
+  fontSize: 14,
+  fontWeight: 500,
+  cursor: "pointer",
+};
+
+const actionBtnStyle: React.CSSProperties = {
+  padding: "6px 12px",
+  background: "var(--bg-2)",
+  color: "var(--text)",
+  border: "1px solid var(--line)",
+  borderRadius: 6,
+  fontSize: 12,
+  fontWeight: 500,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
+const pageBtnStyle: React.CSSProperties = {
+  padding: "6px 12px",
+  background: "var(--panel)",
+  color: "var(--text)",
+  border: "1px solid var(--line)",
+  borderRadius: 6,
+  fontSize: 14,
+  cursor: "pointer",
+};

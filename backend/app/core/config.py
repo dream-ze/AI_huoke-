@@ -71,7 +71,11 @@ class Settings(BaseSettings):
     # AI Models
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama2-chinese"
+    OLLAMA_EMBEDDING_MODEL: str = "qwen3-embedding"  # 默认使用1024维模型，如需使用nomic-embed-text(768维)需同步修改EMBEDDING_DIMENSION和数据库迁移中的向量维度
     USE_CLOUD_MODEL: bool = False
+
+    # Embedding 配置
+    EMBEDDING_DIMENSION: int = 1024  # qwen3-embedding: 1024 (默认), nomic-embed-text: 768
 
     # Fire Engine (Volcano Engine)
     ARK_API_KEY: str = ""

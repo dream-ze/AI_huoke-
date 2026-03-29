@@ -942,18 +942,35 @@ class MvpInboxItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     platform = Column(String(50), nullable=False, default="xiaohongshu")
+    source_id = Column(String(200), nullable=True)           # 平台内容ID
     title = Column(String(500), nullable=False)
     content = Column(Text, nullable=False)
+    content_preview = Column(Text, nullable=True)             # 内容摘要（前200字）
     author = Column(String(200), nullable=True)
+    author_name = Column(String(200), nullable=True)          # 作者（冗余字段，便于查询）
+    publish_time = Column(DateTime, nullable=True)            # 发布时间
     source_url = Column(String(1000), nullable=True)
+    url = Column(String(500), nullable=True)                  # 原始链接（冗余字段）
     source_type = Column(String(50), nullable=False, default="collect")  # collect / manual
     keyword = Column(String(200), nullable=True)
     risk_level = Column(String(20), nullable=False, default="low")  # low / medium / high
     duplicate_status = Column(String(20), nullable=False, default="unique")  # unique / suspected / duplicate
     score = Column(Float, nullable=False, default=0.0)
+    quality_score = Column(Float, default=0.0)                # 质量评分
+    risk_score = Column(Float, default=0.0)                   # 风险评分
     tech_status = Column(String(30), nullable=False, default="parsed")  # raw / parsed / enriched
     biz_status = Column(String(30), nullable=False, default="pending")  # pending / to_material / discarded
+    clean_status = Column(String(20), default='pending')      # pending/cleaned/failed
+    quality_status = Column(String(20), default='pending')    # pending/good/normal/low
+    risk_status = Column(String(20), default='normal')        # normal/low_risk/high_risk
+    material_status = Column(String(20), default='not_in')    # not_in/in_material/ignored
+    cleaned_at = Column(DateTime, nullable=True)
+    screened_at = Column(DateTime, nullable=True)
+    like_count = Column(Integer, default=0)
+    comment_count = Column(Integer, default=0)
+    favorite_count = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class MvpMaterialItem(Base):
@@ -972,7 +989,14 @@ class MvpMaterialItem(Base):
     risk_level = Column(String(20), nullable=False, default="low")
     use_count = Column(Integer, nullable=False, default=0)
     source_inbox_id = Column(Integer, ForeignKey("mvp_inbox_items.id"), nullable=True)
+    inbox_item_id = Column(Integer, ForeignKey("mvp_inbox_items.id"), nullable=True)  # 关联收件箱条目
+    quality_score = Column(Float, nullable=True)  # 质量评分
+    risk_score = Column(Float, nullable=True)     # 风险评分
+    tags_json = Column(Text, nullable=True)       # JSON格式标签
+    topic = Column(String(100), nullable=True)    # 主题
+    persona = Column(String(100), nullable=True)  # 人设/受众画像
     created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # relationships
     tags = relationship("MvpTag", secondary="mvp_material_tag_rel", back_populates="materials")
@@ -1016,7 +1040,7 @@ class MvpKnowledgeItem(Base):
     style = Column(String(100), nullable=True)
     source_material_id = Column(Integer, ForeignKey("mvp_material_items.id"), nullable=True)
     use_count = Column(Integer, nullable=False, default=0)
-    embedding = Column(Text, nullable=True)  # 预留向量化字段，暂存JSON
+    embedding = Column(Vector(1024), nullable=True) if Vector else Column(Text, nullable=True)  # 向量化字段
     created_at = Column(DateTime, server_default=func.now())
     
     # 增强字段 - 结构化内容分类
@@ -1059,9 +1083,8 @@ class MvpKnowledgeChunk(Base):
     chunk_index = Column(Integer, default=0)  # 切块序号
     content = Column(Text, nullable=False)  # 切块内容
     metadata_json = Column(Text, nullable=True)  # JSON格式元数据
-    # 向量数据：先用Text存JSON，pgvector启用后可切换为 Vector(1536) 类型
-    # 使用 pgvector 时: embedding = Column(Vector(1536), nullable=True)
-    embedding = Column(Text, nullable=True)
+    # 向量数据：使用 pgvector Vector 类型 (1024维)
+    embedding = Column(Vector(1024), nullable=True) if Vector else Column(Text, nullable=True)
     token_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now())
 

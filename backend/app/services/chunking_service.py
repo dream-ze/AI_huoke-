@@ -1,5 +1,4 @@
 """知识切块服务 - 支持4种切块策略"""
-import json
 import logging
 import re
 from typing import List, Dict, Optional
@@ -33,6 +32,7 @@ class ChunkingService:
     async def process_and_store_chunks(
         self, knowledge_id: int, embedding_model: str = "volcano"
     ) -> Dict:
+        # embedding_model参数已废弃，保留以兼容旧调用
         """对一条知识进行切块、向量化、入库
         Args:
             knowledge_id: 知识条目ID
@@ -71,20 +71,19 @@ class ChunkingService:
         stored_count = 0
         for i, chunk_data in enumerate(chunks_data):
             try:
-                # 生成embedding
+                # 生成embedding - 新版EmbeddingService只接受text参数
                 embedding = await self.embedding_service.generate_embedding(
-                    chunk_data["content"], model=embedding_model
+                    chunk_data["content"]
                 )
-                embedding_json = json.dumps(embedding) if embedding else None
 
-                # 创建chunk记录
+                # 创建chunk记录 - embedding直接写入List[float]，无需json序列化
                 chunk = MvpKnowledgeChunk(
                     knowledge_id=knowledge_id,
                     chunk_type=chunk_data["chunk_type"],
                     chunk_index=i,
                     content=chunk_data["content"],
-                    metadata_json=json.dumps(chunk_data.get("metadata", {}), ensure_ascii=False),
-                    embedding=embedding_json,
+                    metadata_json=chunk_data.get("metadata", {}),
+                    embedding=embedding,  # 直接写入List[float]，pgvector Vector类型
                     token_count=len(chunk_data["content"]),  # 简易估算
                 )
                 self.db.add(chunk)

@@ -8,18 +8,35 @@ from datetime import datetime
 class InboxItemResponse(BaseModel):
     id: int
     platform: str
+    source_id: Optional[str] = None           # 平台内容ID
     title: str
     content: str
+    content_preview: Optional[str] = None     # 内容摘要
     author: Optional[str] = None
+    author_name: Optional[str] = None         # 作者
+    publish_time: Optional[str] = None        # 发布时间
     source_url: Optional[str] = None
+    url: Optional[str] = None                 # 原始链接
     source_type: str
     keyword: Optional[str] = None
     risk_level: str
     duplicate_status: str
     score: float
+    quality_score: float = 0.0                # 质量评分
+    risk_score: float = 0.0                   # 风险评分
     tech_status: str
     biz_status: str
+    clean_status: str = 'pending'             # pending/cleaned/failed
+    quality_status: str = 'pending'           # pending/good/normal/low
+    risk_status: str = 'normal'               # normal/low_risk/high_risk
+    material_status: str = 'not_in'           # not_in/in_material/ignored
+    like_count: int = 0
+    comment_count: int = 0
+    favorite_count: int = 0
+    cleaned_at: Optional[str] = None
+    screened_at: Optional[str] = None
     created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -62,8 +79,15 @@ class MaterialItemResponse(BaseModel):
     risk_level: str = "low"
     use_count: int = 0
     source_inbox_id: Optional[int] = None
+    inbox_item_id: Optional[int] = None      # 关联收件箱条目
+    quality_score: Optional[float] = None    # 质量评分
+    risk_score: Optional[float] = None       # 风险评分
+    tags_json: Optional[str] = None          # JSON格式标签
+    topic: Optional[str] = None              # 主题
+    persona: Optional[str] = None            # 人设/受众画像
     tags: List[TagResponse] = []
     created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -91,6 +115,11 @@ class MaterialCreateRequest(BaseModel):
 
 class UpdateTagsRequest(BaseModel):
     tag_ids: List[int]
+
+
+class BatchIdsRequest(BaseModel):
+    """批量ID请求"""
+    ids: List[int]
 
 
 # ── 知识库 ──
@@ -278,3 +307,17 @@ class ReindexResponse(BaseModel):
     success_count: int
     failed_count: int
     message: str
+
+
+class IngestRequest(BaseModel):
+    """采集入库请求"""
+    platform: Optional[str] = None
+    title: Optional[str] = None
+    content: Optional[str] = None
+    author_name: Optional[str] = None
+    publish_time: Optional[str] = None
+    url: Optional[str] = None
+    source_id: Optional[str] = None
+    like_count: int = 0
+    comment_count: int = 0
+    favorite_count: int = 0

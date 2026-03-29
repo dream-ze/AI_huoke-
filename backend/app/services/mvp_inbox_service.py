@@ -9,7 +9,8 @@ class MvpInboxService:
         self.db = db
 
     def list_inbox(self, page=1, size=20, status=None, platform=None, 
-                   source_type=None, risk_level=None, duplicate_status=None, keyword=None):
+                   source_type=None, risk_level=None, duplicate_status=None, keyword=None,
+                   clean_status=None, quality_status=None, risk_status=None, material_status=None):
         """列表+筛选+分页"""
         try:
             q = self.db.query(MvpInboxItem)
@@ -23,10 +24,20 @@ class MvpInboxService:
                 q = q.filter(MvpInboxItem.risk_level == risk_level)
             if duplicate_status:
                 q = q.filter(MvpInboxItem.duplicate_status == duplicate_status)
+            # 新增字段筛选
+            if clean_status:
+                q = q.filter(MvpInboxItem.clean_status == clean_status)
+            if quality_status:
+                q = q.filter(MvpInboxItem.quality_status == quality_status)
+            if risk_status:
+                q = q.filter(MvpInboxItem.risk_status == risk_status)
+            if material_status:
+                q = q.filter(MvpInboxItem.material_status == material_status)
             if keyword:
+                # 搜索 title 和 content_preview
                 q = q.filter(or_(
                     MvpInboxItem.title.ilike(f"%{keyword}%"),
-                    MvpInboxItem.content.ilike(f"%{keyword}%"),
+                    MvpInboxItem.content_preview.ilike(f"%{keyword}%"),
                     MvpInboxItem.keyword.ilike(f"%{keyword}%")
                 ))
             total = q.count()

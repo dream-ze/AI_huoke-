@@ -1,10 +1,15 @@
-"""混合检索服务 - 关键词+向量+元数据过滤+rerank"""
+"""混合检索服务 - 关键词+向量+元数据过滤+rerank
+
+改造说明 (Task #4):
+- 向量检索使用 pgvector 原生 cosine_distance 算子 (<=>)
+- 不再手动解析 JSON embedding + 计算相似度
+- 使用 SQLAlchemy 的 pgvector 支持
+"""
 import json
 import logging
-import math
 from typing import List, Dict, Optional, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_, func, text
+from sqlalchemy import or_, func
 
 from app.models.models import MvpKnowledgeItem, MvpKnowledgeChunk
 from app.services.embedding_service import get_embedding_service
@@ -202,46 +207,62 @@ class HybridSearchService:
         top_k: int = 20,
         model: str = "volcano",
     ) -> List[ChunkSearchResult]:
-        """向量检索"""
+        """向量检索 - 使用 pgvector 原生 cosine_distance 算子"""
         if not query or not knowledge_ids:
             return []
-        
-        # 生成query的embedding
-        query_embedding = await self.embedding_service.generate_embedding(query, model=model)
+
+        # 生成 query 的 embedding
+        query_embedding = await self.embedding_service.generate_embedding(query)
         if not query_embedding:
             logger.warning("向量生成失败，跳过向量检索")
             return []
-        
-        # 从数据库获取有embedding的chunks
-        chunks = (
-            self.db.query(MvpKnowledgeChunk)
-            .filter(
-                MvpKnowledgeChunk.knowledge_id.in_(knowledge_ids),
-                MvpKnowledgeChunk.embedding.isnot(None),
-                MvpKnowledgeChunk.embedding != "",
+
+        return await self._vector_recall(query_embedding, knowledge_ids, limit=top_k)
+
+    async def _vector_recall(
+        self,
+        query_embedding: List[float],
+        candidate_ids: List[int],
+        limit: int = 20
+    ) -> List[ChunkSearchResult]:
+        """使用 pgvector 原生向量检索
+
+        使用 cosine_distance (<=>) 算子，距离越小越相似
+        相似度分数 = 1 - distance
+        """
+        # 使用 pgvector 的 cosine_distance 算子进行检索
+        # 注意: pgvector 的 <=> 返回的是距离，范围 [0, 2]，越小越相似
+        results_query = (
+            self.db.query(
+                MvpKnowledgeChunk,
+                MvpKnowledgeChunk.embedding.cosine_distance(query_embedding).label('distance')
             )
-            .limit(200)  # 限制计算量
-            .all()
+            .filter(
+                MvpKnowledgeChunk.knowledge_id.in_(candidate_ids),
+                MvpKnowledgeChunk.embedding.isnot(None)
+            )
+            .order_by('distance')
+            .limit(limit)
         )
-        
+
+        rows = results_query.all()
+
         results = []
-        for chunk in chunks:
+        for chunk, distance in rows:
             try:
-                chunk_embedding = json.loads(chunk.embedding)
-                if not chunk_embedding:
-                    continue
-                # 余弦相似度
-                similarity = self._cosine_similarity(query_embedding, chunk_embedding)
-                
+                # cosine_distance 范围 [0, 2]，转换为相似度分数 [1, -1]
+                # 通常距离 < 1 表示相似，我们映射到 0-1 范围便于展示
+                similarity = 1.0 - (distance / 2.0)
+
                 metadata = {}
                 if chunk.metadata_json:
                     try:
                         metadata = json.loads(chunk.metadata_json)
                     except:
                         pass
-                
+
                 ki = self._get_knowledge_item_info(chunk.knowledge_id)
-                
+
                 results.append(ChunkSearchResult(
                     chunk_id=chunk.id,
                     knowledge_id=chunk.knowledge_id,
@@ -253,29 +274,12 @@ class HybridSearchService:
                     knowledge_item=ki,
                 ))
             except Exception as e:
-                logger.debug(f"向量检索跳过chunk {chunk.id}: {e}")
+                logger.debug(f"向量检索跳过 chunk {chunk.id}: {e}")
                 continue
-        
+
+        # 按相似度降序排列（pgvector 已经按距离升序排列，这里保持一致）
         results.sort(key=lambda x: x.score, reverse=True)
-        return results[:top_k]
-    
-    def _cosine_similarity(self, vec_a: List[float], vec_b: List[float]) -> float:
-        """计算余弦相似度"""
-        if not vec_a or not vec_b:
-            return 0.0
-        
-        min_len = min(len(vec_a), len(vec_b))
-        vec_a = vec_a[:min_len]
-        vec_b = vec_b[:min_len]
-        
-        dot_product = sum(a * b for a, b in zip(vec_a, vec_b))
-        norm_a = math.sqrt(sum(a * a for a in vec_a))
-        norm_b = math.sqrt(sum(b * b for b in vec_b))
-        
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        
-        return dot_product / (norm_a * norm_b)
+        return results
     
     def _merge_and_dedupe(
         self,
