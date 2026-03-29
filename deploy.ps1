@@ -105,12 +105,7 @@ if (Test-Path "$DesktopDir\dist\index.html") {
 # ── Step 4: 远程执行部署 ─────────────────────────────────────────
 Write-Host ""
 Write-Host "[4/4] 在服务器执行 deploy.sh..." -ForegroundColor Green
-Run-SSH @"
-cd /opt/zhihuokeke/backend
-sed -i 's/\r//' deploy.sh entrypoint.sh setup-venv.sh 2>/dev/null || true
-chmod +x deploy.sh entrypoint.sh setup-venv.sh
-bash deploy.sh
-"@
+Run-SSH "cd /opt/zhihuokeke/backend && sed -i 's/\r$//' deploy.sh entrypoint.sh setup-venv.sh 2>/dev/null || true && chmod +x deploy.sh entrypoint.sh setup-venv.sh && bash deploy.sh"
 
 # ── 完成 ─────────────────────────────────────────────────────────
 Write-Host ""
