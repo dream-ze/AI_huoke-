@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { generateFullPipeline, mvpComplianceCheck, getKnowledgeLibraries, submitFeedback, getFeedbackTags } from "../../lib/api";
 import { FullPipelineResponse, KnowledgeLibraryStat } from "../../types";
+import { copyToClipboard } from "../../utils/clipboard";
 
 // 选项配置
 const PLATFORM_OPTIONS = [
@@ -51,6 +52,7 @@ const MODEL_OPTIONS = [
 
 // 版本名称映射
 const VERSION_LABELS: Record<string, string> = {
+  rewrite_base: "基础改写版",
   professional: "专业型",
   casual: "口语型",
   seeding: "种草型",
@@ -58,6 +60,7 @@ const VERSION_LABELS: Record<string, string> = {
 
 // 版本颜色配置
 const VERSION_COLORS: Record<string, { border: string; bg: string }> = {
+  rewrite_base: { border: "#64748b", bg: "#f8fafc" },
   professional: { border: "#3b82f6", bg: "#eff6ff" },
   casual: { border: "#f97316", bg: "#fff7ed" },
   seeding: { border: "#ec4899", bg: "#fdf2f8" },
@@ -302,8 +305,8 @@ export default function MvpWorkbenchPage() {
 
   // 复制功能
   const handleCopy = async (text: string, idx?: number) => {
-    try {
-      await navigator.clipboard.writeText(text);
+    const success = await copyToClipboard(text);
+    if (success) {
       if (idx !== undefined) {
         setCopiedIdx(idx);
         setTimeout(() => setCopiedIdx(null), 2000);
@@ -311,21 +314,17 @@ export default function MvpWorkbenchPage() {
         setCopiedFinal(true);
         setTimeout(() => setCopiedFinal(false), 2000);
       }
-    } catch {
-      // fallback - do nothing
     }
   };
-  
+
   // 复制版本文案
   const handleCopyVersion = async (text: string, versionKey: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
+    const success = await copyToClipboard(text);
+    if (success) {
       setCopiedVersions(prev => ({ ...prev, [versionKey]: true }));
       setTimeout(() => {
         setCopiedVersions(prev => ({ ...prev, [versionKey]: false }));
       }, 2000);
-    } catch {
-      // fallback
     }
   };
 
@@ -636,8 +635,8 @@ export default function MvpWorkbenchPage() {
                 </div>
               )}
 
-              {/* 三个版本卡片 */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+              {/* 版本卡片 - 4个版本：基础改写版 + 专业型 + 口语型 + 种草型 */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
                 {result.versions.map((ver, idx) => {
                   const versionLabel = VERSION_LABELS[ver.style] || ver.style;
                   const colors = VERSION_COLORS[ver.style] || { border: "var(--line)", bg: "var(--panel)" };

@@ -7,6 +7,9 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
+# Install Playwright browser and dependencies for internal collector
+RUN playwright install chromium && playwright install-deps chromium
+
 # Copy application code
 COPY . .
 

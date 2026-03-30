@@ -161,4 +161,10 @@ class Settings(BaseSettings):
     BROWSER_COLLECTOR_BASE_URL: str = "http://127.0.0.1:8005"
     BROWSER_COLLECTOR_TIMEOUT_SECONDS: int = 180
 
+    # Browser configuration for internal Playwright-based collector
+    BROWSER_HEADLESS: bool = True
+    BROWSER_VIEWPORT_WIDTH: int = 1440
+    BROWSER_VIEWPORT_HEIGHT: int = 900
+    BROWSER_TIMEOUT_MS: int = 30000
+
 settings = Settings()

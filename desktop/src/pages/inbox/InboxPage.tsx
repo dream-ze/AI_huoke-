@@ -8,6 +8,7 @@ import {
   updateMaterialInboxStatus,
 } from "../../lib/api";
 import { CollectDetail, CollectGenerationTask } from "../../types";
+import { copyToClipboard } from "../../utils/clipboard";
 
 type InboxRow = {
   id: number;
@@ -592,7 +593,7 @@ export function InboxPage() {
                           <button
                             className="ghost"
                             type="button"
-                            onClick={() => navigator.clipboard.writeText(`${copy.title}\n\n${copy.content}`)}
+                            onClick={() => copyToClipboard(`${copy.title}\n\n${copy.content}`)}
                             style={{ fontSize: 12, padding: "4px 8px" }}
                           >
                             复制

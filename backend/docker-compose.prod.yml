@@ -7,7 +7,7 @@ services:
 
   # ── PostgreSQL 数据库 ────────────────────────────────────
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg15
     container_name: zhihuokeke-db
     restart: unless-stopped
     environment:

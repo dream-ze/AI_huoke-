@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { analyzeCollect, getCollectDetail, listCollect, rewriteCollect, submitManualToInbox } from "../../lib/api";
 import { CollectDetail, CollectItem } from "../../types";
+import { copyToClipboard } from "../../utils/clipboard";
 
 const DRAFT_KEY = "zhk_material_editor_draft";
 const CONTENT_LIMITS: Record<string, number> = {
@@ -439,7 +440,7 @@ export function MaterialsPage() {
                               <button
                                 className="ghost"
                                 type="button"
-                                onClick={() => navigator.clipboard.writeText(`${copy.title}\n\n${copy.content}`)}
+                                onClick={() => copyToClipboard(`${copy.title}\n\n${copy.content}`)}
                                 style={{ fontSize: 12, padding: "4px 8px" }}
                               >
                                 复制

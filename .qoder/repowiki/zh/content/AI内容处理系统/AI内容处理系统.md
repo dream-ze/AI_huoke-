@@ -4,6 +4,10 @@
 **本文引用的文件**
 - [backend/app/main.py](file://backend/app/main.py)
 - [backend/app/api/endpoints/mvp_routes.py](file://backend/app/api/endpoints/mvp_routes.py)
+- [backend/app/services/pipeline_service.py](file://backend/app/services/pipeline_service.py)
+- [backend/app/services/cleaning_service.py](file://backend/app/services/cleaning_service.py)
+- [backend/app/services/extraction_service.py](file://backend/app/services/extraction_service.py)
+- [backend/app/services/quality_screening_service.py](file://backend/app/services/quality_screening_service.py)
 - [backend/app/services/mvp_generate_service.py](file://backend/app/services/mvp_generate_service.py)
 - [backend/app/services/mvp_compliance_service.py](file://backend/app/services/mvp_compliance_service.py)
 - [backend/app/services/mvp_rewrite_service.py](file://backend/app/services/mvp_rewrite_service.py)
@@ -17,51 +21,64 @@
 - [backend/app/schemas/mvp_schemas.py](file://backend/app/schemas/mvp_schemas.py)
 - [backend/app/models/models.py](file://backend/app/models/models.py)
 - [backend/alembic/versions/20260328_02_add_mvp_core_tables.py](file://backend/alembic/versions/20260328_02_add_mvp_core_tables.py)
+- [backend/app/core/config.py](file://backend/app/core/config.py)
 </cite>
 
 ## 更新摘要
 **所做更改**
-- 完全重写了系统架构，从原有的AI内容处理系统转换为MVP的AI生成和合规检查系统
-- 新增了完整的MVP数据模型和数据库表结构
-- 实现了从收件箱到素材库再到知识库的完整内容处理流水线
-- 集成了混合检索（关键词+向量+Rerank）的RAG系统
-- 新增了多版本内容生成、合规检查、爆款仿写等核心功能
-- 完善了标签系统、知识库分库管理和自动入库管道
+- 完全重写了系统架构，从原有的AI内容处理系统转换为四层处理管道系统
+- 新增PipelineService作为中央协调器，串联清洗、筛选、入库全流程
+- 新增CleaningService、ExtractionService、QualityScreeningService三个核心处理服务
+- 实现了从采集到知识库的完整自动化流水线
+- 新增自动入库Pipeline和批量处理能力
+- 完善了结构化抽取和质量评分体系
 
 ## 目录
 1. [简介](#简介)
 2. [系统架构概览](#系统架构概览)
-3. [MVP核心数据模型](#mvp核心数据模型)
-4. [内容处理流水线](#内容处理流水线)
-5. [AI生成系统](#ai生成系统)
-6. [合规检查系统](#合规检查系统)
-7. [知识库与RAG系统](#知识库与rag系统)
-8. [混合检索与向量化](#混合检索与向量化)
-9. [标签与内容分类](#标签与内容分类)
-10. [API接口与使用指南](#api接口与使用指南)
-11. [性能优化与最佳实践](#性能优化与最佳实践)
-12. [故障排查与监控](#故障排查与监控)
-13. [总结](#总结)
+3. [四层处理管道系统](#四层处理管道系统)
+4. [MVP核心数据模型](#mvp核心数据模型)
+5. [内容处理流水线](#内容处理流水线)
+6. [AI生成系统](#ai生成系统)
+7. [合规检查系统](#合规检查系统)
+8. [知识库与RAG系统](#知识库与rag系统)
+9. [混合检索与向量化](#混合检索与向量化)
+10. [标签与内容分类](#标签与内容分类)
+11. [API接口与使用指南](#api接口与使用指南)
+12. [性能优化与最佳实践](#性能优化与最佳实践)
+13. [故障排查与监控](#故障排查与监控)
+14. [总结](#总结)
 
 ## 简介
-智获客AI内容处理系统现已升级为MVP（最小可行产品）版本，提供完整的AI内容生成、合规检查和知识管理能力。系统采用现代化的微服务架构，支持多平台内容生成、智能合规审核、RAG检索增强和自动化内容处理流水线。
+智获客AI内容处理系统现已升级为四层处理管道系统，提供完整的AI内容生成、合规检查和知识管理能力。新系统采用现代化的微服务架构，通过PipelineService作为中央协调器，实现了从内容采集到知识库管理的完整自动化流水线。
 
 新系统的核心特性包括：
+- **四层处理管道**：采集→清洗→筛选→入库的完整处理流程
+- **智能结构化抽取**：基于Ollama的AI驱动内容维度抽取
+- **质量评分体系**：综合质量评分和风险评估机制
+- **自动入库Pipeline**：支持单条和批量内容自动处理
 - **多版本内容生成**：支持专业型、口语型、种草型三种风格的自动内容生成
 - **智能合规检查**：双引擎合规审核（规则匹配+大模型语义检测）
 - **RAG检索增强**：混合检索系统（关键词+向量+重排序）
-- **自动化流水线**：从收件箱采集到知识库管理的完整内容处理流程
 - **知识库分库管理**：按内容类型和用途的结构化知识管理
 
 ## 系统架构概览
-新系统采用分层架构设计，主要分为四个层次：
+新系统采用四层处理管道架构，通过PipelineService作为中央协调器，串联各个处理服务：
 
 ```mermaid
 graph TB
 subgraph "API层"
 ROUTES["MVP路由层<br/>/api/mvp/*"]
 end
-subgraph "服务层"
+subgraph "管道协调层"
+PIPELINE["PipelineService<br/>中央协调器"]
+end
+subgraph "处理服务层"
+CLEAN["CleaningService<br/>内容清洗"]
+EXTRACT["ExtractionService<br/>结构化抽取"]
+SCREEN["QualityScreeningService<br/>质量筛选"]
+end
+subgraph "业务服务层"
 GEN_SERVICE["生成服务<br/>MvpGenerateService"]
 COMP_SERVICE["合规服务<br/>MvpComplianceService"]
 KNOW_SERVICE["知识服务<br/>MvpKnowledgeService"]
@@ -73,19 +90,22 @@ subgraph "AI能力层"
 PROMPTS["提示词模板<br/>mvp_*.txt"]
 EMBEDDING["向量化服务<br/>EmbeddingService"]
 AI_SERVICE["AI服务<br/>AIService"]
-end
+END
 subgraph "数据层"
 MODELS["MVP数据模型<br/>Models.py"]
 DB["PostgreSQL数据库"]
 end
-ROUTES --> GEN_SERVICE
-ROUTES --> COMP_SERVICE
-ROUTES --> KNOW_SERVICE
+ROUTES --> PIPELINE
+PIPELINE --> CLEAN
+PIPELINE --> EXTRACT
+PIPELINE --> SCREEN
+PIPELINE --> GEN_SERVICE
+PIPELINE --> COMP_SERVICE
+PIPELINE --> KNOW_SERVICE
 GEN_SERVICE --> AI_SERVICE
 COMP_SERVICE --> AI_SERVICE
 KNOW_SERVICE --> HYBRID_SERVICE
 HYBRID_SERVICE --> CHUNK_SERVICE
-CHUNK_SERVICE --> EMBEDDING
 GEN_SERVICE --> MODELS
 COMP_SERVICE --> MODELS
 KNOW_SERVICE --> MODELS
@@ -93,12 +113,53 @@ MODELS --> DB
 ```
 
 **图表来源**
+- [backend/app/services/pipeline_service.py](file://backend/app/services/pipeline_service.py)
+- [backend/app/services/cleaning_service.py](file://backend/app/services/cleaning_service.py)
+- [backend/app/services/extraction_service.py](file://backend/app/services/extraction_service.py)
+- [backend/app/services/quality_screening_service.py](file://backend/app/services/quality_screening_service.py)
 - [backend/app/api/endpoints/mvp_routes.py](file://backend/app/api/endpoints/mvp_routes.py)
-- [backend/app/services/mvp_generate_service.py](file://backend/app/services/mvp_generate_service.py)
-- [backend/app/services/mvp_compliance_service.py](file://backend/app/services/mvp_compliance_service.py)
-- [backend/app/services/mvp_knowledge_service.py](file://backend/app/services/mvp_knowledge_service.py)
-- [backend/app/services/hybrid_search_service.py](file://backend/app/services/hybrid_search_service.py)
-- [backend/app/services/chunking_service.py](file://backend/app/services/chunking_service.py)
+
+## 四层处理管道系统
+系统采用四层处理管道架构，通过PipelineService统一协调各个处理阶段：
+
+### 管道层次结构
+```mermaid
+flowchart TD
+START["内容采集"] --> PIPELINE["PipelineService<br/>中央协调器"]
+PIPELINE --> CLEAN["清洗层<br/>CleaningService"]
+PIPELINE --> EXTRACT["抽取层<br/>ExtractionService"]
+PIPELINE --> SCREEN["筛选层<br/>QualityScreeningService"]
+PIPELINE --> MATERIAL["入库层<br/>素材库/Material库"]
+MATERIAL --> KNOWLEDGE["知识库<br/>MvpKnowledgeItem"]
+```
+
+### 处理服务职责
+
+**清洗服务（CleaningService）**
+- HTML标签清理和标准化
+- Emoji和噪声字符处理
+- 空白字符和换行标准化
+- 内容长度截断和去重检测
+- 平台字段标准化
+
+**抽取服务（ExtractionService）**
+- 基于Ollama的结构化内容抽取
+- 目标人群、内容类型、主题等维度识别
+- 风险点检测和钩子句提取
+- JSON格式的结构化输出
+
+**质量筛选服务（QualityScreeningService）**
+- 热度评分（点赞、评论、收藏）
+- 完整度评分（字段完整性）
+- 可读性评分（文本结构）
+- 可仿写性评分（主题明确度）
+- 风险评分（违规词检测）
+
+**章节来源**
+- [backend/app/services/pipeline_service.py](file://backend/app/services/pipeline_service.py)
+- [backend/app/services/cleaning_service.py](file://backend/app/services/cleaning_service.py)
+- [backend/app/services/extraction_service.py](file://backend/app/services/extraction_service.py)
+- [backend/app/services/quality_screening_service.py](file://backend/app/services/quality_screening_service.py)
 
 ## MVP核心数据模型
 系统采用全新的MVP数据模型，支持完整的收件箱-素材库-知识库-生成结果管理：
@@ -119,7 +180,17 @@ string duplicate_status
 float score
 string tech_status
 string biz_status
+string clean_status
+string quality_status
+string risk_status
+string material_status
+float quality_score
+float risk_score
+datetime publish_time
 datetime created_at
+datetime updated_at
+datetime cleaned_at
+datetime screened_at
 }
 MVP_MATERIAL_ITEMS {
 int id PK
@@ -133,8 +204,11 @@ string author
 boolean is_hot
 string risk_level
 int use_count
-int source_inbox_id FK
+int inbox_item_id FK
+float quality_score
+float risk_score
 datetime created_at
+datetime updated_at
 }
 MVP_KNOWLEDGE_ITEMS {
 int id PK
@@ -165,6 +239,7 @@ string emotion_intensity
 string conversion_goal
 boolean is_hot
 datetime created_at
+datetime updated_at
 }
 MVP_GENERATION_RESULTS {
 int id PK
@@ -205,7 +280,7 @@ string keyword
 text suggestion
 string risk_level
 }
-MVP_INBOX_ITEMS ||--o{ MVP_MATERIAL_ITEMS : "source_inbox_id"
+MVP_INBOX_ITEMS ||--o{ MVP_MATERIAL_ITEMS : "inbox_item_id"
 MVP_MATERIAL_ITEMS ||--o{ MVP_KNOWLEDGE_ITEMS : "source_material_id"
 MVP_MATERIAL_ITEMS ||--o{ MVP_GENERATION_RESULTS : "source_material_id"
 MVP_MATERIAL_ITEMS ||--o{ MVP_MATERIAL_TAG_REL : "material_id"
@@ -224,23 +299,61 @@ MVP_TAGS ||--o{ MVP_MATERIAL_TAG_REL : "tag_id"
 系统提供完整的自动化内容处理流水线，从内容采集到最终生成：
 
 ```mermaid
-flowchart TD
-START["开始"] --> COLLECT["内容采集<br/>收件箱"]
-COLLECT --> CLEAN["内容清洗<br/>去重/标准化"]
-CLEAN --> TAG["标签识别<br/>自动标注"]
-TAG --> STRUCT["结构化抽取<br/>主题/人群/类型"]
-STRUCT --> KNOW["知识库入库<br/>自动分库"]
-KNOW --> MATERIAL["素材库入库<br/>待审核"]
-MATERIAL --> GENERATE["多版本生成<br/>专业/口语/种草"]
-GENERATE --> COMPLIANCE["合规检查<br/>双引擎审核"]
-COMPLIANCE --> FINAL["最终输出<br/>推荐版本"]
-FINAL --> PUBLISH["发布准备<br/>平台适配"]
-PUBLISH --> END["结束"]
+sequenceDiagram
+participant Client as "客户端"
+participant API as "MVP路由"
+participant Pipeline as "PipelineService"
+participant Clean as "CleaningService"
+participant Extract as "ExtractionService"
+participant Screen as "QualityScreeningService"
+participant Material as "素材库"
+participant Knowledge as "知识库"
+Client->>API : POST /api/mvp/inbox/ingest
+API->>Pipeline : ingest_from_collector()
+Pipeline->>Clean : clean_item()
+Clean-->>Pipeline : 清洗结果
+Pipeline->>Extract : extract_structured()
+Extract-->>Pipeline : 结构化抽取
+Pipeline->>Screen : screen_item()
+Screen-->>Pipeline : 质量评分
+Pipeline->>Material : promote_to_material()
+Material-->>Pipeline : 素材ID
+Pipeline->>Knowledge : build_knowledge()
+Knowledge-->>Pipeline : 知识ID
+Pipeline-->>API : 完整处理结果
+API-->>Client : 响应
 ```
 
+**图表来源**
+- [backend/app/services/pipeline_service.py](file://backend/app/services/pipeline_service.py)
+- [backend/app/api/endpoints/mvp_routes.py](file://backend/app/api/endpoints/mvp_routes.py)
+
+### 自动入库Pipeline流程
+系统提供两种自动入库方式：
+
+**单条自动入库**
+```mermaid
+flowchart TD
+INPUT["原始内容输入"] --> HASH["内容哈希计算"]
+HASH --> DUPE["去重检查"]
+DUPE --> EXTRACT["结构化抽取"]
+EXTRACT --> CATEGORY["分类推断"]
+CATEGORY --> LIBRARY["分库类型推断"]
+LIBRARY --> CREATE["创建知识条目"]
+CREATE --> CHUNK["内容切块"]
+CHUNK --> EMBED["向量化处理"]
+EMBED --> STORE["存储入库"]
+STORE --> DONE["处理完成"]
+```
+
+**批量自动入库**
+- 支持批量内容同时处理
+- 异步处理机制避免阻塞
+- 详细的处理统计和错误报告
+
 **章节来源**
+- [backend/app/services/pipeline_service.py](file://backend/app/services/pipeline_service.py)
 - [backend/app/services/mvp_knowledge_service.py](file://backend/app/services/mvp_knowledge_service.py)
-- [backend/app/services/mvp_generate_service.py](file://backend/app/services/mvp_generate_service.py)
 - [backend/app/api/endpoints/mvp_routes.py](file://backend/app/api/endpoints/mvp_routes.py)
 
 ## AI生成系统
@@ -444,6 +557,12 @@ MVP系统提供RESTful API接口，支持完整的AI内容处理流程：
 - `POST /api/mvp/inbox/{item_id}/to-material` - 转入素材库
 - `POST /api/mvp/inbox/{item_id}/mark-hot` - 标记爆款
 - `POST /api/mvp/inbox/{item_id}/discard` - 废弃条目
+- `POST /api/mvp/inbox/{item_id}/ignore` - 忽略条目
+- `POST /api/mvp/inbox/{item_id}/clean` - 单条清洗
+- `POST /api/mvp/inbox/batch-clean` - 批量清洗
+- `POST /api/mvp/inbox/{item_id}/screen` - 单条质量筛选
+- `POST /api/mvp/inbox/batch-screen` - 批量质量筛选
+- `POST /api/mvp/inbox/ingest` - 采集数据入收件箱
 
 #### 素材库管理
 - `GET /api/mvp/materials` - 列出素材库
@@ -452,6 +571,7 @@ MVP系统提供RESTful API接口，支持完整的AI内容处理流程：
 - `POST /api/mvp/materials/{material_id}/build-knowledge` - 从素材构建知识
 - `POST /api/mvp/materials/{material_id}/rewrite` - 爆款仿写
 - `POST /api/mvp/materials/{material_id}/tags` - 更新素材标签
+- `POST /api/mvp/inbox/{item_id}/to-material` - 收件箱→素材库
 
 #### 知识库管理
 - `GET /api/mvp/knowledge` - 列出知识库
@@ -471,6 +591,8 @@ MVP系统提供RESTful API接口，支持完整的AI内容处理流程：
 #### 自动入库管道
 - `POST /api/mvp/raw-contents/auto-pipeline` - 自动入库
 - `POST /api/mvp/raw-contents/auto-pipeline/batch` - 批量自动入库
+- `POST /api/mvp/inbox/batch-to-material` - 批量入素材库
+- `POST /api/mvp/inbox/batch-ignore` - 批量忽略
 
 **章节来源**
 - [backend/app/api/endpoints/mvp_routes.py](file://backend/app/api/endpoints/mvp_routes.py)
@@ -485,6 +607,7 @@ MVP系统在性能和可扩展性方面采用了多项优化措施：
 3. **分页查询**：大数据量场景下的分页处理
 4. **连接池**：数据库连接池管理，减少连接开销
 5. **批量操作**：支持批量入库和批量处理
+6. **非阻塞设计**：质量筛选和结构化抽取采用非阻塞模式
 
 ### 最佳实践建议
 1. **内容质量控制**：建立内容质量评估指标
@@ -492,6 +615,7 @@ MVP系统在性能和可扩展性方面采用了多项优化措施：
 3. **性能监控**：建立系统性能监控和告警机制
 4. **数据备份**：定期备份关键数据
 5. **版本管理**：提示词模板和规则的版本控制
+6. **AI服务配置**：合理配置Ollama等AI服务参数
 
 ## 故障排查与监控
 MVP系统提供了完善的故障排查和监控机制：
@@ -501,6 +625,8 @@ MVP系统提供了完善的故障排查和监控机制：
 2. **生成结果异常**：验证输入参数、检查AI服务可用性
 3. **合规检查错误**：确认合规规则配置和LLM服务状态
 4. **检索性能问题**：检查向量化服务和数据库索引
+5. **Pipeline处理失败**：检查各处理服务的日志和配置
+6. **Ollama服务不可用**：验证Ollama服务状态和模型加载
 
 ### 监控指标
 - 系统响应时间
@@ -508,15 +634,30 @@ MVP系统提供了完善的故障排查和监控机制：
 - AI服务调用次数
 - 数据库查询性能
 - 内存和CPU使用率
+- Pipeline处理吞吐量
+- 质量评分分布
+
+### 健康检查
+系统提供完整的健康检查接口：
+- `/api/system/ops/health` - 运行时健康检查
+- `/api/system/ops/readiness` - 就绪状态检查
+- 依赖服务状态监控（数据库、Redis、Ollama）
+
+**章节来源**
+- [backend/app/api/endpoints/system.py](file://backend/app/api/endpoints/system.py)
+- [backend/app/core/config.py](file://backend/app/core/config.py)
 
 ## 总结
-智获客AI内容处理系统已成功升级为MVP版本，提供了完整的AI内容生成、合规检查和知识管理能力。新系统采用现代化的架构设计，支持多平台内容生成、智能合规审核、RAG检索增强和自动化内容处理流水线。
+智获客AI内容处理系统已成功升级为四层处理管道系统，提供了完整的AI内容生成、合规检查和知识管理能力。新系统采用现代化的架构设计，通过PipelineService作为中央协调器，实现了从内容采集到最终发布的完整自动化流程。
 
 核心优势包括：
-- **完整的处理流水线**：从内容采集到最终发布的自动化流程
+- **完整的四层处理管道**：采集→清洗→筛选→入库的完整处理流程
+- **智能结构化抽取**：基于Ollama的AI驱动内容维度识别
+- **强大的质量评分体系**：综合质量评分和风险评估机制
+- **灵活的自动入库Pipeline**：支持单条和批量内容自动处理
 - **强大的AI生成能力**：多版本内容生成和智能优化
 - **严格的合规保障**：双引擎合规检查确保内容安全
 - **先进的检索系统**：混合检索提供精准的知识召回
 - **灵活的扩展性**：模块化设计支持功能扩展和定制
 
-系统为金融获客内容创作提供了强有力的技术支撑，显著提升了内容质量和生产效率。
+系统为金融获客内容创作提供了强有力的技术支撑，显著提升了内容质量和生产效率。通过PipelineService的统一协调，各处理服务能够高效协作，实现了从内容采集到知识库管理的完整自动化流程。

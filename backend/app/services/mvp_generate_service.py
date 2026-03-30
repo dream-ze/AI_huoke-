@@ -375,6 +375,22 @@ class MvpGenerateService:
                 if i < len(version_compliance_results):
                     v_dict["compliance"] = version_compliance_results[i]["compliance"] if version_compliance_results else None
                 versions_with_compliance.append(v_dict)
+                        
+            # Step 5.5: 对基础改写版进行合规检查
+            rewrite_base_compliance = await compliance_svc.check_async(
+                text=rewrite_base,
+                enable_llm=False,
+                model=model
+            )
+                        
+            # 将基础改写版作为第一个版本加入列表
+            rewrite_base_version = {
+                "style": "rewrite_base",
+                "title": "基础改写版",
+                "text": rewrite_base,
+                "compliance": rewrite_base_compliance
+            }
+            versions_with_compliance.insert(0, rewrite_base_version)
             
             logger.info("[Pipeline] 全链路生成成功完成")
                         
