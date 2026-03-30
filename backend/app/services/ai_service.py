@@ -28,19 +28,20 @@ class AIService:
         use_cloud: bool = False,
         user_id: int | None = None,
         scene: str = "general",
+        max_tokens: int | None = None,
     ) -> str:
         """Call LLM (Ollama or Cloud)"""
-        
+
         if use_cloud and settings.ARK_API_KEY:
-            return await self._call_ark(prompt, system_prompt, user_id=user_id, scene=scene)
+            return await self._call_ark(prompt, system_prompt, user_id=user_id, scene=scene, max_tokens=max_tokens)
         else:
-            return await self._call_ollama(prompt, system_prompt)
-    
-    async def _call_ollama(self, prompt: str, system_prompt: str = "") -> str:
+            return await self._call_ollama(prompt, system_prompt, max_tokens=max_tokens)
+
+    async def _call_ollama(self, prompt: str, system_prompt: str = "", max_tokens: int | None = None) -> str:
         """Call Ollama local model"""
         try:
             full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-            
+
             async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
                 response = await client.post(
                     f"{self.ollama_url}/api/generate",
@@ -49,9 +50,10 @@ class AIService:
                         "prompt": full_prompt,
                         "stream": False,
                         "temperature": 0.7,
+                        "num_predict": max_tokens or 800,  # 限制生成长度，加速响应
                     }
                 )
-                
+
                 if response.status_code == 200:
                     result = response.json()
                     return result.get("response", "")
@@ -59,13 +61,14 @@ class AIService:
                     raise Exception(f"Ollama error: {response.text}")
         except Exception as e:
             raise Exception(f"Failed to call Ollama: {str(e)}")
-    
+
     async def _call_ark(
         self,
         prompt: str,
         system_prompt: str = "",
         user_id: int | None = None,
         scene: str = "general",
+        max_tokens: int | None = None,
     ) -> str:
         """Call Volcano Engine (Fire Engine) using OpenAI-compatible chat/completions API"""
         if not settings.ARK_API_KEY:
@@ -79,6 +82,7 @@ class AIService:
         payload = {
             "model": settings.ARK_MODEL,
             "messages": messages,
+            "max_tokens": max_tokens or 800,  # 限制生成长度，加速响应
         }
 
         data = await self._post_ark_chat_completions(payload, user_id=user_id, scene=scene)

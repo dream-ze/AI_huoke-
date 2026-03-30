@@ -1,13 +1,27 @@
 """MVP 知识库服务"""
+import asyncio
 import hashlib
 import logging
 import re
 from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, case, desc
+from app.core.database import SessionLocal
 from app.models.models import MvpKnowledgeItem, MvpMaterialItem, MvpTag, MvpMaterialTagRel
 
 logger = logging.getLogger(__name__)
+
+
+# 分库类型定义
+LIBRARY_TYPES = {
+    "hot_content": "爆款内容",
+    "industry_phrases": "行业话术",
+    "platform_rules": "平台规则",
+    "audience_profile": "人群画像",
+    "account_positioning": "账号定位",
+    "prompt_templates": "提示词模板",
+    "compliance_rules": "合规规则",
+}
 
 
 class MvpKnowledgeService:
@@ -98,6 +112,53 @@ class MvpKnowledgeService:
             self.db.rollback()
             raise ValueError(f"构建知识失败: {str(e)}")
 
+    def batch_build_from_materials(self, material_ids: List[int]) -> dict:
+        """批量从素材构建知识，单条失败不影响整批
+        
+        Args:
+            material_ids: 素材ID列表
+            
+        Returns:
+            {
+                "total": int,
+                "success_count": int,
+                "failed_count": int,
+                "details": List[dict]
+            }
+        """
+        results = []
+        
+        for mid in material_ids:
+            try:
+                knowledge = self.build_from_material(mid)
+                results.append({
+                    "material_id": mid,
+                    "success": True,
+                    "knowledge_id": knowledge.id,
+                    "error": None
+                })
+            except Exception as e:
+                # 单条失败记录错误，继续处理下一条
+                results.append({
+                    "material_id": mid,
+                    "success": False,
+                    "knowledge_id": None,
+                    "error": str(e)
+                })
+                # 确保session状态干净，继续下一条
+                try:
+                    self.db.rollback()
+                except:
+                    pass
+        
+        success_count = sum(1 for r in results if r["success"])
+        return {
+            "total": len(material_ids),
+            "success_count": success_count,
+            "failed_count": len(material_ids) - success_count,
+            "details": results
+        }
+
     def search_knowledge(self, query: str, platform=None, audience=None, limit=5):
         """关键词检索知识（MVP版，预留向量化接口）"""
         try:
@@ -174,6 +235,61 @@ class MvpKnowledgeService:
             return "structured"
         else:
             return "structured"  # 默认
+
+    def auto_classify_library_type(self, knowledge_item) -> str:
+        """根据内容自动分类到分库"""
+        content = (knowledge_item.content or "").lower()
+        title = (knowledge_item.title or "").lower()
+        text = f"{title} {content}"
+        
+        # 规则分类
+        if any(kw in text for kw in ["合规", "风险", "违规", "法律", "监管"]):
+            return "compliance_rules"
+        if any(kw in text for kw in ["模板", "提示词", "prompt"]):
+            return "prompt_templates"
+        if any(kw in text for kw in ["规则", "规范", "审核", "社区公约"]):
+            return "platform_rules"
+        if any(kw in text for kw in ["人群", "用户画像", "受众", "消费者"]):
+            return "audience_profile"
+        if any(kw in text for kw in ["定位", "人设", "账号"]):
+            return "account_positioning"
+        if any(kw in text for kw in ["话术", "金句", "行业"]):
+            return "industry_phrases"
+        return "hot_content"
+
+    def get_library_stats(self) -> List[dict]:
+        """获取各分库统计"""
+        from sqlalchemy import func
+        results = self.db.query(
+            MvpKnowledgeItem.library_type,
+            func.count(MvpKnowledgeItem.id).label('count'),
+            func.max(MvpKnowledgeItem.updated_at).label('last_updated')
+        ).group_by(MvpKnowledgeItem.library_type).all()
+        
+        stats = []
+        for lib_type, label in LIBRARY_TYPES.items():
+            row = next((r for r in results if r.library_type == lib_type), None)
+            stats.append({
+                "library_type": lib_type,
+                "label": label,
+                "count": row.count if row else 0,
+                "last_updated": str(row.last_updated) if row and row.last_updated else None,
+            })
+        return stats
+
+    def list_by_library(self, library_type: str, page: int = 1, size: int = 20, keyword: str = "") -> dict:
+        """按分库类型列出知识条目"""
+        query = self.db.query(MvpKnowledgeItem).filter(
+            MvpKnowledgeItem.library_type == library_type
+        )
+        if keyword:
+            query = query.filter(
+                MvpKnowledgeItem.title.ilike(f"%{keyword}%") |
+                MvpKnowledgeItem.content.ilike(f"%{keyword}%")
+            )
+        total = query.count()
+        items = query.order_by(MvpKnowledgeItem.created_at.desc()).offset((page-1)*size).limit(size).all()
+        return {"items": items, "total": total, "page": page, "size": size}
 
     def create_knowledge(self, data: dict):
         """手动创建知识条目"""
@@ -579,17 +695,21 @@ class MvpKnowledgeService:
             try:
                 import asyncio
                 from app.services.chunking_service import get_chunking_service
-                chunking = get_chunking_service(self.db)
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 在已有事件循环中，创建任务
-                    asyncio.ensure_future(
-                        chunking.process_and_store_chunks(knowledge.id, embedding_model="volcano")
-                    )
+
+                async def run_chunking_task():
+                    task_db = SessionLocal()
+                    try:
+                        chunking = get_chunking_service(task_db)
+                        await chunking.process_and_store_chunks(knowledge.id, embedding_model="volcano")
+                    finally:
+                        task_db.close()
+
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    asyncio.run(run_chunking_task())
                 else:
-                    loop.run_until_complete(
-                        chunking.process_and_store_chunks(knowledge.id, embedding_model="volcano")
-                    )
+                    loop.create_task(run_chunking_task())
             except Exception as e:
                 logger.warning(f"切块向量化失败(不影响入库): {e}")
             
@@ -659,8 +779,8 @@ class MvpKnowledgeService:
         goal: str = "",
         embedding_model: str = "volcano",
     ) -> dict:
-        """升级版: 使用混合检索从多个分库召回知识
-        
+        """升级版: 使用混合检索从多个分库并发召回知识 (Task #11 并发优化)
+            
         Returns:
             {
                 "hot_content": [...],
@@ -673,7 +793,7 @@ class MvpKnowledgeService:
         """
         from app.services.hybrid_search_service import get_hybrid_search_service
         hybrid = get_hybrid_search_service(self.db)
-        
+            
         # 构建检索query (组合用户选择的条件作为语义查询)
         query_parts = []
         if platform:
@@ -685,7 +805,7 @@ class MvpKnowledgeService:
         if goal:
             query_parts.append(goal)
         query = " ".join(query_parts) if query_parts else "内容创作"
-        
+            
         result = {
             "hot_content": [],
             "audience_insight": [],
@@ -694,69 +814,118 @@ class MvpKnowledgeService:
             "tone_template": None,
             "cta_templates": [],
         }
-        
+            
         try:
-            # 1. 爆款内容库召回 3~5条
-            hot_results = await hybrid.search(
-                query=query,
-                library_type="hot_content",
-                platform=platform or None,
-                audience=audience or None,
-                topic=topic or None,
-                top_k=5,
-                embedding_model=embedding_model,
+            # Task #11: 使用 asyncio.gather 并发检索所有分库
+            async def search_hot_content():
+                """爆款内容库召回 3~5条"""
+                return await hybrid.search(
+                    query=query,
+                    library_type="hot_content",
+                    platform=platform or None,
+                    audience=audience or None,
+                    topic=topic or None,
+                    top_k=3,  # 从5减少为3，压缩上下文
+                    embedding_model=embedding_model,
+                )
+                
+            async def search_audience_profile():
+                """人群洞察库召回 2~3条"""
+                return await hybrid.search(
+                    query=audience or query,
+                    library_type="audience_profile",
+                    audience=audience or None,
+                    top_k=2,  # 从3减少为2，压缩上下文
+                    embedding_model=embedding_model,
+                )
+                
+            async def search_platform_rules():
+                """平台规则库召回 3~5条"""
+                return await hybrid.search(
+                    query=platform or query,
+                    library_type="platform_rules",
+                    platform=platform or None,
+                    top_k=3,  # 从5减少为3，压缩上下文
+                    embedding_model=embedding_model,
+                )
+                
+            async def search_compliance_rules():
+                """审核规则库召回 3~5条"""
+                return await hybrid.search(
+                    query="风险 合规 敏感词",
+                    library_type="compliance_rules",
+                    top_k=3,  # 从5减少为3，压缩上下文
+                    embedding_model=embedding_model,
+                )
+                
+            async def search_account_positioning():
+                """账号语气库召回 1条"""
+                return await hybrid.search(
+                    query=f"{platform} {account_type} 语气",
+                    library_type="account_positioning",
+                    platform=platform or None,
+                    top_k=1,
+                    embedding_model=embedding_model,
+                )
+                
+            async def search_prompt_templates():
+                """CTA模板库召回 2~3条"""
+                return await hybrid.search(
+                    query=goal or "转化",
+                    library_type="prompt_templates",
+                    top_k=2,  # 从3减少为2，压缩上下文
+                    embedding_model=embedding_model,
+                )
+                
+            # 并发执行所有检索，return_exceptions=True 确保单个失败不影响整体
+            results = await asyncio.gather(
+                search_hot_content(),
+                search_audience_profile(),
+                search_platform_rules(),
+                search_compliance_rules(),
+                search_account_positioning(),
+                search_prompt_templates(),
+                return_exceptions=True
             )
-            result["hot_content"] = [r.to_dict() for r in hot_results]
-            
-            # 2. 人群洞察库召回 2~3条
-            audience_results = await hybrid.search(
-                query=audience or query,
-                library_type="audience_profile",
-                audience=audience or None,
-                top_k=3,
-                embedding_model=embedding_model,
-            )
-            result["audience_insight"] = [r.to_dict() for r in audience_results]
-            
-            # 3. 平台规则库召回 3~5条
-            platform_results = await hybrid.search(
-                query=platform or query,
-                library_type="platform_rules",
-                platform=platform or None,
-                top_k=5,
-                embedding_model=embedding_model,
-            )
-            result["platform_rules"] = [r.to_dict() for r in platform_results]
-            
-            # 4. 审核规则库召回 3~5条
-            risk_results = await hybrid.search(
-                query="风险 合规 敏感词",
-                library_type="compliance_rules",
-                top_k=5,
-                embedding_model=embedding_model,
-            )
-            result["risk_rules"] = [r.to_dict() for r in risk_results]
-            
-            # 5. 账号语气库召回 1条
-            tone_results = await hybrid.search(
-                query=f"{platform} {account_type} 语气",
-                library_type="account_positioning",
-                platform=platform or None,
-                top_k=1,
-                embedding_model=embedding_model,
-            )
-            if tone_results:
-                result["tone_template"] = tone_results[0].to_dict()
-            
-            # 6. CTA模板库召回 2~3条
-            cta_results = await hybrid.search(
-                query=goal or "转化",
-                library_type="prompt_templates",
-                top_k=3,
-                embedding_model=embedding_model,
-            )
-            result["cta_templates"] = [r.to_dict() for r in cta_results]
-            
+                
+            # 处理结果
+            # 1. 爆款内容
+            if not isinstance(results[0], Exception):
+                result["hot_content"] = [r.to_dict() for r in results[0]]
+            else:
+                logger.warning(f"爆款内容库检索失败: {results[0]}")
+                
+            # 2. 人群洞察
+            if not isinstance(results[1], Exception):
+                result["audience_insight"] = [r.to_dict() for r in results[1]]
+            else:
+                logger.warning(f"人群洞察库检索失败: {results[1]}")
+                
+            # 3. 平台规则
+            if not isinstance(results[2], Exception):
+                result["platform_rules"] = [r.to_dict() for r in results[2]]
+            else:
+                logger.warning(f"平台规则库检索失败: {results[2]}")
+                
+            # 4. 合规规则
+            if not isinstance(results[3], Exception):
+                result["risk_rules"] = [r.to_dict() for r in results[3]]
+            else:
+                logger.warning(f"合规规则库检索失败: {results[3]}")
+                
+            # 5. 账号语气
+            if not isinstance(results[4], Exception) and results[4]:
+                result["tone_template"] = results[4][0].to_dict()
+            else:
+                if isinstance(results[4], Exception):
+                    logger.warning(f"账号语气库检索失败: {results[4]}")
+                
+            # 6. CTA模板
+            if not isinstance(results[5], Exception):
+                result["cta_templates"] = [r.to_dict() for r in results[5]]
+            else:
+                logger.warning(f"CTA模板库检索失败: {results[5]}")
+    
         except Exception as e:
             logger.error(f"混合检索异常: {e}")
             # 降级: 使用原有检索方法

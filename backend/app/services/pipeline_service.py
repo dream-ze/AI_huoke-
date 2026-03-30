@@ -169,18 +169,33 @@ class PipelineService:
                     extraction = await self.extraction.extract_structured(
                         item.content or "", item.platform or ""
                     )
-                    # 填充 tags_json/topic/persona
+                    # 填充 tags_json/topic/persona - 完整结构化字段
                     tags = {
                         "audience": extraction.get("audience"),
                         "scene": extraction.get("scene"),
                         "style": extraction.get("style"),
                         "content_type": extraction.get("content_type"),
+                        "risk_points": extraction.get("risk_points", []),
+                        "hook_sentence": extraction.get("hook_sentence"),
+                        "pain_point": extraction.get("pain_point"),
+                        "solution": extraction.get("solution"),
+                        "summary": extraction.get("summary"),
                     }
                     material.tags_json = json.dumps(tags, ensure_ascii=False)
                     material.topic = extraction.get("topic")
                     material.persona = extraction.get("audience")
+                    # 同步更新其他可用字段
+                    if extraction.get("summary"):
+                        material.content_preview = extraction["summary"][:500] if len(extraction["summary"]) > 500 else extraction["summary"]
                 except Exception as e:
-                    logger.warning(f"Extraction failed (non-blocking): {e}")
+                    logger.warning(f"结构化抽取失败，使用规则推断: {e}")
+                    # 降级：规则推断 topic
+                    material.topic = self._infer_topic_from_content(item.content or "")
+                    material.persona = ""
+            else:
+                # ExtractionService 未初始化，使用规则推断
+                material.topic = self._infer_topic_from_content(item.content or "")
+                material.persona = ""
             
             self.db.add(material)
             
@@ -234,7 +249,15 @@ class PipelineService:
                     "message": "Knowledge already exists"
                 }
             
-            # 2. 创建 MvpKnowledgeItem
+            # 2. 解析素材的标签数据
+            tags = {}
+            if material.tags_json:
+                try:
+                    tags = json.loads(material.tags_json) if isinstance(material.tags_json, str) else material.tags_json
+                except Exception:
+                    pass
+            
+            # 3. 创建 MvpKnowledgeItem（完整结构化字段）
             knowledge = MvpKnowledgeItem(
                 title=material.title,
                 content=material.content,
@@ -242,54 +265,39 @@ class PipelineService:
                 source_material_id=material_id,
                 source_url=material.source_url,
                 author=material.author,
-                like_count=material.like_count,
-                comment_count=material.comment_count,
+                # 结构化字段
+                audience=material.persona or tags.get("audience", ""),
+                style=tags.get("style", ""),
+                topic=material.topic or tags.get("topic", ""),
+                content_type=tags.get("content_type", ""),
+                summary=tags.get("summary", ""),
+                hook_sentence=tags.get("hook_sentence", ""),
+                risk_level=tags.get("risk_level", "low") if tags.get("risk_points") else "low",
+                # 分库与层级
+                library_type=self._infer_library_type(
+                    material.topic or tags.get("topic", ""),
+                    tags.get("content_type", "")
+                ),
+                layer="structured",
+                # 互动数据
+                like_count=material.like_count or 0,
+                comment_count=material.comment_count or 0,
+                collect_count=getattr(material, 'favorite_count', 0) or 0,
+                is_hot=getattr(material, 'is_hot', False) or False,
             )
-            
-            # 尝试从 tags_json 解析结构化字段
-            if material.tags_json:
-                try:
-                    tags = json.loads(material.tags_json) if isinstance(material.tags_json, str) else material.tags_json
-                    knowledge.audience = tags.get("audience")
-                    knowledge.style = tags.get("style")
-                except Exception:
-                    pass
-            
-            knowledge.topic = material.topic
-            knowledge.persona = material.persona
             
             self.db.add(knowledge)
             self.db.flush()  # 获取 knowledge.id
             
-            # 3. 内容分块（按段落，每块不超过500字）
-            content = material.content or ""
-            chunks = self._split_content(content, max_chunk_size=500)
-            
-            # 4. 为每个 chunk 生成 embedding 并创建记录
-            chunk_count = 0
-            for idx, chunk_text in enumerate(chunks):
-                if not chunk_text.strip():
-                    continue
-                
-                chunk = MvpKnowledgeChunk(
-                    knowledge_id=knowledge.id,
-                    chunk_type="paragraph",
-                    chunk_index=idx,
-                    content=chunk_text,
-                    token_count=len(chunk_text),
-                )
-                
-                # 生成 embedding
-                try:
-                    embedding = await self.embedding.generate_embedding(chunk_text)
-                    if embedding:
-                        # 直接写入 List[float] 到 Vector 列
-                        chunk.embedding = embedding
-                except Exception as e:
-                    logger.warning(f"Embedding generation failed for chunk {idx}: {e}")
-                
-                self.db.add(chunk)
-                chunk_count += 1
+            # 4. 调用 chunking_service 进行分块 + embedding
+            from app.services.chunking_service import ChunkingService
+            chunking_svc = ChunkingService(self.db)
+            try:
+                chunk_result = await chunking_svc.process_and_store_chunks(knowledge.id)
+                chunk_count = chunk_result.get("chunk_count", 0)
+            except Exception as e:
+                logger.error(f"Chunking failed for knowledge {knowledge.id}: {e}")
+                chunk_count = 0
             
             self.db.commit()
             self.db.refresh(knowledge)
@@ -476,5 +484,34 @@ class PipelineService:
         # 保存最后一块
         if current_chunk:
             chunks.append(current_chunk)
-        
+    
         return chunks
+    
+    def _infer_topic_from_content(self, content: str) -> str:
+        """从内容中规则推断主题"""
+        topic_keywords = {
+            "loan": ["贷款", "借款", "信贷", "利率", "放款"],
+            "credit": ["信用卡", "信用", "额度", "提额"],
+            "insurance": ["保险", "理赔", "投保", "保单"],
+            "investment": ["投资", "理财", "基金", "股票", "收益"],
+            "marketing": ["营销", "推广", "运营", "获客", "流量"],
+            "content_creation": ["创作", "写作", "文案", "内容", "爆款"],
+            "online_loan": ["网贷", "借款平台", "借呗", "微粒贷"],
+            "housing_fund": ["公积金", "房贷", "住房贷款"],
+        }
+        for topic, keywords in topic_keywords.items():
+            if any(kw in content for kw in keywords):
+                return topic
+        return "other"
+    
+    def _infer_library_type(self, topic: str, content_type: str) -> str:
+        """推断知识库分库类型"""
+        if content_type in ["规则", "rule", "Rule"]:
+            return "platform_rules"
+        if content_type in ["模板", "template", "Template"]:
+            return "prompt_templates"
+        if topic and any(kw in topic for kw in ["合规", "风险", "违规", "审核"]):
+            return "compliance_rules"
+        if topic and any(kw in topic for kw in ["人群", "用户", "画像", "受众"]):
+            return "audience_profile"
+        return "hot_content"  # 默认归入爆款内容

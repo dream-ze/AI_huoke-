@@ -30,6 +30,12 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    title: "合规管理",
+    items: [
+      { to: "/compliance-rules", label: "合规规则", icon: "🛡️" },
+    ],
+  },
+  {
     title: "业务管理",
     items: [
       { to: "/leads", label: "线索管理", icon: "👤" },

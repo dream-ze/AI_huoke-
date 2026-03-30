@@ -5,8 +5,16 @@ import {
   mvpGetKnowledge,
   mvpSearchKnowledge,
   mvpBuildKnowledgeFromMaterial,
+  getKnowledgeQualityRankings,
+  getLearningSuggestions,
+  applyWeightAdjustment,
+  // 知识图谱 API
+  buildKnowledgeGraph,
+  getGraphStats,
+  getKnowledgeGraph,
+  getTopicClusters,
 } from "../../lib/api";
-import { MvpKnowledgeItem } from "../../types";
+import { MvpKnowledgeItem, KnowledgeQualityRankingItem, LearningSuggestionItem } from "../../types";
 
 const PLATFORM_OPTIONS = [
   { value: "", label: "全部" },
@@ -91,6 +99,38 @@ export default function MvpKnowledgePage() {
   const [filterCategory, setFilterCategory] = useState("");
   const [searchKeyword, setSearchKeyword] = useState("");
   const [isSearchMode, setIsSearchMode] = useState(false);
+
+  // 质量面板状态
+  const [showQualityPanel, setShowQualityPanel] = useState(false);
+  const [qualityRankings, setQualityRankings] = useState<KnowledgeQualityRankingItem[]>([]);
+  const [learningSuggestions, setLearningSuggestions] = useState<LearningSuggestionItem[]>([]);
+  const [qualityLoading, setQualityLoading] = useState(false);
+  const [adjustLoading, setAdjustLoading] = useState(false);
+  const [suggestionStats, setSuggestionStats] = useState({
+    boost_candidates: 0,
+    downgrade_candidates: 0,
+    remove_candidates: 0,
+  });
+
+  // 知识图谱状态
+  const [activeTab, setActiveTab] = useState<'list' | 'graph'>('list');
+  const [graphStats, setGraphStats] = useState<{
+    node_count: number;
+    edge_count: number;
+    avg_degree: number;
+    nodes_with_relations: number;
+    nodes_with_embedding: number;
+    relation_type_stats: Record<string, number>;
+    connectivity_ratio: number;
+  } | null>(null);
+  const [graphData, setGraphData] = useState<{
+    nodes: any[];
+    edges: any[];
+    stats: any;
+  } | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [buildLoading, setBuildLoading] = useState(false);
+  const [topicClusters, setTopicClusters] = useState<any[]>([]);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -203,6 +243,115 @@ export default function MvpKnowledgePage() {
     navigate("/mvp-materials");
   };
 
+  // 获取质量排行榜
+  const fetchQualityRankings = useCallback(async () => {
+    setQualityLoading(true);
+    try {
+      const data = await getKnowledgeQualityRankings(20, 'desc');
+      setQualityRankings(data.items || []);
+    } catch (err) {
+      console.error('获取质量排行失败:', err);
+    } finally {
+      setQualityLoading(false);
+    }
+  }, []);
+
+  // 获取学习建议
+  const fetchLearningSuggestions = useCallback(async () => {
+    try {
+      const data = await getLearningSuggestions();
+      setLearningSuggestions(data.suggestions || []);
+      setSuggestionStats({
+        boost_candidates: data.boost_candidates || 0,
+        downgrade_candidates: data.downgrade_candidates || 0,
+        remove_candidates: data.remove_candidates || 0,
+      });
+    } catch (err) {
+      console.error('获取学习建议失败:', err);
+    }
+  }, []);
+
+  // 应用权重调整
+  const handleApplyAdjustment = async () => {
+    setAdjustLoading(true);
+    try {
+      const result = await applyWeightAdjustment();
+      setMessage({
+        text: result.message || `调整完成：提升 ${result.boosted_count} 条，降权 ${result.downgraded_count} 条，冷标记 ${result.cold_marked_count} 条`,
+        type: 'success',
+      });
+      // 刷新质量数据
+      await fetchQualityRankings();
+      await fetchLearningSuggestions();
+    } catch (err: any) {
+      setMessage({
+        text: '权重调整失败: ' + (err?.response?.data?.detail || err.message),
+        type: 'error',
+      });
+    } finally {
+      setAdjustLoading(false);
+    }
+  };
+
+  // 切换质量面板
+  const toggleQualityPanel = () => {
+    const newShow = !showQualityPanel;
+    setShowQualityPanel(newShow);
+    if (newShow) {
+      fetchQualityRankings();
+      fetchLearningSuggestions();
+    }
+  };
+
+  // 获取知识图谱统计数据
+  const fetchGraphStats = useCallback(async () => {
+    setGraphLoading(true);
+    try {
+      const stats = await getGraphStats();
+      setGraphStats(stats);
+      // 同时获取图数据
+      const data = await getKnowledgeGraph({ limit: 100 });
+      setGraphData(data);
+      // 获取主题聚类
+      const clusters = await getTopicClusters(2);
+      setTopicClusters(clusters.clusters || []);
+    } catch (err) {
+      console.error('获取图谱数据失败:', err);
+      setMessage({ text: '获取图谱数据失败', type: 'error' });
+    } finally {
+      setGraphLoading(false);
+    }
+  }, []);
+
+  // 构建知识图谱关系
+  const handleBuildGraph = async () => {
+    setBuildLoading(true);
+    setMessage({ text: '', type: '' });
+    try {
+      const result = await buildKnowledgeGraph();
+      setMessage({
+        text: result.message || `构建完成: 处理 ${result.processed} 条, 创建 ${result.relations_created} 条关系`,
+        type: 'success',
+      });
+      // 刷新图谱数据
+      await fetchGraphStats();
+    } catch (err: any) {
+      setMessage({
+        text: '构建失败: ' + (err?.response?.data?.detail || err.message),
+        type: 'error',
+      });
+    } finally {
+      setBuildLoading(false);
+    }
+  };
+
+  // 切换到图谱Tab时加载数据
+  useEffect(() => {
+    if (activeTab === 'graph' && !graphStats) {
+      fetchGraphStats();
+    }
+  }, [activeTab, graphStats, fetchGraphStats]);
+
   const getCategoryStyle = (category?: string) => {
     if (!category) return { backgroundColor: "#f5f5f5", color: "#666" };
     const c = CATEGORY_COLORS[category];
@@ -234,6 +383,41 @@ export default function MvpKnowledgePage() {
           <h2 style={styles.title}>📚 知识库 - AI的大脑</h2>
         </div>
         <div style={styles.headerRight}>
+          {/* Tab 切换按钮 */}
+          <div style={styles.tabGroup}>
+            <button
+              onClick={() => setActiveTab('list')}
+              style={{
+                ...styles.tabBtn,
+                background: activeTab === 'list' ? 'linear-gradient(90deg, var(--brand), #d45b39)' : 'var(--panel)',
+                color: activeTab === 'list' ? '#fff' : 'var(--text)',
+              }}
+            >
+              📋 知识列表
+            </button>
+            <button
+              onClick={() => setActiveTab('graph')}
+              style={{
+                ...styles.tabBtn,
+                background: activeTab === 'graph' ? 'linear-gradient(90deg, var(--brand), #d45b39)' : 'var(--panel)',
+                color: activeTab === 'graph' ? '#fff' : 'var(--text)',
+              }}
+            >
+              🔗 知识图谱
+            </button>
+          </div>
+          {activeTab === 'list' && (
+            <button
+              onClick={toggleQualityPanel}
+              style={{
+                ...styles.qualityBtn,
+                background: showQualityPanel ? 'linear-gradient(90deg, var(--brand), #d45b39)' : 'var(--panel)',
+                color: showQualityPanel ? '#fff' : 'var(--text)',
+              }}
+            >
+              📊 质量面板
+            </button>
+          )}
           <span style={styles.totalBadge}>共 {total} 条</span>
         </div>
       </div>
@@ -249,9 +433,180 @@ export default function MvpKnowledgePage() {
         </div>
       )}
 
+      {/* 质量面板 */}
+      {activeTab === 'list' && showQualityPanel && (
+        <div className="card" style={styles.qualityPanel}>
+          <div style={styles.qualityPanelHeader}>
+            <h3 style={styles.qualityPanelTitle}>📊 知识库质量分析</h3>
+            <button
+              onClick={handleApplyAdjustment}
+              disabled={adjustLoading}
+              style={styles.adjustBtn}
+            >
+              {adjustLoading ? '⏳ 调整中...' : '⚡ 应用权重调整'}
+            </button>
+          </div>
+
+          {/* 建议统计 */}
+          <div style={styles.suggestionStats}>
+            <div style={{ ...styles.suggestionStatItem, background: '#e8f5e9' }}>
+              <span style={{ ...styles.suggestionStatNumber, color: '#2e7d32' }}>
+                {suggestionStats.boost_candidates}
+              </span>
+              <span style={styles.suggestionStatLabel}>建议提升</span>
+            </div>
+            <div style={{ ...styles.suggestionStatItem, background: '#fff3e0' }}>
+              <span style={{ ...styles.suggestionStatNumber, color: '#e65100' }}>
+                {suggestionStats.downgrade_candidates}
+              </span>
+              <span style={styles.suggestionStatLabel}>建议降权</span>
+            </div>
+            <div style={{ ...styles.suggestionStatItem, background: '#ffebee' }}>
+              <span style={{ ...styles.suggestionStatNumber, color: '#c62828' }}>
+                {suggestionStats.remove_candidates}
+              </span>
+              <span style={styles.suggestionStatLabel}>冷数据</span>
+            </div>
+          </div>
+
+          {/* 学习建议列表 */}
+          {learningSuggestions.length > 0 && (
+            <div style={styles.suggestionsSection}>
+              <h4 style={styles.sectionTitle}>💡 持续学习建议</h4>
+              <div style={styles.suggestionsList}>
+                {learningSuggestions.slice(0, 5).map((suggestion, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      ...styles.suggestionItem,
+                      borderLeftColor:
+                        suggestion.type === 'boost' ? '#4caf50' :
+                        suggestion.type === 'downgrade' ? '#ff9800' :
+                        suggestion.type === 'remove' ? '#f44336' : '#2196f3',
+                    }}
+                  >
+                    <div style={styles.suggestionHeader}>
+                      <span style={{
+                        ...styles.suggestionType,
+                        background:
+                          suggestion.type === 'boost' ? '#e8f5e9' :
+                          suggestion.type === 'downgrade' ? '#fff3e0' :
+                          suggestion.type === 'remove' ? '#ffebee' : '#e3f2fd',
+                        color:
+                          suggestion.type === 'boost' ? '#2e7d32' :
+                          suggestion.type === 'downgrade' ? '#e65100' :
+                          suggestion.type === 'remove' ? '#c62828' : '#1565c0',
+                      }}>
+                        {suggestion.type === 'boost' ? '提升' :
+                         suggestion.type === 'downgrade' ? '降权' :
+                         suggestion.type === 'remove' ? '冷数据' : '调整'}
+                      </span>
+                      <span style={{
+                        ...styles.suggestionPriority,
+                        background:
+                          suggestion.priority === 'high' ? '#ffebee' :
+                          suggestion.priority === 'medium' ? '#fff3e0' : '#f5f5f5',
+                        color:
+                          suggestion.priority === 'high' ? '#c62828' :
+                          suggestion.priority === 'medium' ? '#e65100' : '#666',
+                      }}>
+                        {suggestion.priority === 'high' ? '高' :
+                         suggestion.priority === 'medium' ? '中' : '低'}
+                      </span>
+                    </div>
+                    <div style={styles.suggestionTitle}>{suggestion.title}</div>
+                    <div style={styles.suggestionText}>{suggestion.suggestion}</div>
+                    <div style={styles.suggestionReason}>{suggestion.reason}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 质量排行榜 */}
+          <div style={styles.rankingsSection}>
+            <h4 style={styles.sectionTitle}>🏆 知识质量排行 TOP20</h4>
+            {qualityLoading ? (
+              <div style={styles.loadingText}>加载中...</div>
+            ) : qualityRankings.length === 0 ? (
+              <div style={styles.emptyText}>暂无质量数据</div>
+            ) : (
+              <table style={styles.rankingsTable}>
+                <thead>
+                  <tr>
+                    <th style={styles.rankingTh}>排名</th>
+                    <th style={styles.rankingThTitle}>标题</th>
+                    <th style={styles.rankingTh}>质量分</th>
+                    <th style={styles.rankingTh}>引用</th>
+                    <th style={styles.rankingTh}>权重</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {qualityRankings.map((item, idx) => (
+                    <tr
+                      key={item.knowledge_id}
+                      style={{
+                        ...styles.rankingRow,
+                        background: idx < 3 ? 'rgba(255, 215, 0, 0.1)' : 'transparent',
+                      }}
+                    >
+                      <td style={styles.rankingTd}>
+                        <span style={{
+                          ...styles.rankingBadge,
+                          background:
+                            idx === 0 ? '#ffd700' :
+                            idx === 1 ? '#c0c0c0' :
+                            idx === 2 ? '#cd7f32' : '#f5f5f5',
+                          color: idx < 3 ? '#fff' : '#666',
+                        }}>
+                          {idx + 1}
+                        </span>
+                      </td>
+                      <td style={styles.rankingTdTitle} title={item.title}>
+                        {item.title.length > 30 ? item.title.slice(0, 30) + '...' : item.title}
+                      </td>
+                      <td style={styles.rankingTd}>
+                        <span style={{
+                          ...styles.qualityScore,
+                          color:
+                            item.quality_score >= 0.8 ? '#4caf50' :
+                            item.quality_score >= 0.5 ? '#ff9800' : '#f44336',
+                        }}>
+                          {(item.quality_score * 100).toFixed(0)}%
+                        </span>
+                      </td>
+                      <td style={styles.rankingTd}>
+                        <span style={styles.referenceCount}>{item.reference_count}</span>
+                        {item.positive_feedback > 0 && (
+                          <span style={styles.positiveBadge}>+{item.positive_feedback}</span>
+                        )}
+                      </td>
+                      <td style={styles.rankingTd}>
+                        <span style={{
+                          ...styles.weightBadge,
+                          background:
+                            item.weight_boost >= 1.5 ? '#e8f5e9' :
+                            item.weight_boost <= 0.5 ? '#ffebee' : '#f5f5f5',
+                          color:
+                            item.weight_boost >= 1.5 ? '#2e7d32' :
+                            item.weight_boost <= 0.5 ? '#c62828' : '#666',
+                        }}>
+                          {item.weight_boost.toFixed(1)}x
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 顶部筛选区 */}
-      <div className="card" style={styles.filterCard}>
-        <div style={styles.filterRow}>
+      {activeTab === 'list' && (
+        <div className="card" style={styles.filterCard}>
+          <div style={styles.filterRow}>
           <div style={styles.filterItem}>
             <label style={styles.filterLabel}>平台</label>
             <select
@@ -314,9 +669,11 @@ export default function MvpKnowledgePage() {
             </button>
           </div>
         </div>
-      </div>
+        </div>
+      )}
 
       {/* 主内容区 */}
+      {activeTab === 'list' && (
       <div style={styles.mainContent}>
         {/* 左侧：知识条目列表 */}
         <div style={styles.listPanel}>
@@ -458,6 +815,140 @@ export default function MvpKnowledgePage() {
           )}
         </div>
       </div>
+      )}
+
+      {/* 知识图谱Tab内容 */}
+      {activeTab === 'graph' && (
+        <div className="card" style={styles.graphPanel}>
+          {/* 图谱统计卡片 */}
+          <div style={styles.graphStatsRow}>
+            <div style={{ ...styles.graphStatCard, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
+              <div style={styles.graphStatIcon}>📊</div>
+              <div style={styles.graphStatValue}>{graphStats?.node_count || 0}</div>
+              <div style={styles.graphStatLabel}>知识节点</div>
+            </div>
+            <div style={{ ...styles.graphStatCard, background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)' }}>
+              <div style={styles.graphStatIcon}>🔗</div>
+              <div style={styles.graphStatValue}>{graphStats?.edge_count || 0}</div>
+              <div style={styles.graphStatLabel}>关系边</div>
+            </div>
+            <div style={{ ...styles.graphStatCard, background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)' }}>
+              <div style={styles.graphStatIcon}>📈</div>
+              <div style={styles.graphStatValue}>{graphStats?.avg_degree?.toFixed(2) || '0.00'}</div>
+              <div style={styles.graphStatLabel}>平均度</div>
+            </div>
+            <div style={{ ...styles.graphStatCard, background: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)' }}>
+              <div style={styles.graphStatIcon}>✅</div>
+              <div style={styles.graphStatValue}>{((graphStats?.connectivity_ratio || 0) * 100).toFixed(0)}%</div>
+              <div style={styles.graphStatLabel}>连通率</div>
+            </div>
+          </div>
+
+          {/* 操作按钮 */}
+          <div style={styles.graphActions}>
+            <button
+              className="primary"
+              onClick={handleBuildGraph}
+              disabled={buildLoading}
+              style={styles.buildBtn}
+            >
+              {buildLoading ? '⏳ 构建中...' : '🔄 构建关系'}
+            </button>
+            <button
+              className="ghost"
+              onClick={fetchGraphStats}
+              disabled={graphLoading}
+              style={styles.refreshBtn}
+            >
+              {graphLoading ? '⏳ 刷新中...' : '🔃 刷新数据'}
+            </button>
+          </div>
+
+          {/* 关系类型分布 */}
+          {graphStats?.relation_type_stats && Object.keys(graphStats.relation_type_stats).length > 0 && (
+            <div style={styles.relationTypesSection}>
+              <h4 style={styles.sectionTitle}>📊 关系类型分布</h4>
+              <div style={styles.relationTypesList}>
+                {Object.entries(graphStats.relation_type_stats).map(([type, count]) => (
+                  <div key={type} style={styles.relationTypeItem}>
+                    <span style={styles.relationTypeName}>{type}</span>
+                    <span style={styles.relationTypeCount}>{count} 条</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 主题聚类 */}
+          {topicClusters.length > 0 && (
+            <div style={styles.clustersSection}>
+              <h4 style={styles.sectionTitle}>🎯 主题聚类</h4>
+              <div style={styles.clustersList}>
+                {topicClusters.slice(0, 10).map((cluster, idx) => (
+                  <div key={idx} style={styles.clusterItem}>
+                    <div style={styles.clusterHeader}>
+                      <span style={styles.clusterTopic}>{cluster.topic || '未分类'}</span>
+                      <span style={styles.clusterCount}>{cluster.count} 条</span>
+                    </div>
+                    <div style={styles.clusterItems}>
+                      {cluster.items?.slice(0, 3).map((item: any) => (
+                        <span key={item.id} style={styles.clusterItemTag} title={item.title}>
+                          {item.title?.length > 20 ? item.title.slice(0, 20) + '...' : item.title}
+                        </span>
+                      ))}
+                      {cluster.count > 3 && (
+                        <span style={styles.clusterMore}>+{cluster.count - 3} 更多</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 关系列表 */}
+          {graphData?.edges && graphData.edges.length > 0 && (
+            <div style={styles.relationsSection}>
+              <h4 style={styles.sectionTitle}>🔗 最近关系 (前20条)</h4>
+              <div style={styles.relationsList}>
+                {graphData.edges.slice(0, 20).map((edge, idx) => {
+                  const sourceNode = graphData.nodes.find(n => n.id === edge.source);
+                  const targetNode = graphData.nodes.find(n => n.id === edge.target);
+                  return (
+                    <div key={idx} style={styles.relationItem}>
+                      <div style={styles.relationNode} title={sourceNode?.title}>
+                        {sourceNode?.title?.length > 15 ? sourceNode.title.slice(0, 15) + '...' : sourceNode?.title || `#${edge.source}`}
+                      </div>
+                      <div style={styles.relationArrow}>
+                        <span style={styles.relationType}>{edge.type}</span>
+                        <span style={styles.relationWeight}>{edge.weight.toFixed(2)}</span>
+                      </div>
+                      <div style={styles.relationNode} title={targetNode?.title}>
+                        {targetNode?.title?.length > 15 ? targetNode.title.slice(0, 15) + '...' : targetNode?.title || `#${edge.target}`}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 空状态 */}
+          {graphLoading ? (
+            <div style={styles.loadingState}>加载图谱数据中...</div>
+          ) : (
+            !graphStats?.edge_count && (
+              <div style={styles.emptyGraphState}>
+                <div style={styles.emptyIcon}>🔗</div>
+                <div style={styles.emptyTitle}>暂无图谱数据</div>
+                <div style={styles.emptyDesc}>
+                  点击"构建关系"按钮，系统将基于向量相似度自动发现知识条目间的关系
+                </div>
+              </div>
+            )
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -746,5 +1237,386 @@ const styles: Record<string, React.CSSProperties> = {
     width: "100%",
     padding: "10px 14px",
     fontSize: 13,
+  },
+  // 质量面板样式
+  qualityBtn: {
+    padding: "6px 14px",
+    borderRadius: 20,
+    border: "1px solid var(--line)",
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: "pointer",
+    transition: "all 0.2s ease",
+  },
+  qualityPanel: {
+    padding: 20,
+    marginBottom: 16,
+  },
+  qualityPanelHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  qualityPanelTitle: {
+    fontSize: 18,
+    fontWeight: 700,
+    margin: 0,
+  },
+  adjustBtn: {
+    padding: "8px 16px",
+    borderRadius: 6,
+    border: "none",
+    background: "linear-gradient(90deg, var(--brand), #d45b39)",
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  suggestionStats: {
+    display: "flex",
+    gap: 16,
+    marginBottom: 24,
+  },
+  suggestionStatItem: {
+    flex: 1,
+    padding: "16px 20px",
+    borderRadius: 12,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+  },
+  suggestionStatNumber: {
+    fontSize: 28,
+    fontWeight: 700,
+    marginBottom: 4,
+  },
+  suggestionStatLabel: {
+    fontSize: 13,
+    color: "#666",
+  },
+  suggestionsSection: {
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: 600,
+    margin: "0 0 12px",
+    color: "var(--text)",
+  },
+  suggestionsList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+  suggestionItem: {
+    padding: 12,
+    background: "var(--panel)",
+    borderRadius: 8,
+    borderLeft: "4px solid",
+  },
+  suggestionHeader: {
+    display: "flex",
+    gap: 8,
+    marginBottom: 8,
+  },
+  suggestionType: {
+    padding: "2px 8px",
+    borderRadius: 4,
+    fontSize: 11,
+    fontWeight: 600,
+  },
+  suggestionPriority: {
+    padding: "2px 8px",
+    borderRadius: 4,
+    fontSize: 11,
+  },
+  suggestionTitle: {
+    fontSize: 14,
+    fontWeight: 600,
+    marginBottom: 4,
+    color: "var(--text)",
+  },
+  suggestionText: {
+    fontSize: 13,
+    color: "var(--brand)",
+    marginBottom: 4,
+  },
+  suggestionReason: {
+    fontSize: 12,
+    color: "var(--muted)",
+  },
+  rankingsSection: {
+    marginTop: 20,
+  },
+  rankingsTable: {
+    width: "100%",
+    fontSize: 13,
+    borderCollapse: "collapse",
+  },
+  rankingTh: {
+    padding: "10px 8px",
+    textAlign: "center" as const,
+    fontWeight: 600,
+    color: "var(--muted)",
+    borderBottom: "1px solid var(--line)",
+  },
+  rankingThTitle: {
+    padding: "10px 8px",
+    textAlign: "left" as const,
+    fontWeight: 600,
+    color: "var(--muted)",
+    borderBottom: "1px solid var(--line)",
+  },
+  rankingRow: {
+    transition: "background 0.15s ease",
+  },
+  rankingTd: {
+    padding: "10px 8px",
+    textAlign: "center" as const,
+    borderBottom: "1px solid var(--line)",
+  },
+  rankingTdTitle: {
+    padding: "10px 8px",
+    textAlign: "left" as const,
+    borderBottom: "1px solid var(--line)",
+    maxWidth: 300,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+  },
+  rankingBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 24,
+    height: 24,
+    borderRadius: "50%",
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  qualityScore: {
+    fontWeight: 700,
+  },
+  referenceCount: {
+    fontWeight: 600,
+  },
+  positiveBadge: {
+    marginLeft: 4,
+    padding: "1px 4px",
+    background: "#e8f5e9",
+    color: "#2e7d32",
+    borderRadius: 4,
+    fontSize: 10,
+  },
+  weightBadge: {
+    padding: "2px 6px",
+    borderRadius: 4,
+    fontSize: 11,
+    fontWeight: 600,
+  },
+  loadingText: {
+    textAlign: "center" as const,
+    padding: 40,
+    color: "var(--muted)",
+  },
+  emptyText: {
+    textAlign: "center" as const,
+    padding: 40,
+    color: "var(--muted)",
+  },
+  // Tab 切换样式
+  tabGroup: {
+    display: 'flex',
+    gap: 4,
+    background: 'var(--panel)',
+    padding: 4,
+    borderRadius: 8,
+  border: '1px solid var(--line)',
+  },
+  tabBtn: {
+    padding: '6px 16px',
+    borderRadius: 6,
+    border: 'none',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+  // 知识图谱样式
+  graphPanel: {
+    padding: 20,
+  display: 'flex',
+    flexDirection: 'column',
+    gap: 20,
+  },
+  graphStatsRow: {
+    display: 'flex',
+    gap: 16,
+    flexWrap: 'wrap',
+  },
+  graphStatCard: {
+    flex: 1,
+    minWidth: 140,
+    padding: '20px 16px',
+    borderRadius: 12,
+    color: '#fff',
+    textAlign: 'center',
+  },
+  graphStatIcon: {
+    fontSize: 24,
+    marginBottom: 8,
+  },
+  graphStatValue: {
+    fontSize: 28,
+    fontWeight: 700,
+    marginBottom: 4,
+  },
+  graphStatLabel: {
+    fontSize: 12,
+    opacity: 0.9,
+  },
+  graphActions: {
+    display: 'flex',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  buildBtn: {
+    padding: '10px 24px',
+    fontSize: 14,
+    fontWeight: 600,
+  },
+  refreshBtn: {
+    padding: '10px 24px',
+    fontSize: 14,
+  },
+  relationTypesSection: {
+    background: 'rgba(0,0,0,0.02)',
+    borderRadius: 8,
+    padding: 16,
+  },
+  relationTypesList: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  relationTypeItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    background: 'var(--panel)',
+    padding: '6px 12px',
+    borderRadius: 6,
+    border: '1px solid var(--line)',
+  },
+  relationTypeName: {
+    fontSize: 13,
+    color: 'var(--text)',
+  },
+  relationTypeCount: {
+    fontSize: 12,
+    color: 'var(--muted)',
+    background: 'rgba(0,0,0,0.06)',
+    padding: '2px 8px',
+    borderRadius: 4,
+  },
+  clustersSection: {
+    background: 'rgba(0,0,0,0.02)',
+    borderRadius: 8,
+    padding: 16,
+  },
+  clustersList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+  },
+  clusterItem: {
+    background: 'var(--panel)',
+    borderRadius: 8,
+    padding: 12,
+    border: '1px solid var(--line)',
+  },
+  clusterHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  clusterTopic: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: 'var(--text)',
+  },
+  clusterCount: {
+    fontSize: 12,
+    color: 'var(--brand)',
+    fontWeight: 600,
+  },
+  clusterItems: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  clusterItemTag: {
+    fontSize: 11,
+    background: 'rgba(0,0,0,0.04)',
+    padding: '3px 8px',
+    borderRadius: 4,
+    color: 'var(--muted)',
+  },
+  clusterMore: {
+    fontSize: 11,
+    color: 'var(--brand)',
+    fontStyle: 'italic',
+  },
+  relationsSection: {
+    background: 'rgba(0,0,0,0.02)',
+    borderRadius: 8,
+    padding: 16,
+  },
+  relationsList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  relationItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    background: 'var(--panel)',
+    padding: '10px 14px',
+    borderRadius: 8,
+    border: '1px solid var(--line)',
+  },
+  relationNode: {
+    flex: 1,
+    fontSize: 13,
+    color: 'var(--text)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+  },
+  relationArrow: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 2,
+  },
+  relationType: {
+    fontSize: 11,
+    color: 'var(--brand)',
+    fontWeight: 600,
+  },
+  relationWeight: {
+    fontSize: 10,
+    color: 'var(--muted)',
+  },
+  emptyGraphState: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 60,
+    textAlign: 'center',
   },
 };

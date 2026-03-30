@@ -1040,7 +1040,7 @@ class MvpKnowledgeItem(Base):
     style = Column(String(100), nullable=True)
     source_material_id = Column(Integer, ForeignKey("mvp_material_items.id"), nullable=True)
     use_count = Column(Integer, nullable=False, default=0)
-    embedding = Column(Vector(1024), nullable=True) if Vector else Column(Text, nullable=True)  # 向量化字段
+    embedding = Column(Vector(768), nullable=True) if Vector else Column(Text, nullable=True)  # 向量化字段
     created_at = Column(DateTime, server_default=func.now())
     
     # 增强字段 - 结构化内容分类
@@ -1083,8 +1083,8 @@ class MvpKnowledgeChunk(Base):
     chunk_index = Column(Integer, default=0)  # 切块序号
     content = Column(Text, nullable=False)  # 切块内容
     metadata_json = Column(Text, nullable=True)  # JSON格式元数据
-    # 向量数据：使用 pgvector Vector 类型 (1024维)
-    embedding = Column(Vector(1024), nullable=True) if Vector else Column(Text, nullable=True)
+    # 向量数据：使用 pgvector Vector 类型 (768维)
+    embedding = Column(Vector(768), nullable=True) if Vector else Column(Text, nullable=True)
     token_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now())
 
@@ -1133,3 +1133,57 @@ class MvpComplianceRule(Base):
     keyword = Column(String(200), nullable=False)
     suggestion = Column(Text, nullable=True)
     risk_level = Column(String(20), nullable=False, default="medium")  # low / medium / high
+
+
+class MvpGenerationFeedback(Base):
+    """生成结果反馈表 - 收集用户对AI生成内容的反馈"""
+    __tablename__ = "mvp_generation_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    generation_id = Column(String(100), nullable=False, index=True)  # 生成任务ID
+    query = Column(Text, nullable=False)  # 原始查询/请求参数
+    generated_text = Column(Text, nullable=False)  # 生成的文本
+    feedback_type = Column(String(20), nullable=False, index=True)  # adopted/modified/rejected
+    modified_text = Column(Text, nullable=True)  # 用户修改后的文本（如果有）
+    rating = Column(Integer, nullable=True)  # 1-5 评分
+    feedback_tags = Column(Text, nullable=True)  # JSON: ["太长", "不够专业", "数据错误"]
+    knowledge_ids_used = Column(Text, nullable=True)  # JSON: 引用的知识库条目IDs
+    created_at = Column(DateTime, default=func.now(), index=True)
+
+
+class MvpKnowledgeQualityScore(Base):
+    """知识库条目质量评分表 - 持续学习机制"""
+    __tablename__ = "mvp_knowledge_quality_scores"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    knowledge_id = Column(Integer, ForeignKey("mvp_knowledge_items.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    reference_count = Column(Integer, default=0)  # 被引用次数
+    positive_feedback = Column(Integer, default=0)  # 正面反馈次数
+    negative_feedback = Column(Integer, default=0)  # 负面反馈次数
+    neutral_feedback = Column(Integer, default=0)  # 中性反馈次数（修改后采纳）
+    quality_score = Column(Float, default=0.5)  # 综合质量分 0-1
+    weight_boost = Column(Float, default=1.0)  # 检索权重加成 0.5-1.5
+    last_referenced_at = Column(DateTime, nullable=True)  # 最后引用时间
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    knowledge_item = relationship("MvpKnowledgeItem", backref="quality_score")
+
+
+class MvpKnowledgeRelation(Base):
+    """知识条目关系表 - 知识图谱"""
+    __tablename__ = "mvp_knowledge_relations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_id = Column(Integer, ForeignKey("mvp_knowledge_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_id = Column(Integer, ForeignKey("mvp_knowledge_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    relation_type = Column(String(50), nullable=False)  # similar_topic, same_audience, same_platform, complementary, derived_from
+    weight = Column(Float, default=0.5)  # 关系强度 0-1
+    metadata_json = Column(Text, nullable=True)  # 额外元数据 JSON
+    created_at = Column(DateTime, default=func.now())
+
+    source = relationship("MvpKnowledgeItem", foreign_keys=[source_id], backref="outgoing_relations")
+    target = relationship("MvpKnowledgeItem", foreign_keys=[target_id], backref="incoming_relations")
+
+    __table_args__ = (
+        UniqueConstraint("source_id", "target_id", "relation_type", name="uq_knowledge_relation_source_target_type"),
+    )

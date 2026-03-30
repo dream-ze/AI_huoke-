@@ -64,8 +64,11 @@ class MvpGenerateService:
         except Exception as e:
             logger.exception("生成失败")
             self.db.rollback()
-            # 返回Mock结果
-            return {"versions": self._mock_versions("生成失败，使用默认内容", target_platform)}
+            return {
+                "versions": self._mock_versions("生成失败，使用默认内容", target_platform),
+                "fallback": True,
+                "error": str(e)
+            }
 
     def generate_final(self, **kwargs):
         """完整主链路：标签识别→知识检索→多版本生成→合规审核"""
@@ -82,6 +85,8 @@ class MvpGenerateService:
             
             # 生成多版本
             result = self.generate_multi_version(**kwargs)
+            if result.get("error"):
+                raise RuntimeError(result["error"])
             
             # 合规审核第一个版本
             from app.services.mvp_compliance_service import MvpComplianceService
@@ -258,9 +263,10 @@ class MvpGenerateService:
             extra_requirements = getattr(request, 'extra_requirements', None) or ''
             use_cloud = model == "volcano"
             
-            logger.info(f"全链路生成开始: platform={request.platform}, model={model}")
+            logger.info(f"[Pipeline] 全链路生成开始: platform={request.platform}, model={model}")
             
             # ========== Step 1: 知识检索 (使用混合检索v2) ==========
+            logger.info("[Pipeline] Step 1: 开始知识检索")
             from app.services.mvp_knowledge_service import MvpKnowledgeService
             knowledge_svc = MvpKnowledgeService(self.db)
             try:
@@ -274,7 +280,7 @@ class MvpGenerateService:
                     embedding_model=request.model,
                 )
             except Exception as e:
-                logger.warning(f"混合检索v2失败，降级到v1: {e}")
+                logger.error(f"[Pipeline] Step 1 failed: 混合检索v2失败，降级到v1: {e}")
                 knowledge_data = knowledge_svc.search_for_generation(
                     platform=request.platform,
                     audience=request.audience,
@@ -282,48 +288,53 @@ class MvpGenerateService:
                     account_type=request.account_type,
                     goal=request.goal or "",
                 )
-            logger.info(f"Step 1 知识检索完成: 召回{len(knowledge_data.get('hot_content', []))}条爆款内容")
+            logger.info(f"[Pipeline] Step 1 完成: 召回{len(knowledge_data.get('hot_content', []))}条爆款内容")
             
             # ========== Step 2: Prompt编排 ==========
+            logger.info("[Pipeline] Step 2: 开始Prompt编排")
             context_str = self._build_knowledge_context(knowledge_data)
             has_knowledge = bool(context_str.strip())
-            logger.info(f"Step 2 Prompt编排完成: has_knowledge={has_knowledge}, context_len={len(context_str)}")
+            logger.info(f"[Pipeline] Step 2 完成: has_knowledge={has_knowledge}, context_len={len(context_str)}")
             
-            # ========== Step 3: 知识库+大模型改写(基础版) ==========
+            # ========== Step 3: 基础改写 ==========
+            logger.info("[Pipeline] Step 3: 开始基础改写")
             rewrite_base = await self._generate_rewrite_base(
                 request=request,
                 context_str=context_str,
                 extra_requirements=extra_requirements,
                 use_cloud=use_cloud
             )
-            logger.info(f"Step 3 基础改写完成: len={len(rewrite_base)}")
+            logger.info(f"[Pipeline] Step 3 完成: len={len(rewrite_base)}")
             
             # ========== Step 4: 多风格版本生成 ==========
+            logger.info("[Pipeline] Step 4: 开始多风格版本生成")
             versions = await self._generate_style_versions(
                 request=request,
                 rewrite_base=rewrite_base,
                 context_str=context_str,
                 use_cloud=use_cloud
             )
-            logger.info(f"Step 4 多风格生成完成: 生成{len(versions)}个版本")
+            logger.info(f"[Pipeline] Step 4 完成: 生成{len(versions)}个版本")
             
             # ========== Step 5: 合规检查(双引擎) ==========
+            logger.info("[Pipeline] Step 5: 开始合规检查")
             from app.services.mvp_compliance_service import MvpComplianceService
             compliance_svc = MvpComplianceService(self.db)
             
-            version_compliance_results = []
-            for v in versions:
-                # 使用异步版合规检查，启用LLM语义检测
+            # 使用 asyncio.gather 并发执行合规检查
+            async def check_single_version(v):
                 comp_result = await compliance_svc.check_async(
                     text=v.text,
-                    enable_llm=True,
+                    enable_llm=False,
                     model=model
                 )
-                version_compliance_results.append({
-                    "version": v,
-                    "compliance": comp_result
-                })
-            logger.info(f"Step 5 合规检查完成: 检查了{len(version_compliance_results)}个版本")
+                return {"version": v, "compliance": comp_result}
+            
+            version_compliance_results = await asyncio.gather(
+                *[check_single_version(v) for v in versions]
+            )
+            version_compliance_results = list(version_compliance_results)
+            logger.info(f"[Pipeline] Step 5 完成: 检查了{len(version_compliance_results)}个版本")
             
             # 取风险最高的作为整体 compliance 结果
             risk_order = {"high": 3, "medium": 2, "low": 1}
@@ -334,8 +345,9 @@ class MvpGenerateService:
             overall_compliance = max_risk_item["compliance"]
             
             # ========== Step 6: 输出最终文案 ==========
+            logger.info("[Pipeline] Step 6: 开始选择最终文案")
             final_text = self._select_final_text(version_compliance_results)
-            logger.info(f"Step 6 最终文案选择完成: len={len(final_text)}")
+            logger.info(f"[Pipeline] Step 6 完成: len={len(final_text)}")
             
             # 构建响应
             compliance_result = ComplianceResult(
@@ -364,6 +376,13 @@ class MvpGenerateService:
                     v_dict["compliance"] = version_compliance_results[i]["compliance"] if version_compliance_results else None
                 versions_with_compliance.append(v_dict)
             
+            logger.info("[Pipeline] 全链路生成成功完成")
+                        
+            # 后台异步 LLM 合规检测（不阻塞返回）
+            asyncio.create_task(
+                self._background_llm_compliance_check(versions, model)
+            )
+                        
             return {
                 "versions": versions_with_compliance,
                 "compliance": compliance_result.model_dump(),
@@ -373,7 +392,7 @@ class MvpGenerateService:
             }
             
         except Exception as e:
-            logger.exception("全流程生成失败")
+            logger.exception(f"[Pipeline] 全流程生成失败: {e}")
             # Fallback：返回默认内容
             fallback_versions = self._fallback_versions(request)
             return {
@@ -389,7 +408,7 @@ class MvpGenerateService:
                 "final_text": fallback_versions[0]["text"] if fallback_versions else "",
                 "rewrite_base": "",
                 "knowledge_context_used": False,
-                "error": str(e)
+                "error": f"生成流程失败: {str(e)}"
             }
 
     # 语气风格映射表
@@ -400,6 +419,8 @@ class MvpGenerateService:
         "empathetic": "共情走心、温暖感人",
         "urgent": "紧迫感强、催促行动",
     }
+
+
 
     async def _generate_rewrite_base(self, request: FullPipelineRequest, context_str: str, 
                                       extra_requirements: str, use_cloud: bool) -> str:
@@ -467,10 +488,15 @@ class MvpGenerateService:
                 scene="generate_rewrite_base"
             )
             
-            return raw_response.strip() if raw_response else self._mock_rewrite_base(request)
+            # 防御：LLM返回空值时使用mock内容
+            if not raw_response or not raw_response.strip():
+                logger.warning("[Pipeline] Step 3: LLM返回空值，使用mock内容")
+                return self._mock_rewrite_base(request)
+            
+            return raw_response.strip()
             
         except Exception as e:
-            logger.warning(f"生成基础改写版失败: {e}")
+            logger.error(f"[Pipeline] Step 3 failed: 生成基础改写版失败: {e}")
             return self._mock_rewrite_base(request)
 
     def _mock_rewrite_base(self, request: FullPipelineRequest) -> str:
@@ -499,44 +525,67 @@ class MvpGenerateService:
         use_cloud: bool
     ) -> List[VersionItem]:
         """
-        Step 4: 基于基础改写版，生成3个风格版本（professional/casual/seeding）
+        Step 4: 基于基础改写版，并发生成3个风格版本（professional/casual/seeding）
         """
-        from app.services.ai_service import AIService
-        ai_svc = AIService(self.db)
-        
-        versions = []
         version_configs = [
             ("professional", "专业型：专业、权威、数据支撑、逻辑清晰，像金融专家给建议"),
             ("casual", "口语型：口语化、亲切、接地气、像朋友聊天，短句为主"),
             ("seeding", "种草型：种草风、emoji丰富、吸引眼球、制造好奇，真实分享感"),
         ]
-        
-        for version_key, style_desc in version_configs:
-            try:
-                prompt = self._build_style_version_prompt(
-                    request=request,
-                    rewrite_base=rewrite_base,
-                    version_key=version_key,
-                    style_desc=style_desc
-                )
-                system_prompt = self._build_system_prompt(request, version_key)
-                
-                raw_response = await ai_svc.call_llm(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    use_cloud=use_cloud,
-                    scene=f"generate_{version_key}"
-                )
-                
-                title, text = self._parse_title_text(raw_response)
-                versions.append(VersionItem(style=version_key, title=title, text=text))
-                
-            except Exception as e:
-                logger.warning(f"生成{version_key}版本失败: {e}")
-                # Fallback for this version
-                versions.append(self._fallback_single_version(request, version_key))
-        
-        return versions
+
+        # 使用 asyncio.gather 并发生成所有版本
+        tasks = [
+            self._generate_single_style(request, rewrite_base, version_key, style_desc, use_cloud)
+            for version_key, style_desc in version_configs
+        ]
+        versions = await asyncio.gather(*tasks)
+        return list(versions)
+
+    async def _generate_single_style(
+        self,
+        request: FullPipelineRequest,
+        rewrite_base: str,
+        version_key: str,
+        style_desc: str,
+        use_cloud: bool
+    ) -> VersionItem:
+        """生成单个风格版本（供并发调用）"""
+        from app.services.ai_service import AIService
+        ai_svc = AIService(self.db)
+
+        try:
+            prompt = self._build_style_version_prompt(
+                request=request,
+                rewrite_base=rewrite_base,
+                version_key=version_key,
+                style_desc=style_desc
+            )
+            system_prompt = self._build_system_prompt(request, version_key)
+
+            raw_response = await ai_svc.call_llm(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                use_cloud=use_cloud,
+                scene=f"generate_{version_key}"
+            )
+
+            # 防御：LLM返回空值时使用fallback
+            if not raw_response or not raw_response.strip():
+                logger.warning(f"[Pipeline] Step 4: LLM返回空值，使用fallback版本: {version_key}")
+                return self._fallback_single_version(request, version_key)
+
+            title, text = self._parse_title_text(raw_response)
+
+            # 防御：解析结果为空时使用fallback
+            if not title or not text:
+                logger.warning(f"[Pipeline] Step 4: 解析结果为空，使用fallback版本: {version_key}")
+                return self._fallback_single_version(request, version_key)
+
+            return VersionItem(style=version_key, title=title, text=text)
+
+        except Exception as e:
+            logger.error(f"[Pipeline] Step 4 failed: 生成{version_key}版本失败: {e}")
+            return self._fallback_single_version(request, version_key)
 
     def _build_style_version_prompt(
         self, 
@@ -552,7 +601,7 @@ class MvpGenerateService:
         prompt = f"""请将以下基础文案改写为【{style_desc}】版本：
 
 【基础文案】
-{rewrite_base[:1500]}
+{rewrite_base[:1000]}
 
 【目标人群】{audience_desc}
 【内容目标】{goal_desc}
@@ -708,6 +757,11 @@ class MvpGenerateService:
 
     def _parse_title_text(self, raw_response: str) -> tuple:
         """解析LLM返回的标题和正文"""
+        # 防御：空值检查
+        if not raw_response or not raw_response.strip():
+            logger.warning("[Pipeline] _parse_title_text: 输入为空，返回默认值")
+            return "内容生成中", "正在生成中，请稍后..."
+        
         # 尝试用正则解析【标题】和【正文】
         title_match = re.search(r'【标题】[：:]?\s*(.+?)(?=\n|【正文】|$)', raw_response, re.DOTALL)
         text_match = re.search(r'【正文】[：:]?\s*(.+)', raw_response, re.DOTALL)
@@ -715,16 +769,21 @@ class MvpGenerateService:
         if title_match and text_match:
             title = title_match.group(1).strip()[:50]
             text = text_match.group(1).strip()
-            return title, text
+            if title and text:
+                return title, text
         
         # Fallback：第一行作为标题，其余作为正文
         lines = raw_response.strip().split('\n')
         if len(lines) >= 2:
             title = lines[0].strip()[:50]
             text = '\n'.join(lines[1:]).strip()
-            return title, text
+            if title and text:
+                return title, text
         
-        return "内容生成中", raw_response.strip()
+        # 最终fallback：确保返回非空值
+        fallback_title = "内容生成中"
+        fallback_text = raw_response.strip() if raw_response.strip() else "正在生成中，请稍后..."
+        return fallback_title, fallback_text
 
     def _select_final_text(self, version_compliance_results: list) -> str:
         """选出最终推荐文本：优先选风险最低版本的合规修正文本"""
@@ -744,7 +803,7 @@ class MvpGenerateService:
         
         if same_risk_level:
             for r in sorted_results:
-                if r["version"].version == "professional":
+                if r["version"].style == "professional":
                     rewritten = r["compliance"].get("rewritten_text", "")
                     return rewritten if rewritten else r["version"].text
         
@@ -774,6 +833,42 @@ class MvpGenerateService:
             v = self._fallback_single_version(request, version_key)
             versions.append(v.model_dump())
         return versions
+
+    async def _background_llm_compliance_check(self, versions: List[VersionItem], model: str):
+        """后台异步执行LLM语义合规检测，不阻塞生成流程"""
+        try:
+            logger.info("[合规后台] 开始LLM语义合规检测，共%d个版本", len(versions))
+            
+            from app.services.mvp_compliance_service import MvpComplianceService
+            compliance_svc = MvpComplianceService(self.db)
+            
+            # 并发检测所有版本
+            tasks = []
+            for i, v in enumerate(versions):
+                text = v.text if hasattr(v, 'text') else v.get('text', '')
+                tasks.append(compliance_svc.check_async(
+                    text=text,
+                    enable_llm=True,
+                    model=model
+                ))
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.warning("[合规后台] 版本%d LLM检测异常: %s", i, str(result))
+                else:
+                    risk_level = result.get('risk_level', 'unknown') if isinstance(result, dict) else 'unknown'
+                    risk_points = result.get('risk_points', []) if isinstance(result, dict) else []
+                    logger.info("[合规后台] 版本%d LLM检测完成: risk_level=%s, risk_points=%d个", 
+                               i, risk_level, len(risk_points))
+                    if risk_points:
+                        for rp in risk_points:
+                            logger.warning("[合规后台] 版本%d 风险点: %s", i, rp)
+            
+            logger.info("[合规后台] 全部LLM语义合规检测完成")
+        except Exception as e:
+            logger.error("[合规后台] LLM合规检测任务异常: %s", str(e))
 
     def get_generation_history(self, material_id: int = None, page=1, size=20):
         """获取生成历史"""

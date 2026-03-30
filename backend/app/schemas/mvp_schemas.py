@@ -321,3 +321,237 @@ class IngestRequest(BaseModel):
     like_count: int = 0
     comment_count: int = 0
     favorite_count: int = 0
+
+
+# ── 合规规则管理 ──
+class ComplianceRuleRequest(BaseModel):
+    """合规规则创建/更新请求"""
+    rule_type: str  # keyword / regex / semantic
+    keyword: str
+    risk_level: str = "medium"  # low / medium / high
+    pattern: Optional[str] = None
+    description: Optional[str] = None
+    suggestion: Optional[str] = None
+
+
+class ComplianceRuleResponse(BaseModel):
+    """合规规则响应"""
+    id: int
+    rule_type: str
+    keyword: str
+    pattern: Optional[str] = None
+    risk_level: str
+    description: Optional[str] = None
+    suggestion: Optional[str] = None
+    is_active: bool = True
+    created_at: Optional[str] = None
+
+
+class ComplianceRuleListResponse(BaseModel):
+    """合规规则列表响应"""
+    items: List[ComplianceRuleResponse]
+    total: int
+    page: int
+    size: int
+
+
+class ComplianceTestRequest(BaseModel):
+    """合规规则测试请求"""
+    text: str
+
+
+# ── 反馈闭环 ──
+class FeedbackSubmitRequest(BaseModel):
+    """提交反馈请求"""
+    generation_id: str = Field(..., description="生成任务ID")
+    query: str = Field(..., description="原始查询/请求参数")
+    generated_text: str = Field(..., description="生成的文本")
+    feedback_type: str = Field(..., description="反馈类型: adopted/modified/rejected")
+    modified_text: Optional[str] = Field(None, description="用户修改后的文本")
+    rating: Optional[int] = Field(None, ge=1, le=5, description="1-5评分")
+    feedback_tags: Optional[List[str]] = Field(None, description="反馈标签列表")
+    knowledge_ids_used: Optional[List[int]] = Field(None, description="引用的知识库条目IDs")
+
+
+class FeedbackResponse(BaseModel):
+    """反馈响应"""
+    success: bool
+    feedback_id: int
+    message: str
+    quality_scores_updated: int = 0
+
+
+class FeedbackStatsResponse(BaseModel):
+    """反馈统计响应"""
+    total_feedback: int = 0
+    adopted_count: int = 0
+    modified_count: int = 0
+    rejected_count: int = 0
+    adoption_rate: float = 0.0
+    modification_rate: float = 0.0
+    rejection_rate: float = 0.0
+    avg_rating: Optional[float] = None
+    recent_feedback_count: int = 0
+
+
+class KnowledgeQualityRankingItem(BaseModel):
+    """知识库质量排行条目"""
+    knowledge_id: int
+    title: str
+    quality_score: float
+    reference_count: int
+    positive_feedback: int
+    negative_feedback: int
+    weight_boost: float
+    last_referenced_at: Optional[str] = None
+
+
+class KnowledgeQualityRankingResponse(BaseModel):
+    """知识库质量排行响应"""
+    items: List[KnowledgeQualityRankingItem]
+    total: int
+
+
+class LearningSuggestionItem(BaseModel):
+    """学习建议条目"""
+    type: str  # boost/downgrade/remove/adjust
+    knowledge_id: int
+    title: str
+    current_score: float
+    suggestion: str
+    priority: str  # high/medium/low
+    reason: str
+
+
+class LearningSuggestionsResponse(BaseModel):
+    """学习建议响应"""
+    suggestions: List[LearningSuggestionItem]
+    boost_candidates: int
+    downgrade_candidates: int
+    remove_candidates: int
+
+
+class WeightAdjustmentResult(BaseModel):
+    """权重调整结果"""
+    boosted_count: int = 0
+    downgraded_count: int = 0
+    cold_marked_count: int = 0
+    message: str
+    details: List[dict] = []
+
+
+# ── 知识图谱 ──
+class KnowledgeGraphNode(BaseModel):
+    """知识图谱节点"""
+    id: int
+    title: str
+    platform: Optional[str] = None
+    audience: Optional[str] = None
+    topic: Optional[str] = None
+    library_type: Optional[str] = None
+    use_count: int = 0
+    is_hot: bool = False
+
+
+class KnowledgeGraphEdge(BaseModel):
+    """知识图谱边"""
+    source: int
+    target: int
+    type: str
+    weight: float
+
+
+class KnowledgeGraphResponse(BaseModel):
+    """知识图谱响应"""
+    nodes: List[KnowledgeGraphNode]
+    edges: List[KnowledgeGraphEdge]
+    stats: dict
+
+
+class RelatedItemResponse(BaseModel):
+    """关联条目响应"""
+    id: int
+    title: str
+    platform: Optional[str] = None
+    audience: Optional[str] = None
+    topic: Optional[str] = None
+    library_type: Optional[str] = None
+    relation_type: str
+    weight: float
+    direction: str
+
+
+class GraphStatsResponse(BaseModel):
+    """图谱统计响应"""
+    node_count: int = 0
+    edge_count: int = 0
+    avg_degree: float = 0.0
+    nodes_with_relations: int = 0
+    nodes_with_embedding: int = 0
+    relation_type_stats: dict = {}
+    connectivity_ratio: float = 0.0
+
+
+class TopicClusterItem(BaseModel):
+    """主题聚类条目"""
+    id: int
+    title: str
+    topic: Optional[str] = None
+
+
+class TopicClusterResponse(BaseModel):
+    """主题聚类响应"""
+    topic: str
+    item_ids: List[int]
+    items: List[TopicClusterItem]
+    count: int
+
+
+class EnhancedSearchResult(BaseModel):
+    """图增强检索结果"""
+    id: int
+    title: str
+    content: str
+    score: float
+    source: str
+    chunk_id: Optional[int] = None
+    relation_weight: Optional[float] = None
+
+
+class BuildRelationsResponse(BaseModel):
+    """构建关系响应"""
+    success: bool
+    knowledge_id: int
+    relations_created: int = 0
+    message: str
+
+
+class BatchBuildRelationsResponse(BaseModel):
+    """批量构建关系响应"""
+    total_items: int = 0
+    processed: int = 0
+    relations_created: int = 0
+    errors: int = 0
+    message: str
+
+
+# ── 批量入知识库 ──
+class BatchBuildKnowledgeRequest(BaseModel):
+    """批量从素材构建知识请求"""
+    material_ids: List[int] = Field(..., description="素材ID列表")
+
+
+class BatchBuildKnowledgeDetailItem(BaseModel):
+    """批量构建知识详情条目"""
+    material_id: int
+    success: bool
+    knowledge_id: Optional[int] = None
+    error: Optional[str] = None
+
+
+class BatchBuildKnowledgeResponse(BaseModel):
+    """批量从素材构建知识响应"""
+    total: int
+    success_count: int
+    failed_count: int
+    details: List[BatchBuildKnowledgeDetailItem]

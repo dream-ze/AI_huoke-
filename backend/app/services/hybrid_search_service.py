@@ -69,10 +69,15 @@ class HybridSearchService:
         enable_rerank: bool = True,
     ) -> List[ChunkSearchResult]:
         """混合检索
-        
+            
         流程: 元数据过滤 → 关键词召回 → 向量召回 → 合并去重 → rerank
+            
+        改造说明 (Task #12):
+        - 向量检索失败降级为纯关键词检索
+        - 元数据过滤放宽：严格过滤无结果时逐步放宽条件
+        - 日志增强：记录每个检索步骤的结果数量
         """
-        # Step 1: 构建元数据过滤的知识条目ID集合
+        # Step 1: 元数据过滤
         filtered_knowledge_ids = self._metadata_filter(
             library_type=library_type,
             platform=platform,
@@ -80,37 +85,55 @@ class HybridSearchService:
             topic=topic,
             content_type=content_type,
         )
-        
+        logger.info(f"元数据过滤: {len(filtered_knowledge_ids)} candidates")
+            
+        # 如果严格过滤为空，放宽条件重试
         if not filtered_knowledge_ids:
-            logger.info(f"元数据过滤后无结果: library_type={library_type}, platform={platform}")
-            return []
-        
+            logger.warning("严格过滤无结果，放宽条件重试")
+            filtered_knowledge_ids = self._metadata_filter_relaxed(
+                library_type=library_type,
+                platform=platform,
+            )
+            logger.info(f"放宽过滤: {len(filtered_knowledge_ids)} candidates")
+            
+        # 如果仍然为空，查全量
+        if not filtered_knowledge_ids:
+            logger.warning("放宽过滤仍无结果，使用全量知识库")
+            filtered_knowledge_ids = self._get_all_knowledge_ids()
+            logger.info(f"全量知识库: {len(filtered_knowledge_ids)} candidates")
+            
         # Step 2: 关键词召回 Top N
         keyword_results = self._keyword_search(
             query=query,
             knowledge_ids=filtered_knowledge_ids,
             top_k=keyword_top,
         )
-        
-        # Step 3: 向量召回 Top N
-        vector_results = await self._vector_search(
-            query=query,
-            knowledge_ids=filtered_knowledge_ids,
-            top_k=vector_top,
-            model=embedding_model,
-        )
-        
+        logger.info(f"关键词召回: {len(keyword_results)} results")
+            
+        # Step 3: 向量召回（带降级）
+        vector_results = []
+        try:
+            query_embedding = await self.embedding_service.generate_embedding(query)
+            if query_embedding:
+                vector_results = await self._vector_recall(query_embedding, filtered_knowledge_ids, limit=vector_top)
+                logger.info(f"向量召回: {len(vector_results)} results")
+            else:
+                logger.warning("Embedding 生成失败，跳过向量召回")
+        except Exception as e:
+            logger.warning(f"向量检索异常，降级为纯关键词: {e}")
+            
         # Step 4: 合并去重 Top M
         merged = self._merge_and_dedupe(keyword_results, vector_results, top_k=merge_top)
-        
+        logger.info(f"合并结果: {len(merged)} results")
+            
         if not merged:
             return []
-        
+            
         # Step 5: Rerank 取前 K 条
         if enable_rerank and len(merged) > top_k:
             reranked = await self._rerank(query, merged, top_k=top_k, model=embedding_model)
             return reranked
-        
+            
         return merged[:top_k]
     
     def _metadata_filter(
@@ -123,7 +146,7 @@ class HybridSearchService:
     ) -> List[int]:
         """元数据过滤，返回符合条件的knowledge_ids"""
         query = self.db.query(MvpKnowledgeItem.id)
-        
+            
         if library_type:
             query = query.filter(MvpKnowledgeItem.library_type == library_type)
         if platform:
@@ -134,9 +157,34 @@ class HybridSearchService:
             query = query.filter(MvpKnowledgeItem.topic == topic)
         if content_type:
             query = query.filter(MvpKnowledgeItem.content_type == content_type)
-        
+            
         results = query.limit(500).all()
         return [r[0] for r in results]
+        
+    def _metadata_filter_relaxed(
+        self,
+        library_type: Optional[str] = None,
+        platform: Optional[str] = None,
+    ) -> List[int]:
+        """放宽元数据过滤 - 只保留最基础的过滤条件
+            
+        去掉 audience/topic/content_type 等过滤
+        只保留 library_type 和 platform 过滤
+        """
+        query = self.db.query(MvpKnowledgeItem.id)
+            
+        if library_type:
+            query = query.filter(MvpKnowledgeItem.library_type == library_type)
+        if platform:
+            query = query.filter(MvpKnowledgeItem.platform == platform)
+            
+        results = query.limit(500).all()
+        return [r[0] for r in results]
+        
+    def _get_all_knowledge_ids(self) -> List[int]:
+        """获取全量知识库ID"""
+        items = self.db.query(MvpKnowledgeItem.id).limit(1000).all()
+        return [item.id for item in items]
     
     def _keyword_search(
         self,
@@ -207,17 +255,25 @@ class HybridSearchService:
         top_k: int = 20,
         model: str = "volcano",
     ) -> List[ChunkSearchResult]:
-        """向量检索 - 使用 pgvector 原生 cosine_distance 算子"""
+        """向量检索 - 使用 pgvector 原生 cosine_distance 算子
+            
+        注意：此方法已由 search() 直接调用 _vector_recall 替代
+        保留此方法以兼容其他调用方
+        """
         if not query or not knowledge_ids:
             return []
-
-        # 生成 query 的 embedding
-        query_embedding = await self.embedding_service.generate_embedding(query)
-        if not query_embedding:
-            logger.warning("向量生成失败，跳过向量检索")
+    
+        try:
+            # 生成 query 的 embedding
+            query_embedding = await self.embedding_service.generate_embedding(query)
+            if not query_embedding:
+                logger.warning("向量生成失败，跳过向量检索")
+                return []
+    
+            return await self._vector_recall(query_embedding, knowledge_ids, limit=top_k)
+        except Exception as e:
+            logger.warning(f"向量检索异常: {e}")
             return []
-
-        return await self._vector_recall(query_embedding, knowledge_ids, limit=top_k)
 
     async def _vector_recall(
         self,
@@ -229,57 +285,69 @@ class HybridSearchService:
 
         使用 cosine_distance (<=>) 算子，距离越小越相似
         相似度分数 = 1 - distance
+
+        注意：如果 pgvector 扩展不可用，将返回空列表并优雅降级
         """
-        # 使用 pgvector 的 cosine_distance 算子进行检索
-        # 注意: pgvector 的 <=> 返回的是距离，范围 [0, 2]，越小越相似
-        results_query = (
-            self.db.query(
-                MvpKnowledgeChunk,
-                MvpKnowledgeChunk.embedding.cosine_distance(query_embedding).label('distance')
+        try:
+            # 使用 pgvector 的 cosine_distance 算子进行检索
+            # 注意: pgvector 的 <=> 返回的是距离，范围 [0, 2]，越小越相似
+            results_query = (
+                self.db.query(
+                    MvpKnowledgeChunk,
+                    MvpKnowledgeChunk.embedding.cosine_distance(query_embedding).label('distance')
+                )
+                .filter(
+                    MvpKnowledgeChunk.knowledge_id.in_(candidate_ids),
+                    MvpKnowledgeChunk.embedding.isnot(None)
+                )
+                .order_by('distance')
+                .limit(limit)
             )
-            .filter(
-                MvpKnowledgeChunk.knowledge_id.in_(candidate_ids),
-                MvpKnowledgeChunk.embedding.isnot(None)
-            )
-            .order_by('distance')
-            .limit(limit)
-        )
 
-        rows = results_query.all()
+            rows = results_query.all()
 
-        results = []
-        for chunk, distance in rows:
-            try:
-                # cosine_distance 范围 [0, 2]，转换为相似度分数 [1, -1]
-                # 通常距离 < 1 表示相似，我们映射到 0-1 范围便于展示
-                similarity = 1.0 - (distance / 2.0)
+            results = []
+            for chunk, distance in rows:
+                try:
+                    # cosine_distance 范围 [0, 2]，转换为相似度分数 [1, -1]
+                    # 通常距离 < 1 表示相似，我们映射到 0-1 范围便于展示
+                    similarity = 1.0 - (distance / 2.0)
 
-                metadata = {}
-                if chunk.metadata_json:
-                    try:
-                        metadata = json.loads(chunk.metadata_json)
-                    except:
-                        pass
+                    metadata = {}
+                    if chunk.metadata_json:
+                        try:
+                            metadata = json.loads(chunk.metadata_json)
+                        except:
+                            pass
 
-                ki = self._get_knowledge_item_info(chunk.knowledge_id)
+                    ki = self._get_knowledge_item_info(chunk.knowledge_id)
 
-                results.append(ChunkSearchResult(
-                    chunk_id=chunk.id,
-                    knowledge_id=chunk.knowledge_id,
-                    content=chunk.content,
-                    chunk_type=chunk.chunk_type,
-                    metadata=metadata,
-                    score=similarity,
-                    source="vector",
-                    knowledge_item=ki,
-                ))
-            except Exception as e:
-                logger.debug(f"向量检索跳过 chunk {chunk.id}: {e}")
-                continue
+                    results.append(ChunkSearchResult(
+                        chunk_id=chunk.id,
+                        knowledge_id=chunk.knowledge_id,
+                        content=chunk.content,
+                        chunk_type=chunk.chunk_type,
+                        metadata=metadata,
+                        score=similarity,
+                        source="vector",
+                        knowledge_item=ki,
+                    ))
+                except Exception as e:
+                    logger.debug(f"向量检索跳过 chunk {chunk.id}: {e}")
+                    continue
 
-        # 按相似度降序排列（pgvector 已经按距离升序排列，这里保持一致）
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results
+            # 按相似度降序排列（pgvector 已经按距离升序排列，这里保持一致）
+            results.sort(key=lambda x: x.score, reverse=True)
+            return results
+
+        except Exception as e:
+            # pgvector 扩展不可用时的优雅降级
+            error_msg = str(e)
+            if "extension" in error_msg.lower() and "vector" in error_msg.lower():
+                logger.warning("pgvector 扩展不可用，跳过向量检索，降级为纯关键词检索")
+            else:
+                logger.warning(f"向量检索失败，降级为纯关键词检索: {e}")
+            return []
     
     def _merge_and_dedupe(
         self,
@@ -320,58 +388,56 @@ class HybridSearchService:
         top_k: int = 8,
         model: str = "volcano",
     ) -> List[ChunkSearchResult]:
-        """使用LLM对候选结果进行rerank"""
+        """使用LLM对候选结果进行rerank
+
+        集成 RerankService，支持 LLM 打分和 embedding 相似度降级
+        """
+        if not candidates or len(candidates) <= 1:
+            return candidates[:top_k]
+
         try:
-            from app.services.ai_service import AIService
-            ai = AIService()
-            
-            # 构建候选摘要列表
-            candidate_texts = []
-            for i, c in enumerate(candidates[:20]):  # 最多20条进行rerank
-                snippet = c.content[:200].replace("\n", " ")
-                candidate_texts.append(f"{i+1}. {snippet}")
-            
-            prompt = f"""你是一个内容相关性评估专家。请根据用户的查询意图，对以下候选内容按相关性从高到低排序。
+            from app.services.rerank_service import RerankService
+            reranker = RerankService()
 
-用户查询意图: {query}
+            # 将 ChunkSearchResult 转换为 Dict 格式
+            doc_dicts = []
+            for c in candidates[:20]:  # 最多20条进行rerank
+                doc_dicts.append({
+                    "chunk_id": c.chunk_id,
+                    "knowledge_id": c.knowledge_id,
+                    "title": c.knowledge_item.get("title", "") if c.knowledge_item else "",
+                    "content": c.content,
+                    "chunk_type": c.chunk_type,
+                    "metadata": c.metadata,
+                    "score": c.score,
+                    "source": c.source,
+                    "knowledge_item": c.knowledge_item,
+                })
 
-候选内容:
-{chr(10).join(candidate_texts)}
+            # 调用 RerankService 进行重排
+            reranked_dicts = await reranker.rerank(query, doc_dicts, top_k=top_k)
 
-请只返回排序后的编号列表，用逗号分隔，如: 3,1,5,2,4
-只返回前{top_k}个最相关的编号。"""
+            # 将结果转回 ChunkSearchResult 格式
+            reranked = []
+            for doc in reranked_dicts:
+                result = ChunkSearchResult(
+                    chunk_id=doc["chunk_id"],
+                    knowledge_id=doc["knowledge_id"],
+                    content=doc["content"],
+                    chunk_type=doc["chunk_type"],
+                    metadata=doc.get("metadata", {}),
+                    score=doc.get("rerank_score", doc.get("score", 0)) / 10.0,  # 归一化到 0-1
+                    source="reranked",
+                    knowledge_item=doc.get("knowledge_item", {}),
+                )
+                reranked.append(result)
 
-            result = await ai.call_llm(
-                prompt=prompt,
-                system_prompt="你是内容相关性评估专家，请按相关性排序候选内容。",
-                use_cloud=(model == "volcano"),
-            )
-            
-            # 解析排序结果
-            if result:
-                numbers = []
-                for part in result.replace(" ", "").split(","):
-                    try:
-                        num = int(part.strip()) - 1  # 转为0-based
-                        if 0 <= num < len(candidates):
-                            numbers.append(num)
-                    except:
-                        continue
-                
-                if numbers:
-                    reranked = []
-                    seen = set()
-                    for idx in numbers[:top_k]:
-                        if idx not in seen:
-                            seen.add(idx)
-                            c = candidates[idx]
-                            c.score = 1.0 - (len(reranked) / top_k)  # 重新赋分
-                            reranked.append(c)
-                    return reranked
+            logger.info(f"Rerank 完成: {len(reranked)} results")
+            return reranked
+
         except Exception as e:
-            logger.warning(f"Rerank失败，返回原始排序: {e}")
-        
-        return candidates[:top_k]
+            logger.warning(f"Rerank 失败，使用原始排序: {e}")
+            return candidates[:top_k]
     
     def _get_knowledge_item_info(self, knowledge_id: int) -> dict:
         """获取knowledge_item的基本信息"""

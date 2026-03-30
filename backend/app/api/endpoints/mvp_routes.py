@@ -17,7 +17,26 @@ from app.schemas.mvp_schemas import (
     AutoPipelineBatchResponse,
     BatchIdsRequest,
     IngestRequest,
+    ComplianceRuleRequest,
+    ComplianceTestRequest,
+    FeedbackSubmitRequest,
+    FeedbackResponse,
+    FeedbackStatsResponse,
+    KnowledgeQualityRankingResponse,
+    LearningSuggestionsResponse,
+    WeightAdjustmentResult,
+    # 知识图谱相关 Schema
+    KnowledgeGraphResponse,
+    GraphStatsResponse,
+    TopicClusterResponse,
+    EnhancedSearchResult,
+    BuildRelationsResponse,
+    BatchBuildRelationsResponse,
+    # 批量入知识库 Schema
+    BatchBuildKnowledgeRequest,
+    BatchBuildKnowledgeResponse,
 )
+from app.core.config import settings
 from app.services.pipeline_service import PipelineService
 from app.schemas.generate_schema import FullPipelineRequest
 from app.services.mvp_inbox_service import MvpInboxService
@@ -30,6 +49,9 @@ from app.services.mvp_compliance_service import MvpComplianceService
 from app.services.cleaning_service import CleaningService
 from app.services.extraction_service import ExtractionService
 from app.services.quality_screening_service import QualityScreeningService
+from app.services.feedback_service import FeedbackService
+from app.services.embedding_service import get_embedding_service
+from app.services.model_manager_service import get_model_manager_service
 
 router = APIRouter(prefix="/api/mvp", tags=["MVP"])
 
@@ -319,6 +341,35 @@ def build_knowledge(material_id: int, db: Session = Depends(get_db)):
         raise HTTPException(400, str(e))
 
 
+@router.post("/materials/batch-build-knowledge", response_model=BatchBuildKnowledgeResponse)
+def batch_build_knowledge(req: BatchBuildKnowledgeRequest, db: Session = Depends(get_db)):
+    """批量从素材构建知识
+    
+    复用单条 build_from_material 逻辑，单条失败不影响整批处理。
+    返回每条素材的处理结果详情。
+    """
+    svc = MvpKnowledgeService(db)
+    result = svc.batch_build_from_materials(req.material_ids)
+    
+    # 转换为 Pydantic 模型格式
+    details = [
+        {
+            "material_id": d["material_id"],
+            "success": d["success"],
+            "knowledge_id": d["knowledge_id"],
+            "error": d["error"]
+        }
+        for d in result["details"]
+    ]
+    
+    return BatchBuildKnowledgeResponse(
+        total=result["total"],
+        success_count=result["success_count"],
+        failed_count=result["failed_count"],
+        details=details
+    )
+
+
 @router.post("/materials/{material_id}/to-knowledge")
 async def material_to_knowledge(material_id: int, db: Session = Depends(get_db)):
     """素材入知识库（使用 PipelineService，支持向量切分）"""
@@ -340,6 +391,17 @@ def rewrite_material(material_id: int, db: Session = Depends(get_db)):
         raise HTTPException(400, str(e))
 
 
+@router.post("/materials/{material_id}/toggle-hot")
+def toggle_material_hot(material_id: int, db: Session = Depends(get_db)):
+    """切换素材爆款状态"""
+    try:
+        svc = MvpMaterialService(db)
+        item = svc.toggle_hot(material_id)
+        return {"message": "爆款状态更新成功", "id": item.id, "is_hot": item.is_hot}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.post("/materials/{material_id}/tags")
 def update_material_tags(material_id: int, req: UpdateTagsRequest, db: Session = Depends(get_db)):
     """更新素材标签"""
@@ -349,6 +411,46 @@ def update_material_tags(material_id: int, req: UpdateTagsRequest, db: Session =
 
 
 # ── 知识库 ──
+
+# 分库统计 - 必须在 /knowledge/{id} 之前注册
+@router.get("/knowledge/library-stats")
+def get_library_stats(db: Session = Depends(get_db)):
+    """获取各分库统计（带最近更新时间）"""
+    svc = MvpKnowledgeService(db)
+    return svc.get_library_stats()
+
+
+# 按分库列出 - 必须在 /knowledge/{id} 之前注册
+@router.get("/knowledge/library/{library_type}")
+def list_by_library(
+    library_type: str,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    keyword: str = Query(""),
+    db: Session = Depends(get_db)
+):
+    """按分库类型列出知识条目"""
+    svc = MvpKnowledgeService(db)
+    result = svc.list_by_library(library_type, page, size, keyword)
+    # 序列化
+    items_out = []
+    for item in result["items"]:
+        items_out.append({
+            "id": item.id,
+            "title": item.title,
+            "content": item.content[:200] if item.content else "",
+            "platform": item.platform,
+            "audience": item.audience,
+            "topic": item.topic,
+            "content_type": item.content_type,
+            "library_type": item.library_type,
+            "like_count": item.like_count or 0,
+            "comment_count": item.comment_count or 0,
+            "created_at": str(item.created_at) if item.created_at else None,
+        })
+    return {"items": items_out, "total": result["total"], "page": page, "size": size}
+
+
 @router.get("/knowledge")
 def list_knowledge(
     page: int = Query(1, ge=1),
@@ -624,7 +726,7 @@ def generate(req: GenerateRequest, db: Session = Depends(get_db)):
     """多版本内容生成"""
     try:
         svc = MvpGenerateService(db)
-        return svc.generate_multi_version(
+        result = svc.generate_multi_version(
             source_type=req.source_type,
             source_id=req.source_id,
             manual_text=req.manual_text,
@@ -636,6 +738,9 @@ def generate(req: GenerateRequest, db: Session = Depends(get_db)):
             version_count=req.version_count,
             extra_requirements=req.extra_requirements
         )
+        if result.get("error"):
+            raise HTTPException(500, result["error"])
+        return result
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -645,7 +750,7 @@ def generate_final(req: GenerateRequest, db: Session = Depends(get_db)):
     """完整主链路生成（标签识别→知识检索→多版本生成→合规审核）"""
     try:
         svc = MvpGenerateService(db)
-        return svc.generate_final(
+        result = svc.generate_final(
             source_type=req.source_type,
             source_id=req.source_id,
             manual_text=req.manual_text,
@@ -657,6 +762,9 @@ def generate_final(req: GenerateRequest, db: Session = Depends(get_db)):
             version_count=req.version_count,
             extra_requirements=req.extra_requirements
         )
+        if result.get("error"):
+            raise HTTPException(500, result["error"])
+        return result
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -695,6 +803,97 @@ def compliance_check(req: ComplianceCheckRequest, db: Session = Depends(get_db))
     """合规检查"""
     svc = MvpComplianceService(db)
     return svc.check(req.text)
+
+
+# ── 合规规则管理 ──
+@router.get("/compliance/rules")
+def list_compliance_rules(
+    rule_type: str = "",
+    risk_level: str = "",
+    page: int = 1,
+    size: int = 20,
+    db: Session = Depends(get_db)
+):
+    """规则列表"""
+    from app.models.models import MvpComplianceRule
+    query = db.query(MvpComplianceRule)
+    if rule_type:
+        query = query.filter(MvpComplianceRule.rule_type == rule_type)
+    if risk_level:
+        query = query.filter(MvpComplianceRule.risk_level == risk_level)
+    total = query.count()
+    items = query.offset((page-1)*size).limit(size).all()
+    return {
+        "items": [{"id": r.id, "rule_type": r.rule_type, "keyword": r.keyword,
+                   "pattern": getattr(r, 'pattern', None),
+                   "risk_level": r.risk_level, "description": getattr(r, 'description', None),
+                   "suggestion": getattr(r, 'suggestion', None),
+                   "is_active": getattr(r, 'is_active', True),
+                   "created_at": str(r.created_at) if r.created_at else None} for r in items],
+        "total": total, "page": page, "size": size
+    }
+
+
+@router.post("/compliance/rules")
+def create_compliance_rule(req: ComplianceRuleRequest, db: Session = Depends(get_db)):
+    """创建规则"""
+    from app.models.models import MvpComplianceRule
+    rule = MvpComplianceRule(
+        rule_type=req.rule_type,
+        keyword=req.keyword,
+        risk_level=req.risk_level,
+    )
+    # 如果模型有额外字段则设置
+    if hasattr(rule, 'pattern') and req.pattern:
+        rule.pattern = req.pattern
+    if hasattr(rule, 'description') and req.description:
+        rule.description = req.description
+    if hasattr(rule, 'suggestion') and req.suggestion:
+        rule.suggestion = req.suggestion
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return {"success": True, "id": rule.id}
+
+
+@router.put("/compliance/rules/{rule_id}")
+def update_compliance_rule(rule_id: int, req: ComplianceRuleRequest, db: Session = Depends(get_db)):
+    """更新规则"""
+    from app.models.models import MvpComplianceRule
+    rule = db.query(MvpComplianceRule).filter(MvpComplianceRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule not found")
+    rule.rule_type = req.rule_type
+    rule.keyword = req.keyword
+    rule.risk_level = req.risk_level
+    if hasattr(rule, 'pattern'):
+        rule.pattern = req.pattern
+    if hasattr(rule, 'description'):
+        rule.description = req.description
+    if hasattr(rule, 'suggestion'):
+        rule.suggestion = req.suggestion
+    db.commit()
+    return {"success": True, "id": rule.id}
+
+
+@router.delete("/compliance/rules/{rule_id}")
+def delete_compliance_rule(rule_id: int, db: Session = Depends(get_db)):
+    """删除规则"""
+    from app.models.models import MvpComplianceRule
+    rule = db.query(MvpComplianceRule).filter(MvpComplianceRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule not found")
+    db.delete(rule)
+    db.commit()
+    return {"success": True}
+
+
+@router.post("/compliance/test")
+def test_compliance_rule(req: ComplianceTestRequest, db: Session = Depends(get_db)):
+    """输入文本，用所有规则检测风险"""
+    svc = MvpComplianceService(db)
+    result = svc.check(req.text)
+    return result
 
 
 # ── 标签 ──
@@ -829,3 +1028,373 @@ def dashboard_stats(db: Session = Depends(get_db)):
         total_materials=total_materials,
         date=today_str
     )
+
+
+# ── 反馈闭环 ──
+@router.post("/feedback", response_model=FeedbackResponse)
+async def submit_feedback(
+    req: FeedbackSubmitRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    提交生成结果反馈
+    
+    - 记录反馈类型（采纳/修改后采纳/拒绝）
+    - 更新关联知识条目的质量评分
+    - 支持评分和标签
+    """
+    service = FeedbackService(db)
+    result = await service.submit_feedback(
+        generation_id=req.generation_id,
+        query=req.query,
+        generated_text=req.generated_text,
+        feedback_type=req.feedback_type,
+        modified_text=req.modified_text,
+        rating=req.rating,
+        feedback_tags=req.feedback_tags,
+        knowledge_ids_used=req.knowledge_ids_used
+    )
+    return FeedbackResponse(**result)
+
+
+@router.get("/feedback/stats", response_model=FeedbackStatsResponse)
+async def get_feedback_stats(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db)
+):
+    """
+    获取反馈统计
+    
+    - 采纳率、修改率、拒绝率
+    - 平均评分
+    """
+    service = FeedbackService(db)
+    stats = await service.get_feedback_stats(days)
+    return FeedbackStatsResponse(**stats)
+
+
+@router.get("/knowledge/quality/rankings")
+async def get_quality_rankings(
+    limit: int = Query(20, ge=1, le=100),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取知识库质量排行榜
+    
+    - 按质量评分排序
+    - 显示引用次数、正负面反馈等
+    """
+    service = FeedbackService(db)
+    items = await service.get_quality_rankings(limit, order)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/knowledge/quality/suggestions")
+async def get_learning_suggestions(db: Session = Depends(get_db)):
+    """
+    获取持续学习建议
+    
+    - 高评价知识条目 → 建议权重提升
+    - 低评价知识条目 → 建议降权或移除
+    - 用户修改模式分析 → 建议内容调整方向
+    """
+    service = FeedbackService(db)
+    suggestions = await service.get_learning_suggestions()
+    return suggestions
+
+
+@router.post("/knowledge/quality/adjust")
+async def apply_weight_adjustment(db: Session = Depends(get_db)):
+    """
+    应用权重调整
+    
+    - quality_score > 0.8: 检索时权重 boost 1.5x
+    - quality_score < 0.3: 检索时降权 0.5x
+    - reference_count == 0 且 创建超30天: 标记为冷数据
+    """
+    service = FeedbackService(db)
+    result = await service.apply_weight_adjustment()
+    return result
+
+
+@router.get("/feedback/tags")
+async def get_feedback_tags():
+    """获取可用的反馈标签选项"""
+    from app.services.feedback_service import FeedbackService
+    return {"tags": FeedbackService.FEEDBACK_TAGS_OPTIONS}
+
+
+# ── 模型管理 ──
+@router.get("/models/embedding")
+async def list_embedding_models():
+    """列出可用 embedding 模型"""
+    model_service = get_model_manager_service()
+    embedding_service = get_embedding_service()
+    
+    # 获取配置中的模型列表
+    config_models = model_service.get_available_embedding_models()
+    
+    # 获取当前选中的模型
+    current_model = embedding_service.get_current_model()
+    
+    return {
+        "models": config_models,
+        "current_model": current_model,
+        "default_model": getattr(settings, 'DEFAULT_EMBEDDING_MODEL', 'nomic-embed-text')
+    }
+
+
+@router.get("/models/llm")
+async def list_llm_models():
+    """列出可用 LLM 模型"""
+    model_service = get_model_manager_service()
+    
+    # 获取配置中的模型列表
+    config_models = model_service.get_available_llm_models()
+    
+    return {
+        "models": config_models,
+        "default_model": getattr(settings, 'DEFAULT_LLM_MODEL', 'qwen2.5')
+    }
+
+
+@router.post("/models/embedding/select")
+async def select_embedding_model(request: dict):
+    """切换当前 embedding 模型
+    
+    请求体：
+    - model_name: 模型名称（如 "nomic-embed-text", "qwen3-embedding"）
+    """
+    model_name = request.get("model_name")
+    if not model_name:
+        raise HTTPException(status_code=400, detail="缺少 model_name 参数")
+    
+    embedding_service = get_embedding_service()
+    result = embedding_service.select_model(model_name)
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    
+    return result
+
+
+@router.get("/models/ollama/status")
+async def get_ollama_status():
+    """获取 Ollama 服务状态及已安装模型"""
+    model_service = get_model_manager_service()
+    
+    models = await model_service.list_ollama_models()
+    
+    return {
+        "status": "running" if models else "unavailable",
+        "models": models,
+        "count": len(models)
+    }
+
+
+@router.post("/models/ollama/pull")
+async def pull_ollama_model(request: dict):
+    """拉取 Ollama 模型
+    
+    请求体：
+    - model_name: 模型名称（如 "qwen2.5", "nomic-embed-text:latest"）
+    """
+    model_name = request.get("model_name")
+    if not model_name:
+        raise HTTPException(status_code=400, detail="缺少 model_name 参数")
+    
+    model_service = get_model_manager_service()
+    result = await model_service.pull_ollama_model(model_name)
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error"))
+    
+    return result
+
+
+@router.get("/models/ollama/{model_name}/info")
+async def get_ollama_model_info(model_name: str):
+    """获取 Ollama 模型详细信息"""
+    model_service = get_model_manager_service()
+    result = await model_service.get_model_info(model_name)
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error"))
+    
+    return result
+
+
+@router.get("/models/ollama/{model_name}/check")
+async def check_ollama_model(model_name: str):
+    """检查 Ollama 模型是否可用"""
+    model_service = get_model_manager_service()
+    result = await model_service.check_model_status(model_name)
+    
+    return result
+
+
+@router.post("/models/benchmark")
+async def benchmark_model(request: dict):
+    """模型性能对标
+    
+    请求体：
+    - model_name: 模型名称（必需）
+    - test_text: 测试文本（可选，默认使用内置测试文本）
+    """
+    model_name = request.get("model_name")
+    test_text = request.get("test_text")
+    
+    if not model_name:
+        raise HTTPException(status_code=400, detail="缺少 model_name 参数")
+    
+    model_service = get_model_manager_service()
+    result = await model_service.benchmark_model(model_name, test_text)
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error"))
+    
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════
+# 知识图谱 - Task #18
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/knowledge/graph/build")
+async def build_knowledge_relations(db: Session = Depends(get_db)):
+    """触发全量关系构建
+    
+    扫描所有知识条目，基于向量相似度和元数据匹配构建关系图。
+    大量数据时分批处理，每批100条。
+    """
+    from app.services.knowledge_graph_service import get_knowledge_graph_service
+    
+    service = get_knowledge_graph_service(db)
+    result = await service.batch_build_relations(batch_size=100)
+    
+    return BatchBuildRelationsResponse(
+        total_items=result["total_items"],
+        processed=result["processed"],
+        relations_created=result["relations_created"],
+        errors=result["errors"],
+        message=f"构建完成: 处理 {result['processed']} 条, 创建 {result['relations_created']} 条关系"
+    )
+
+
+@router.post("/knowledge/{knowledge_id}/relations/build")
+async def build_single_knowledge_relations(
+    knowledge_id: int,
+    db: Session = Depends(get_db)
+):
+    """为单条知识条目构建关系
+    
+    基于向量相似度和元数据匹配发现并建立关系。
+    """
+    from app.services.knowledge_graph_service import get_knowledge_graph_service
+    
+    service = get_knowledge_graph_service(db)
+    try:
+        relations = await service.build_relations(knowledge_id)
+        return BuildRelationsResponse(
+            success=True,
+            knowledge_id=knowledge_id,
+            relations_created=len(relations),
+            message=f"成功创建 {len(relations)} 条关系"
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/knowledge/{knowledge_id}/related")
+async def get_related_knowledge_items(
+    knowledge_id: int,
+    relation_type: str = Query(None, description="关系类型过滤"),
+    limit: int = Query(10, ge=1, le=50, description="返回数量限制"),
+    db: Session = Depends(get_db)
+):
+    """获取关联知识条目（图遍历1跳）
+    
+    返回与指定知识条目直接相关的其他条目。
+    """
+    from app.services.knowledge_graph_service import get_knowledge_graph_service
+    
+    service = get_knowledge_graph_service(db)
+    results = await service.get_related_items(
+        knowledge_id=knowledge_id,
+        relation_type=relation_type,
+        limit=limit
+    )
+    return {"items": results, "total": len(results)}
+
+
+@router.get("/knowledge/graph", response_model=KnowledgeGraphResponse)
+async def get_knowledge_graph_data(
+    library_type: str = Query(None, description="分库类型过滤"),
+    limit: int = Query(50, ge=1, le=200, description="节点数量限制"),
+    db: Session = Depends(get_db)
+):
+    """获取知识图谱数据（nodes + edges 格式）
+    
+    返回节点和边的数据，用于前端可视化。
+    """
+    from app.services.knowledge_graph_service import get_knowledge_graph_service
+    
+    service = get_knowledge_graph_service(db)
+    result = await service.get_knowledge_graph(
+        library_type=library_type,
+        limit=limit
+    )
+    return KnowledgeGraphResponse(**result)
+
+
+@router.get("/knowledge/graph/stats", response_model=GraphStatsResponse)
+async def get_knowledge_graph_stats(db: Session = Depends(get_db)):
+    """获取图谱统计信息
+    
+    返回节点数、边数、平均度、最大连通分量等统计数据。
+    """
+    from app.services.knowledge_graph_service import get_knowledge_graph_service
+    
+    service = get_knowledge_graph_service(db)
+    result = await service.get_graph_stats()
+    return GraphStatsResponse(**result)
+
+
+@router.get("/knowledge/graph/clusters")
+async def get_knowledge_topic_clusters(
+    min_size: int = Query(2, ge=2, le=10, description="最小簇大小"),
+    db: Session = Depends(get_db)
+):
+    """获取主题聚类
+    
+    基于关系图发现主题簇，返回 [{topic, items, count}]。
+    """
+    from app.services.knowledge_graph_service import get_knowledge_graph_service
+    
+    service = get_knowledge_graph_service(db)
+    result = await service.cluster_topics(min_cluster_size=min_size)
+    return {"clusters": result, "total": len(result)}
+
+
+@router.get("/knowledge/graph/enhanced-search")
+async def enhanced_knowledge_search(
+    query: str = Query(..., description="查询文本"),
+    top_k: int = Query(5, ge=1, le=20, description="初始检索数量"),
+    expand_limit: int = Query(3, ge=0, le=10, description="每条结果扩展数量"),
+    db: Session = Depends(get_db)
+):
+    """图增强检索
+    
+    先向量检索，再沿关系图扩展相关条目。
+    返回增强后的检索结果。
+    """
+    from app.services.knowledge_graph_service import get_knowledge_graph_service
+    
+    service = get_knowledge_graph_service(db)
+    results = await service.enhanced_search(
+        query=query,
+        top_k=top_k,
+        expand_limit=expand_limit
+    )
+    return {"results": results, "total": len(results)}

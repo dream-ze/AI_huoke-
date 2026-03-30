@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { getKnowledgeLibraries, mvpListKnowledge, getKnowledgeChunks } from "../../lib/api";
+import { getKnowledgeLibraries, mvpListKnowledge, getKnowledgeChunks, listKnowledgeByLibrary, getKnowledgeQualityRankings, getLearningSuggestions, applyWeightAdjustment, getKnowledgeGraph, getGraphStats, getTopicClusters, buildKnowledgeGraph, getRelatedKnowledgeItems, enhancedKnowledgeSearch } from "../../lib/api";
 import { KnowledgeLibraryStat, KnowledgeChunk } from "../../types";
 
 // 分库类型配置
@@ -74,6 +74,35 @@ export default function KnowledgePage() {
   const [filterAudience, setFilterAudience] = useState("");
   const [searchKeyword, setSearchKeyword] = useState("");
 
+  // 分库检索测试工具状态
+  const [testSearchQuery, setTestSearchQuery] = useState("");
+  const [testSearchLibrary, setTestSearchLibrary] = useState<string>("all");
+  const [testSearchResults, setTestSearchResults] = useState<any[]>([]);
+  const [testSearchLoading, setTestSearchLoading] = useState(false);
+
+  // 质量排行和学习建议状态
+  const [qualityRankings, setQualityRankings] = useState<any[]>([]);
+  const [qualityRankingsLoading, setQualityRankingsLoading] = useState(false);
+  const [learningSuggestions, setLearningSuggestions] = useState<any[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [adjustmentLoading, setAdjustmentLoading] = useState(false);
+  const [adjustmentResult, setAdjustmentResult] = useState<any>(null);
+  const [showQualityPanel, setShowQualityPanel] = useState(false);
+
+  // 知识图谱状态
+  const [graphStats, setGraphStats] = useState<any>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [buildLoading, setBuildLoading] = useState(false);
+  const [buildResult, setBuildResult] = useState<any>(null);
+  const [topicClusters, setTopicClusters] = useState<any[]>([]);
+  const [clustersLoading, setClustersLoading] = useState(false);
+  const [relatedItems, setRelatedItems] = useState<any[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
+  const [graphSearchQuery, setGraphSearchQuery] = useState("");
+  const [graphSearchResults, setGraphSearchResults] = useState<any[]>([]);
+  const [graphSearchLoading, setGraphSearchLoading] = useState(false);
+
   // 加载分库统计
   const fetchLibraries = useCallback(async () => {
     try {
@@ -91,7 +120,7 @@ export default function KnowledgePage() {
       const params: Record<string, any> = {
         library_type: activeLibrary,
         page,
-        page_size: pageSize,
+        size: pageSize,
       };
       if (filterPlatform) params.platform = filterPlatform;
       if (filterTopic) params.topic = filterTopic;
@@ -160,6 +189,174 @@ export default function KnowledgePage() {
     fetchItems();
   };
 
+  // 分库检索测试
+  const handleTestSearch = async () => {
+    if (!testSearchQuery.trim()) return;
+    setTestSearchLoading(true);
+    try {
+      const results: any[] = [];
+      if (testSearchLibrary === "all") {
+        // 搜索所有分库
+        for (const libType of Object.keys(LIBRARY_TYPES)) {
+          const res = await listKnowledgeByLibrary(libType, {
+            keyword: testSearchQuery,
+            page: 1,
+            size: 5,
+          });
+          if (res.items) {
+            results.push(...res.items.map((item: any) => ({ ...item, library_label: LIBRARY_TYPES[libType]?.label })));
+          }
+        }
+      } else {
+        // 搜索指定分库
+        const res = await listKnowledgeByLibrary(testSearchLibrary, {
+          keyword: testSearchQuery,
+          page: 1,
+          size: 10,
+        });
+        if (res.items) {
+          results.push(...res.items.map((item: any) => ({ ...item, library_label: LIBRARY_TYPES[testSearchLibrary]?.label })));
+        }
+      }
+      setTestSearchResults(results);
+    } catch (err) {
+      console.error("检索测试失败:", err);
+      setTestSearchResults([]);
+    } finally {
+      setTestSearchLoading(false);
+    }
+  };
+
+  // 加载质量排行
+  const fetchQualityRankings = useCallback(async () => {
+    setQualityRankingsLoading(true);
+    try {
+      const data = await getKnowledgeQualityRankings(10);
+      setQualityRankings(data.items || []);
+    } catch (err) {
+      console.error("加载质量排行失败:", err);
+      setQualityRankings([]);
+    } finally {
+      setQualityRankingsLoading(false);
+    }
+  }, []);
+
+  // 加载学习建议
+  const fetchLearningSuggestions = useCallback(async () => {
+    setSuggestionsLoading(true);
+    try {
+      const data = await getLearningSuggestions();
+      setLearningSuggestions(data.suggestions || []);
+    } catch (err) {
+      console.error("加载学习建议失败:", err);
+      setLearningSuggestions([]);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, []);
+
+  // 应用权重调整
+  const handleApplyAdjustment = async () => {
+    setAdjustmentLoading(true);
+    try {
+      const result = await applyWeightAdjustment();
+      setAdjustmentResult(result);
+      // 刷新排行
+      await fetchQualityRankings();
+    } catch (err) {
+      console.error("权重调整失败:", err);
+    } finally {
+      setAdjustmentLoading(false);
+    }
+  };
+
+  // 展开质量面板时加载数据
+  useEffect(() => {
+    if (showQualityPanel) {
+      fetchQualityRankings();
+      fetchLearningSuggestions();
+    }
+  }, [showQualityPanel, fetchQualityRankings, fetchLearningSuggestions]);
+
+  // 知识图谱相关函数
+  const fetchGraphStats = useCallback(async () => {
+    setGraphLoading(true);
+    try {
+      const data = await getGraphStats();
+      setGraphStats(data);
+    } catch (err) {
+      console.error("加载图谱统计失败:", err);
+    } finally {
+      setGraphLoading(false);
+    }
+  }, []);
+
+  const handleBuildGraph = async () => {
+    setBuildLoading(true);
+    setBuildResult(null);
+    try {
+      const result = await buildKnowledgeGraph();
+      setBuildResult(result);
+      // 刷新统计
+      await fetchGraphStats();
+      await fetchClusters();
+    } catch (err) {
+      console.error("构建关系失败:", err);
+      setBuildResult({ error: String(err) });
+    } finally {
+      setBuildLoading(false);
+    }
+  };
+
+  const fetchClusters = useCallback(async () => {
+    setClustersLoading(true);
+    try {
+      const data = await getTopicClusters(2);
+      setTopicClusters(data.clusters || []);
+    } catch (err) {
+      console.error("加载主题聚类失败:", err);
+      setTopicClusters([]);
+    } finally {
+      setClustersLoading(false);
+    }
+  }, []);
+
+  const fetchRelatedItems = async (knowledgeId: number) => {
+    setRelatedLoading(true);
+    setSelectedNodeId(knowledgeId);
+    try {
+      const data = await getRelatedKnowledgeItems(knowledgeId, { limit: 10 });
+      setRelatedItems(data.items || []);
+    } catch (err) {
+      console.error("加载关联条目失败:", err);
+      setRelatedItems([]);
+    } finally {
+      setRelatedLoading(false);
+    }
+  };
+
+  const handleGraphSearch = async () => {
+    if (!graphSearchQuery.trim()) return;
+    setGraphSearchLoading(true);
+    try {
+      const data = await enhancedKnowledgeSearch(graphSearchQuery, { top_k: 5, expand_limit: 3 });
+      setGraphSearchResults(data.results || []);
+    } catch (err) {
+      console.error("图增强检索失败:", err);
+      setGraphSearchResults([]);
+    } finally {
+      setGraphSearchLoading(false);
+    }
+  };
+
+  // 切换到知识图谱Tab时加载数据
+  useEffect(() => {
+    if (activeLibrary === "__graph__") {
+      fetchGraphStats();
+      fetchClusters();
+    }
+  }, [activeLibrary, fetchGraphStats, fetchClusters]);
+
   // 获取分库数量
   const getLibraryCount = (type: string) => {
     const lib = libraries.find(l => l.library_type === type);
@@ -204,10 +401,25 @@ export default function KnowledgePage() {
             <span style={styles.tabCount}>({getLibraryCount(key)})</span>
           </button>
         ))}
+        {/* 知识图谱 Tab */}
+        <button
+          onClick={() => setActiveLibrary("__graph__")}
+          style={{
+            ...styles.tabButton,
+            background: activeLibrary === "__graph__" ? "#6B5B95" : "#3A322C",
+            color: activeLibrary === "__graph__" ? "#FFF" : "#D4C5B2",
+            borderColor: activeLibrary === "__graph__" ? "#8B7BA5" : "#4A3F35",
+          }}
+        >
+          <span style={styles.tabIcon}>🔗</span>
+          <span>知识图谱</span>
+        </button>
       </div>
 
       {/* 筛选栏 */}
-      <div style={styles.filterBar}>
+      {activeLibrary !== "__graph__" && (
+        <>
+          <div style={styles.filterBar}>
         <div style={styles.filterGroup}>
           <select
             value={filterPlatform}
@@ -419,6 +631,151 @@ export default function KnowledgePage() {
           </>
         )}
       </div>
+
+      {/* 分库检索测试工具 */}
+      <div style={styles.testSearchContainer}>
+        <h3 style={styles.testSearchTitle}>🔍 分库检索测试工具</h3>
+        <div style={styles.testSearchForm}>
+          <input
+            type="text"
+            placeholder="输入查询文本..."
+            value={testSearchQuery}
+            onChange={(e) => setTestSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleTestSearch()}
+            style={styles.testSearchInput}
+          />
+          <select
+            value={testSearchLibrary}
+            onChange={(e) => setTestSearchLibrary(e.target.value)}
+            style={styles.testSearchSelect}
+          >
+            <option value="all">全部分库</option>
+            {Object.entries(LIBRARY_TYPES).map(([key, config]) => (
+              <option key={key} value={key}>{config.label}</option>
+            ))}
+          </select>
+          <button onClick={handleTestSearch} style={styles.testSearchButton}>
+            {testSearchLoading ? "检索中..." : "检索测试"}
+          </button>
+        </div>
+        
+        {/* 检索结果 */}
+        {testSearchResults.length > 0 && (
+          <div style={styles.testSearchResults}>
+            <div style={styles.testSearchResultHeader}>
+              检索结果 ({testSearchResults.length} 条)
+            </div>
+            <div style={styles.testSearchResultList}>
+              {testSearchResults.map((item) => (
+                <div key={`${item.library_type}-${item.id}`} style={styles.testSearchResultItem}>
+                  <div style={styles.testSearchResultMeta}>
+                    <span style={styles.testSearchResultLibrary}>{item.library_label}</span>
+                    <span style={styles.testSearchResultPlatform}>{item.platform || "-"}</span>
+                  </div>
+                  <div style={styles.testSearchResultTitle}>{item.title}</div>
+                  <div style={styles.testSearchResultContent}>{truncate(item.content, 100)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {testSearchQuery && !testSearchLoading && testSearchResults.length === 0 && (
+          <div style={styles.testSearchEmpty}>未找到匹配结果</div>
+        )}
+      </div>
+
+      {/* 质量排行和学习建议面板 */}
+      <div style={styles.qualityPanel}>
+        <div 
+          style={styles.qualityPanelHeader}
+          onClick={() => setShowQualityPanel(!showQualityPanel)}
+        >
+          <h3 style={styles.qualityPanelTitle}>📊 知识质量分析</h3>
+          <span style={styles.qualityPanelToggle}>{showQualityPanel ? "▼" : "▶"}</span>
+        </div>
+        
+        {showQualityPanel && (
+          <div style={styles.qualityPanelContent}>
+            {/* 质量排行 */}
+            <div style={styles.rankingSection}>
+              <h4 style={styles.sectionTitle}>🏆 质量排行榜 TOP 10</h4>
+              {qualityRankingsLoading ? (
+                <div style={styles.loadingText}>加载中...</div>
+              ) : qualityRankings.length === 0 ? (
+                <div style={styles.emptyText}>暂无数据</div>
+              ) : (
+                <div style={styles.rankingList}>
+                  {qualityRankings.map((item, idx) => (
+                    <div key={item.knowledge_id} style={styles.rankingItem}>
+                      <span style={styles.rankingIndex}>#{idx + 1}</span>
+                      <span style={styles.rankingTitle}>{truncate(item.title, 30)}</span>
+                      <span style={styles.rankingScore}>{(item.quality_score * 100).toFixed(0)}%</span>
+                      <span style={styles.rankingRefs}>引用{item.reference_count}次</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {/* 学习建议 */}
+            <div style={styles.suggestionsSection}>
+              <h4 style={styles.sectionTitle}>💡 学习建议</h4>
+              {suggestionsLoading ? (
+                <div style={styles.loadingText}>加载中...</div>
+              ) : learningSuggestions.length === 0 ? (
+                <div style={styles.emptyText}>暂无建议</div>
+              ) : (
+                <div style={styles.suggestionsList}>
+                  {learningSuggestions.slice(0, 5).map((sug, idx) => (
+                    <div key={idx} style={{
+                      ...styles.suggestionItem,
+                      borderLeftColor: sug.priority === 'high' ? '#f44336' : sug.priority === 'medium' ? '#ff9800' : '#4caf50'
+                    }}>
+                      <div style={styles.suggestionHeader}>
+                        <span style={{
+                          ...styles.suggestionType,
+                          background: sug.type === 'boost' ? '#e8f5e9' : sug.type === 'downgrade' ? '#fff3e0' : '#ffebee'
+                        }}>
+                          {sug.type === 'boost' ? '⬆️ 提升' : sug.type === 'downgrade' ? '⬇️ 降权' : sug.type === 'remove' ? '🗑️ 移除' : '⚙️ 调整'}
+                        </span>
+                        <span style={styles.suggestionTitle}>{sug.title}</span>
+                      </div>
+                      <div style={styles.suggestionContent}>{sug.suggestion}</div>
+                      <div style={styles.suggestionReason}>{sug.reason}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {/* 权重调整按钮 */}
+            <div style={styles.adjustmentSection}>
+              <button
+                onClick={handleApplyAdjustment}
+                disabled={adjustmentLoading}
+                style={{
+                  ...styles.adjustButton,
+                  opacity: adjustmentLoading ? 0.7 : 1,
+                }}
+              >
+                {adjustmentLoading ? "调整中..." : "🔧 应用权重调整"}
+              </button>
+              {adjustmentResult && (
+                <div style={styles.adjustmentResult}>
+                  <div style={styles.adjustmentMessage}>{adjustmentResult.message}</div>
+                  <div style={styles.adjustmentDetails}>
+                    提升: {adjustmentResult.boosted_count} | 
+                    降权: {adjustmentResult.downgraded_count} | 
+                    冷标记: {adjustmentResult.cold_marked_count}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+        </>
+      )}
     </div>
   );
 }
@@ -784,5 +1141,272 @@ const styles: Record<string, React.CSSProperties> = {
   emptyDesc: {
     fontSize: "14px",
     color: "#9B8B7A",
+  },
+  // 分库检索测试工具样式
+  testSearchContainer: {
+    marginTop: "32px",
+    padding: "20px",
+    background: "#1E1A16",
+    borderRadius: "12px",
+    border: "1px solid #4A3F35",
+  },
+  testSearchTitle: {
+    margin: "0 0 16px 0",
+    color: "#E8DDD3",
+    fontSize: "16px",
+    fontWeight: 600,
+  },
+  testSearchForm: {
+    display: "flex",
+    gap: "12px",
+    flexWrap: "wrap" as const,
+    marginBottom: "16px",
+  },
+  testSearchInput: {
+    flex: 1,
+    minWidth: "200px",
+    padding: "10px 14px",
+    borderRadius: "8px",
+    border: "1px solid #4A3F35",
+    background: "#2D2520",
+    color: "#E8DDD3",
+    fontSize: "14px",
+  },
+  testSearchSelect: {
+    padding: "10px 14px",
+    borderRadius: "8px",
+    border: "1px solid #4A3F35",
+    background: "#2D2520",
+    color: "#E8DDD3",
+    fontSize: "14px",
+    minWidth: "140px",
+  },
+  testSearchButton: {
+    padding: "10px 20px",
+    borderRadius: "8px",
+    border: "none",
+    background: "#8B7355",
+    color: "#FFF",
+    fontSize: "14px",
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  testSearchResults: {
+    marginTop: "16px",
+    padding: "16px",
+    background: "#2D2520",
+    borderRadius: "8px",
+  },
+  testSearchResultHeader: {
+    color: "#BFA98E",
+    fontSize: "14px",
+    marginBottom: "12px",
+    paddingBottom: "8px",
+    borderBottom: "1px solid #4A3F35",
+  },
+  testSearchResultList: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "12px",
+  },
+  testSearchResultItem: {
+    padding: "12px",
+    background: "#1E1A16",
+    borderRadius: "8px",
+    border: "1px solid #4A3F35",
+  },
+  testSearchResultMeta: {
+    display: "flex",
+    gap: "8px",
+    marginBottom: "8px",
+  },
+  testSearchResultLibrary: {
+    padding: "2px 8px",
+    background: "#3A322C",
+    color: "#E8A87C",
+    fontSize: "12px",
+    borderRadius: "4px",
+  },
+  testSearchResultPlatform: {
+    padding: "2px 8px",
+    background: "#3A322C",
+    color: "#9B8B7A",
+    fontSize: "12px",
+    borderRadius: "4px",
+  },
+  testSearchResultTitle: {
+    color: "#E8DDD3",
+    fontSize: "14px",
+    fontWeight: 500,
+    marginBottom: "4px",
+  },
+  testSearchResultContent: {
+    color: "#9B8B7A",
+    fontSize: "13px",
+    lineHeight: 1.5,
+  },
+  testSearchEmpty: {
+    color: "#9B8B7A",
+    fontSize: "14px",
+    textAlign: "center" as const,
+    padding: "20px",
+  },
+  // 质量分析面板样式
+  qualityPanel: {
+    marginTop: "32px",
+    background: "#1E1A16",
+    borderRadius: "12px",
+    border: "1px solid #4A3F35",
+    overflow: "hidden",
+  },
+  qualityPanelHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "16px 20px",
+    cursor: "pointer",
+    borderBottom: "1px solid #4A3F35",
+  },
+  qualityPanelTitle: {
+    margin: 0,
+    color: "#E8DDD3",
+    fontSize: "16px",
+    fontWeight: 600,
+  },
+  qualityPanelToggle: {
+    color: "#9B8B7A",
+    fontSize: "14px",
+  },
+  qualityPanelContent: {
+    padding: "20px",
+  },
+  rankingSection: {
+    marginBottom: "24px",
+  },
+  sectionTitle: {
+    margin: "0 0 12px 0",
+    color: "#BFA98E",
+    fontSize: "14px",
+    fontWeight: 600,
+  },
+  loadingText: {
+    color: "#9B8B7A",
+    fontSize: "13px",
+    textAlign: "center",
+    padding: "16px",
+  },
+  emptyText: {
+    color: "#9B8B7A",
+    fontSize: "13px",
+    textAlign: "center",
+    padding: "16px",
+    fontStyle: "italic",
+  },
+  rankingList: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "8px",
+  },
+  rankingItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "10px 12px",
+    background: "#2D2520",
+    borderRadius: "8px",
+  },
+  rankingIndex: {
+    color: "#8B7355",
+    fontWeight: 600,
+    fontSize: "12px",
+    minWidth: "24px",
+  },
+  rankingTitle: {
+    flex: 1,
+    color: "#E8DDD3",
+    fontSize: "13px",
+  },
+  rankingScore: {
+    color: "#4caf50",
+    fontWeight: 600,
+    fontSize: "12px",
+    padding: "2px 8px",
+    background: "#1b3a1b",
+    borderRadius: "4px",
+  },
+  rankingRefs: {
+    color: "#9B8B7A",
+    fontSize: "11px",
+  },
+  suggestionsSection: {
+    marginBottom: "24px",
+  },
+  suggestionsList: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "12px",
+  },
+  suggestionItem: {
+    padding: "12px",
+    background: "#2D2520",
+    borderRadius: "8px",
+    borderLeft: "3px solid",
+  },
+  suggestionHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    marginBottom: "8px",
+  },
+  suggestionType: {
+    padding: "2px 8px",
+    borderRadius: "4px",
+    fontSize: "11px",
+    color: "#E8DDD3",
+  },
+  suggestionTitle: {
+    color: "#E8DDD3",
+    fontSize: "13px",
+    fontWeight: 500,
+  },
+  suggestionContent: {
+    color: "#D4C5B2",
+    fontSize: "12px",
+    marginBottom: "4px",
+  },
+  suggestionReason: {
+    color: "#9B8B7A",
+    fontSize: "11px",
+  },
+  adjustmentSection: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "12px",
+  },
+  adjustButton: {
+    padding: "12px 20px",
+    borderRadius: "8px",
+    border: "none",
+    background: "#8B7355",
+    color: "#FFF",
+    fontSize: "14px",
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  adjustmentResult: {
+    padding: "12px",
+    background: "#1b3a1b",
+    borderRadius: "8px",
+    border: "1px solid #4caf50",
+  },
+  adjustmentMessage: {
+    color: "#4caf50",
+    fontSize: "13px",
+    fontWeight: 500,
+    marginBottom: "4px",
+  },
+  adjustmentDetails: {
+    color: "#9B8B7A",
+    fontSize: "12px",
   },
 };

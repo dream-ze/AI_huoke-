@@ -1,4 +1,5 @@
 """知识切块服务 - 支持4种切块策略"""
+import json
 import logging
 import re
 from typing import List, Dict, Optional
@@ -82,7 +83,7 @@ class ChunkingService:
                     chunk_type=chunk_data["chunk_type"],
                     chunk_index=i,
                     content=chunk_data["content"],
-                    metadata_json=chunk_data.get("metadata", {}),
+                    metadata_json=json.dumps(chunk_data.get("metadata", {}), ensure_ascii=False),
                     embedding=embedding,  # 直接写入List[float]，pgvector Vector类型
                     token_count=len(chunk_data["content"]),  # 简易估算
                 )

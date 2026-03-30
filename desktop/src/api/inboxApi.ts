@@ -141,6 +141,13 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T | null
   }
 }
 
+function requireApiResult<T>(data: T | null, errorMessage: string): T {
+  if (data === null) {
+    throw new Error(errorMessage);
+  }
+  return data;
+}
+
 export const inboxApi = {
   /**
    * 获取收件箱列表
@@ -168,7 +175,7 @@ export const inboxApi = {
       `/api/mvp/inbox/${id}/clean`,
       { method: 'POST' }
     );
-    return data || { success: true, message: '清洗完成（mock）' };
+    return requireApiResult(data, '清洗失败');
   },
 
   /**
@@ -179,7 +186,7 @@ export const inboxApi = {
       '/api/mvp/inbox/batch-clean',
       { method: 'POST', body: JSON.stringify({ ids }) }
     );
-    return data || { success: true, total: ids.length };
+    return requireApiResult(data, '批量清洗失败');
   },
 
   /**
@@ -190,7 +197,7 @@ export const inboxApi = {
       `/api/mvp/inbox/${id}/screen`,
       { method: 'POST' }
     );
-    return data || { success: true, message: '质量筛选完成（mock）' };
+    return requireApiResult(data, '质量筛选失败');
   },
 
   /**
@@ -201,7 +208,7 @@ export const inboxApi = {
       '/api/mvp/inbox/batch-screen',
       { method: 'POST', body: JSON.stringify({ ids }) }
     );
-    return data || { success: true, total: ids.length };
+    return requireApiResult(data, '批量质量筛选失败');
   },
 
   /**
@@ -212,7 +219,7 @@ export const inboxApi = {
       `/api/mvp/inbox/${id}/to-material`,
       { method: 'POST' }
     );
-    return data || { success: true, message: '已入素材库（mock）' };
+    return requireApiResult(data, '入素材库失败');
   },
 
   /**
@@ -223,7 +230,7 @@ export const inboxApi = {
       '/api/mvp/inbox/batch-to-material',
       { method: 'POST', body: JSON.stringify({ ids }) }
     );
-    return data || { success: true, total: ids.length };
+    return requireApiResult(data, '批量入素材库失败');
   },
 
   /**
@@ -234,7 +241,7 @@ export const inboxApi = {
       `/api/mvp/inbox/${id}/ignore`,
       { method: 'POST' }
     );
-    return data || { success: true, message: '已忽略（mock）' };
+    return requireApiResult(data, '忽略失败');
   },
 
   /**
@@ -245,7 +252,7 @@ export const inboxApi = {
       '/api/mvp/inbox/batch-ignore',
       { method: 'POST', body: JSON.stringify({ ids }) }
     );
-    return data || { success: true, total: ids.length };
+    return requireApiResult(data, '批量忽略失败');
   },
 };
 

@@ -12,7 +12,7 @@ class MvpMaterialService:
                        audience=None, style=None, is_hot=None, keyword=None):
         """列出素材列表，支持筛选和分页"""
         try:
-            q = self.db.query(MvpMaterialItem)
+            q = self.db.query(MvpMaterialItem).options(joinedload(MvpMaterialItem.tags))
             if platform:
                 q = q.filter(MvpMaterialItem.platform == platform)
             if is_hot is not None:
@@ -39,12 +39,9 @@ class MvpMaterialService:
             # 为每个item加载tags
             result = []
             for item in items:
-                tags = self.db.query(MvpTag).join(MvpMaterialTagRel).filter(
-                    MvpMaterialTagRel.material_id == item.id
-                ).all()
                 result.append({
                     **{c.name: getattr(item, c.name) for c in item.__table__.columns},
-                    "tags": [{"id": t.id, "name": t.name, "type": t.type} for t in tags]
+                    "tags": [{"id": t.id, "name": t.name, "type": t.type} for t in item.tags]
                 })
             return {"items": result, "total": total, "page": page, "size": size}
         except Exception as e:

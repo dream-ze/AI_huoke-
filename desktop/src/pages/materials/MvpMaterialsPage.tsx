@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { mvpListMaterials, mvpGetMaterial, mvpBuildKnowledge, mvpUpdateTags, mvpListTags } from "../../lib/api";
+import { mvpListMaterials, mvpGetMaterial, mvpBuildKnowledge, mvpBatchBuildKnowledge, mvpToggleMaterialHot, mvpUpdateTags, mvpListTags } from "../../lib/api";
 import { MvpMaterialItem, MvpTag } from "../../types";
 
 const PLATFORMS = [
@@ -99,8 +99,10 @@ export default function MvpMaterialsPage() {
   const [filterHot, setFilterHot] = useState("");
   const [filterKeyword, setFilterKeyword] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
 
-  const showMessage = (text: string, type: "success" | "error") => {
+  const showMessage = (text: string, type: "success" | "error" | "warning") => {
     setMessage({ text, type });
     setTimeout(() => setMessage({ text: "", type: "" }), 3000);
   };
@@ -188,13 +190,11 @@ export default function MvpMaterialsPage() {
     if (!detail) return;
     setActionLoading("hot");
     try {
-      const newTags = detail.is_hot
-        ? selectedTagIds.filter((id) => allTags.find((t) => t.id === id)?.name !== "爆款")
-        : [...selectedTagIds];
-      await mvpUpdateTags(detail.id, newTags);
+      const wasHot = detail.is_hot;
+      await mvpToggleMaterialHot(detail.id);
       await fetchDetail(detail.id);
       await fetchList();
-      showMessage(detail.is_hot ? "已取消爆款标记" : "已标记为爆款", "success");
+      showMessage(wasHot ? "已取消爆款标记" : "已标记为爆款", "success");
     } catch (e) {
       console.error(e);
       showMessage("操作失败", "error");
@@ -224,6 +224,44 @@ export default function MvpMaterialsPage() {
     setSelectedTagIds((prev) =>
       prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
     );
+  };
+
+  // 多选操作函数
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === items.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(items.map(i => i.id)));
+    }
+  };
+
+  const handleBatchBuildKnowledge = async () => {
+    if (selectedIds.size === 0) return;
+    setBatchLoading(true);
+    try {
+      const result = await mvpBatchBuildKnowledge(Array.from(selectedIds));
+      const msg = `批量入知识库完成：共 ${result.total} 条，成功 ${result.success_count} 条${result.failed_count > 0 ? `，失败 ${result.failed_count} 条` : ''}`;
+      showMessage(msg, result.failed_count > 0 ? 'warning' : 'success');
+      if (result.failed_count > 0) {
+        console.warn('批量入知识库失败明细:', result.details.filter((d: any) => !d.success));
+      }
+      setSelectedIds(new Set());
+      fetchList();
+    } catch (e: any) {
+      console.error(e);
+      showMessage('批量入知识库失败: ' + (e?.response?.data?.detail || e?.message || '未知错误'), 'error');
+    } finally {
+      setBatchLoading(false);
+    }
   };
 
   const groupedTags = allTags.reduce<Record<string, MvpTag[]>>((acc, tag) => {
@@ -290,6 +328,7 @@ export default function MvpMaterialsPage() {
         .mat-message { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; z-index: 1000; animation: slideIn 0.3s ease; }
         .mat-message.success { background: #d4edda; color: #155724; }
         .mat-message.error { background: #f8d7da; color: #721c24; }
+        .mat-message.warning { background: #fff3cd; color: #856404; }
         @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         .mat-loading { text-align: center; padding: 40px; color: var(--muted); }
       `}</style>
@@ -338,6 +377,35 @@ export default function MvpMaterialsPage() {
         <button className="primary" onClick={handleSearch}>搜索</button>
       </div>
 
+      {selectedIds.size > 0 && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '8px 16px',
+          background: '#f0f7ff',
+          borderRadius: 8,
+          marginBottom: 8,
+        }}>
+          <span>已选中 {selectedIds.size} 条素材</span>
+          <button
+            className="primary"
+            onClick={handleBatchBuildKnowledge}
+            disabled={batchLoading}
+            style={{ padding: '6px 16px', fontSize: 14 }}
+          >
+            {batchLoading ? '构建中...' : '📚 批量入知识库'}
+          </button>
+          <button
+            className="ghost"
+            onClick={() => setSelectedIds(new Set())}
+            style={{ padding: '6px 12px', fontSize: 13 }}
+          >
+            取消选择
+          </button>
+        </div>
+      )}
+
       {items.length === 0 && !loading ? (
         <div className="card mat-empty">
           <div className="icon">📦</div>
@@ -354,7 +422,14 @@ export default function MvpMaterialsPage() {
               <table className="mat-table">
                 <thead>
                   <tr>
-                    <th style={{ width: "35%" }}>标题</th>
+                    <th style={{ width: "4%" }}>
+                      <input
+                        type="checkbox"
+                        checked={items.length > 0 && selectedIds.size === items.length}
+                        onChange={toggleSelectAll}
+                      />
+                    </th>
+                    <th style={{ width: "33%" }}>标题</th>
                     <th style={{ width: "10%" }}>平台</th>
                     <th style={{ width: "18%" }}>标签</th>
                     <th style={{ width: "6%" }}>爆款</th>
@@ -370,6 +445,13 @@ export default function MvpMaterialsPage() {
                       className={selectedId === item.id ? "selected" : ""}
                       onClick={() => handleRowClick(item.id)}
                     >
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(item.id)}
+                          onChange={() => toggleSelect(item.id)}
+                        />
+                      </td>
                       <td>{truncate(item.title, 40)}</td>
                       <td>{getPlatformLabel(item.platform)}</td>
                       <td>

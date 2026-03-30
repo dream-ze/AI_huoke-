@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import { generateFullPipeline, mvpComplianceCheck } from "../../lib/api";
-import { FullPipelineResponse } from "../../types";
+import { generateFullPipeline, mvpComplianceCheck, getKnowledgeLibraries, submitFeedback, getFeedbackTags } from "../../lib/api";
+import { FullPipelineResponse, KnowledgeLibraryStat } from "../../types";
 
 // 选项配置
 const PLATFORM_OPTIONS = [
@@ -143,6 +143,63 @@ export default function MvpWorkbenchPage() {
   // 版本复制状态
   const [copiedVersions, setCopiedVersions] = useState<Record<string, boolean>>({});
 
+  // 反馈状态
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState<Record<string, boolean>>({});
+  const [showFeedbackPanel, setShowFeedbackPanel] = useState<string | null>(null);  // 当前显示反馈面板的版本style
+  const [feedbackRating, setFeedbackRating] = useState<number>(0);
+  const [feedbackTags, setFeedbackTags] = useState<string[]>([]);
+  const [availableFeedbackTags, setAvailableFeedbackTags] = useState<string[]>([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [generationId, setGenerationId] = useState<string>("");
+
+  // 知识库状态
+  const [knowledgeStatus, setKnowledgeStatus] = useState<{
+    hasData: boolean;
+    totalCount: number;
+    libraries: KnowledgeLibraryStat[];
+    loading: boolean;
+  }>({ hasData: false, totalCount: 0, libraries: [], loading: true });
+
+  // 检查知识库状态
+  const checkKnowledgeStatus = async () => {
+    setKnowledgeStatus(prev => ({ ...prev, loading: true }));
+    try {
+      const libraries = await getKnowledgeLibraries();
+      const total = libraries.reduce((sum: number, lib: KnowledgeLibraryStat) => sum + (lib.count || 0), 0);
+      setKnowledgeStatus({
+        hasData: total > 0,
+        totalCount: total,
+        libraries: libraries,
+        loading: false,
+      });
+    } catch (e) {
+      console.warn('知识库状态检查失败:', e);
+      setKnowledgeStatus(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  // 页面加载时检查知识库状态
+  useEffect(() => {
+    checkKnowledgeStatus();
+  }, []);
+
+  // 加载反馈标签选项
+  useEffect(() => {
+    const loadFeedbackTags = async () => {
+      try {
+        const tags = await getFeedbackTags();
+        setAvailableFeedbackTags(tags);
+      } catch (e) {
+        // 使用默认值
+        setAvailableFeedbackTags([
+          "太长", "太短", "不够专业", "太生硬", "不相关",
+          "数据错误", "风格不符", "缺少关键信息", "风险敏感词", "其他"
+        ]);
+      }
+    };
+    loadFeedbackTags();
+  }, []);
+
   // 接收素材库跳转参数
   useEffect(() => {
     const state = location.state as { 
@@ -169,8 +226,57 @@ export default function MvpWorkbenchPage() {
     }
   }, [location.state]);
 
+  // 解析错误信息，返回用户友好的错误提示
+  const parseErrorMessage = (err: any): string => {
+    // 增加调试日志
+    console.error('[AI工作台] 生成失败:', err);
+      
+    const detail = err?.response?.data?.detail || err?.message || '';
+    const detailStr = String(detail).toLowerCase();
+      
+    // axios 网络错误 (ERR_NETWORK)
+    if (err?.code === 'ERR_NETWORK' || err?.code === 'ECONNABORTED') {
+      return '网络连接失败，请检查网络状态或后端服务是否正常运行。';
+    }
+      
+    // 知识库相关错误
+    if (detailStr.includes('knowledge') || detailStr.includes('知识库') || detailStr.includes('no context') || detailStr.includes('empty')) {
+      return '知识库暂无相关内容，请先完成知识库构建后再试。可前往"内容采集"添加素材并构建知识库。';
+    }
+      
+    // AI 模型相关错误
+    if (detailStr.includes('model') || detailStr.includes('ollama') || detailStr.includes('ark') || 
+        detailStr.includes('llm') || detailStr.includes('ai service') || detailStr.includes('timeout') && detailStr.includes('model')) {
+      return 'AI 模型服务暂不可用，请检查 Ollama 或火山方舟配置是否正常。';
+    }
+      
+    // 网络连接错误
+    if (detailStr.includes('timeout') || detailStr.includes('connect') || detailStr.includes('network') || 
+        detailStr.includes('econnrefused') || detailStr.includes('enotfound') || err?.code === 'ECONNREFUSED') {
+      return '网络连接失败，请检查后端服务是否正常运行。';
+    }
+      
+    // 认证错误
+    if (err?.response?.status === 401 || detailStr.includes('unauthorized') || detailStr.includes('token')) {
+      return '登录已过期，请重新登录后再试。';
+    }
+      
+    // 服务器错误
+    if (err?.response?.status >= 500) {
+      return '服务器内部错误，请稍后重试或联系管理员。';
+    }
+      
+    // 返回原始错误信息（如果有）
+    return detail || '生成失败，请稍后重试。';
+  };
+
   // 生成处理函数
   const handleGenerate = async () => {
+    // 先刷新知识库状态
+    if (!knowledgeStatus.hasData && !knowledgeStatus.loading) {
+      await checkKnowledgeStatus();
+    }
+    
     setGenerating(true);
     setError(null);
     setResult(null);
@@ -188,7 +294,7 @@ export default function MvpWorkbenchPage() {
       const data = await generateFullPipeline(payload);
       setResult(data);
     } catch (err: any) {
-      setError(err?.response?.data?.detail || err?.message || "生成失败，请稍后重试");
+      setError(parseErrorMessage(err));
     } finally {
       setGenerating(false);
     }
@@ -243,6 +349,58 @@ export default function MvpWorkbenchPage() {
     }
   };
 
+  // 生成唯一的 generation_id
+  const generateUniqueId = () => {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 10);
+    return `gen_${timestamp}_${random}`;
+  };
+
+  // 提交反馈
+  const handleFeedbackSubmit = async (
+    text: string,
+    feedbackType: 'adopted' | 'modified' | 'rejected',
+    styleKey: string
+  ) => {
+    if (feedbackSubmitted[styleKey]) return; // 已提交过
+    
+    setFeedbackLoading(true);
+    try {
+      const genId = generationId || generateUniqueId();
+      if (!generationId) setGenerationId(genId);
+      
+      // 构建查询参数字符串
+      const queryParams = JSON.stringify({
+        platform, accountType, audience, topic, goal, tone, model
+      });
+      
+      await submitFeedback({
+        generation_id: genId,
+        query: queryParams,
+        generated_text: text,
+        feedback_type: feedbackType,
+        rating: feedbackRating > 0 ? feedbackRating : undefined,
+        feedback_tags: feedbackTags.length > 0 ? feedbackTags : undefined,
+      });
+      
+      setFeedbackSubmitted(prev => ({ ...prev, [styleKey]: true }));
+      setShowFeedbackPanel(null);
+      setFeedbackRating(0);
+      setFeedbackTags([]);
+    } catch (err) {
+      console.error("反馈提交失败:", err);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
+  // 切换反馈标签
+  const toggleFeedbackTag = (tag: string) => {
+    setFeedbackTags(prev => 
+      prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+    );
+  };
+
   return (
     <div className="page" style={{ maxWidth: 1000, margin: "0 auto" }}>
       {/* 页面标题 */}
@@ -261,9 +419,49 @@ export default function MvpWorkbenchPage() {
             background: "#fef2f2",
             color: "var(--danger)",
             fontSize: 14,
+            border: "1px solid #fecaca",
           }}
         >
-          {error}
+          <strong>⚠️ 生成失败</strong>
+          <p style={{ margin: "4px 0 0", fontSize: 13, lineHeight: 1.6 }}>{error}</p>
+        </div>
+      )}
+
+      {/* 知识库状态提示 */}
+      {!knowledgeStatus.loading && !knowledgeStatus.hasData && (
+        <div
+          style={{
+            padding: "12px 16px",
+            marginBottom: 16,
+            borderRadius: 8,
+            backgroundColor: "#fff7e6",
+            border: "1px solid #ffd591",
+            color: "#ad6800",
+          }}
+        >
+          <strong>⚠️ 知识库暂无内容</strong>
+          <p style={{ margin: "4px 0 0", fontSize: 13, lineHeight: 1.6 }}>
+            请先完成内容采集和知识库构建，或运行种子数据初始化脚本。
+            知识库为空时，AI 生成的内容质量会较低。
+          </p>
+        </div>
+      )}
+
+      {/* 知识库有数据时显示统计 */}
+      {knowledgeStatus.hasData && knowledgeStatus.libraries.length > 0 && (
+        <div
+          style={{
+            padding: "8px 16px",
+            marginBottom: 16,
+            borderRadius: 8,
+            backgroundColor: "#f0fdf4",
+            border: "1px solid #bbf7d0",
+            color: "#166534",
+            fontSize: 13,
+          }}
+        >
+          <span style={{ marginRight: 12 }}>📚 知识库已就绪</span>
+          <span style={{ opacity: 0.8 }}>共 {knowledgeStatus.totalCount} 条内容</span>
         </div>
       )}
 
@@ -524,6 +722,129 @@ export default function MvpWorkbenchPage() {
                       >
                         {copiedVersions[ver.style] ? "✓ 已复制" : "📋 复制文案"}
                       </button>
+                      
+                      {/* 反馈按钮组 */}
+                      <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => handleFeedbackSubmit(ver.text, 'adopted', ver.style)}
+                          disabled={feedbackSubmitted[ver.style] || feedbackLoading}
+                          style={{
+                            flex: 1,
+                            padding: "6px 10px",
+                            fontSize: 12,
+                            border: feedbackSubmitted[ver.style] ? "1px solid #4caf50" : "1px solid var(--line)",
+                            borderRadius: 6,
+                            background: feedbackSubmitted[ver.style] ? "#e8f5e9" : "var(--panel)",
+                            color: feedbackSubmitted[ver.style] ? "#4caf50" : "var(--text)",
+                            cursor: feedbackSubmitted[ver.style] || feedbackLoading ? "default" : "pointer",
+                            minWidth: 70,
+                          }}
+                        >
+                          {feedbackSubmitted[ver.style] ? "✓ 已采纳" : "👍 采纳"}
+                        </button>
+                        <button
+                          onClick={() => setShowFeedbackPanel(showFeedbackPanel === ver.style ? null : ver.style)}
+                          disabled={feedbackSubmitted[ver.style] || feedbackLoading}
+                          style={{
+                            flex: 1,
+                            padding: "6px 10px",
+                            fontSize: 12,
+                            border: "1px solid var(--line)",
+                            borderRadius: 6,
+                            background: "var(--panel)",
+                            color: "var(--text)",
+                            cursor: "pointer",
+                            minWidth: 70,
+                          }}
+                        >
+                          ✏️ 修改
+                        </button>
+                        <button
+                          onClick={() => handleFeedbackSubmit(ver.text, 'rejected', ver.style)}
+                          disabled={feedbackSubmitted[ver.style] || feedbackLoading}
+                          style={{
+                            flex: 1,
+                            padding: "6px 10px",
+                            fontSize: 12,
+                            border: "1px solid var(--line)",
+                            borderRadius: 6,
+                            background: "var(--panel)",
+                            color: "var(--text)",
+                            cursor: "pointer",
+                            minWidth: 70,
+                          }}
+                        >
+                          👎 拒绝
+                        </button>
+                      </div>
+                      
+                      {/* 展开反馈面板 */}
+                      {showFeedbackPanel === ver.style && !feedbackSubmitted[ver.style] && (
+                        <div style={{
+                          marginTop: 12,
+                          padding: 12,
+                          background: "#f8fafc",
+                          borderRadius: 8,
+                          border: "1px dashed var(--line)",
+                        }}>
+                          <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8 }}>评分（可选）</div>
+                          <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+                            {[1, 2, 3, 4, 5].map(star => (
+                              <button
+                                key={star}
+                                onClick={() => setFeedbackRating(star)}
+                                style={{
+                                  fontSize: 20,
+                                  border: "none",
+                                  background: "transparent",
+                                  cursor: "pointer",
+                                  opacity: feedbackRating >= star ? 1 : 0.4,
+                                }}
+                              >
+                                ⭐
+                              </button>
+                            ))}
+                          </div>
+                          
+                          <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8 }}>问题标签（可选）</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 12 }}>
+                            {availableFeedbackTags.slice(0, 6).map(tag => (
+                              <button
+                                key={tag}
+                                onClick={() => toggleFeedbackTag(tag)}
+                                style={{
+                                  padding: "4px 8px",
+                                  fontSize: 11,
+                                  border: feedbackTags.includes(tag) ? "1px solid var(--brand)" : "1px solid var(--line)",
+                                  borderRadius: 12,
+                                  background: feedbackTags.includes(tag) ? "var(--brand-2)" : "var(--panel)",
+                                  color: feedbackTags.includes(tag) ? "#fff" : "var(--text)",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {tag}
+                              </button>
+                            ))}
+                          </div>
+                          
+                          <button
+                            onClick={() => handleFeedbackSubmit(ver.text, 'modified', ver.style)}
+                            disabled={feedbackLoading}
+                            style={{
+                              width: "100%",
+                              padding: "8px 12px",
+                              fontSize: 13,
+                              border: "none",
+                              borderRadius: 6,
+                              background: "var(--brand)",
+                              color: "#fff",
+                              cursor: "pointer",
+                            }}
+                          >
+                            {feedbackLoading ? "提交中..." : "确认修改后采纳"}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

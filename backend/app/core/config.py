@@ -71,16 +71,74 @@ class Settings(BaseSettings):
     # AI Models
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama2-chinese"
-    OLLAMA_EMBEDDING_MODEL: str = "qwen3-embedding"  # 默认使用1024维模型，如需使用nomic-embed-text(768维)需同步修改EMBEDDING_DIMENSION和数据库迁移中的向量维度
+    OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text"  # 默认使用768维模型
     USE_CLOUD_MODEL: bool = False
 
-    # Embedding 配置
-    EMBEDDING_DIMENSION: int = 1024  # qwen3-embedding: 1024 (默认), nomic-embed-text: 768
+    # Embedding 配置（向后兼容）
+    EMBEDDING_DIMENSION: int = 768  # nomic-embed-text: 768
+    
+    # 火山方舟文本embedding模型（Task #10）
+    ARK_EMBEDDING_MODEL: str = "doubao-embedding-large-text-240915"  # 2048维
+    
+    # 多模型池配置
+    DEFAULT_EMBEDDING_MODEL: str = "doubao-embedding-large-text"  # Task #10: 默认使用火山方舟
+    DEFAULT_LLM_MODEL: str = "qwen2.5"
+
+    @property
+    def EMBEDDING_MODELS(self) -> dict:
+        """Embedding模型池配置"""
+        return {
+            # 火山方舟文本embedding（Task #10: 优先使用）
+            "doubao-embedding-large-text": {
+                "provider": "ark",
+                "dimension": 2048,
+                "description": "火山方舟文本embedding（优先）",
+                "ark_model": "doubao-embedding-large-text-240915"
+            },
+            # Ollama 本地模型（降级备选）
+            "nomic-embed-text": {
+                "provider": "ollama",
+                "dimension": 768,
+                "description": "轻量级本地模型（降级备选）",
+                "ollama_name": "nomic-embed-text"
+            },
+            "qwen3-embedding": {
+                "provider": "ollama",
+                "dimension": 1024,
+                "description": "通义千问嵌入",
+                "ollama_name": "qwen3-embedding"
+            },
+            "all-minilm": {
+                "provider": "ollama",
+                "dimension": 384,
+                "description": "最小化模型",
+                "ollama_name": "all-minilm"
+            },
+        }
+
+    @property
+    def LLM_MODELS(self) -> dict:
+        """LLM模型池配置"""
+        return {
+            "qwen2.5": {
+                "provider": "ollama",
+                "description": "本地通义千问",
+                "ollama_name": "qwen2.5"
+            },
+            "doubao-1-5-pro-32k": {
+                "provider": "ark",
+                "description": "火山方舟豆包",
+                "ark_model": "doubao-1-5-pro-32k-250115"
+            },
+        }
 
     # Fire Engine (Volcano Engine)
     ARK_API_KEY: str = ""
     ARK_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/v3"
     ARK_MODEL: str = "doubao-seed-2-0-mini-260215"
+    # Responses API (多模态，seed模型)
+    ARK_SEED_API_KEY: str = ""
+    ARK_SEED_MODEL: str = "doubao-seed-2-0-mini-260215"
     ARK_TIMEOUT_SECONDS: int = 60
     ARK_VISION_RATE_LIMIT_PER_MINUTE: int = 20
     ARK_VISION_RATE_LIMIT_WINDOW_SECONDS: int = 60

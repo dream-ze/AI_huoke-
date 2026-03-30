@@ -626,3 +626,89 @@ export interface InboxListResponse {
   page: number;
   size: number;
 }
+
+// ========== 反馈闭环类型 ==========
+
+/** 反馈提交请求 */
+export interface FeedbackSubmitRequest {
+  generation_id: string;
+  query: string;
+  generated_text: string;
+  feedback_type: 'adopted' | 'modified' | 'rejected';
+  modified_text?: string;
+  rating?: number;
+  feedback_tags?: string[];
+  knowledge_ids_used?: number[];
+}
+
+/** 反馈提交响应 */
+export interface FeedbackSubmitResponse {
+  success: boolean;
+  feedback_id: number;
+  message: string;
+  quality_scores_updated: number;
+}
+
+/** 反馈统计 */
+export interface FeedbackStats {
+  total_feedback: number;
+  adopted_count: number;
+  modified_count: number;
+  rejected_count: number;
+  adoption_rate: number;
+  modification_rate: number;
+  rejection_rate: number;
+  avg_rating: number | null;
+  recent_feedback_count: number;
+}
+
+/** 知识库质量排行条目 */
+export interface KnowledgeQualityRankingItem {
+  knowledge_id: number;
+  title: string;
+  quality_score: number;
+  reference_count: number;
+  positive_feedback: number;
+  negative_feedback: number;
+  weight_boost: number;
+  last_referenced_at: string | null;
+}
+
+/** 知识库质量排行响应 */
+export interface KnowledgeQualityRankingResponse {
+  items: KnowledgeQualityRankingItem[];
+  total: number;
+}
+
+/** 学习建议条目 */
+export interface LearningSuggestionItem {
+  type: string;  // boost / downgrade / remove / adjust
+  knowledge_id: number;
+  title: string;
+  current_score: number;
+  suggestion: string;
+  priority: string;  // high / medium / low
+  reason: string;
+}
+
+/** 学习建议响应 */
+export interface LearningSuggestionsResponse {
+  suggestions: LearningSuggestionItem[];
+  boost_candidates: number;
+  downgrade_candidates: number;
+  remove_candidates: number;
+}
+
+/** 权重调整结果 */
+export interface WeightAdjustmentResult {
+  boosted_count: number;
+  downgraded_count: number;
+  cold_marked_count: number;
+  message: string;
+  details: Array<{
+    knowledge_id: number;
+    action: string;
+    old_value: number;
+    new_value: number;
+  }>;
+}

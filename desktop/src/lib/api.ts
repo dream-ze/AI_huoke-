@@ -33,6 +33,7 @@ api.interceptors.response.use(
     if (error?.response?.status === 401) {
       clearToken("expired");
     }
+    // 确保错误始终被reject，不会静默吞掉
     return Promise.reject(error);
   }
 );
@@ -648,8 +649,18 @@ export async function mvpBuildKnowledge(materialId: number) {
   const { data } = await api.post(`/api/mvp/materials/${materialId}/build-knowledge`);
   return data;
 }
+export async function mvpBatchBuildKnowledge(materialIds: number[]) {
+  const { data } = await api.post("/api/mvp/materials/batch-build-knowledge", {
+    material_ids: materialIds,
+  });
+  return data;
+}
 export async function mvpRewriteHot(materialId: number) {
   const { data } = await api.post(`/api/mvp/materials/${materialId}/rewrite`);
+  return data;
+}
+export async function mvpToggleMaterialHot(materialId: number) {
+  const { data } = await api.post(`/api/mvp/materials/${materialId}/toggle-hot`);
   return data;
 }
 export async function mvpUpdateTags(materialId: number, tagIds: number[]) {
@@ -681,6 +692,21 @@ export async function getKnowledgeLibraries() {
   return resp.data?.libraries || [];
 }
 
+// 知识库分库统计（带最近更新时间）
+export async function getKnowledgeLibraryStats() {
+  const resp = await api.get("/api/mvp/knowledge/library-stats");
+  return resp.data || [];
+}
+
+// 按分库列出知识条目
+export async function listKnowledgeByLibrary(
+  library_type: string,
+  params?: { page?: number; size?: number; keyword?: string }
+) {
+  const resp = await api.get(`/api/mvp/knowledge/library/${library_type}`, { params });
+  return resp.data || { items: [], total: 0, page: 1, size: 20 };
+}
+
 // 知识库切块列表
 export async function getKnowledgeChunks(knowledgeId: number) {
   const resp = await api.get(`/api/mvp/knowledge/chunks/${knowledgeId}`);
@@ -706,6 +732,32 @@ export async function mvpGenerateFinal(payload: Record<string, any>) {
 // 合规审核
 export async function mvpComplianceCheck(payload: { text: string }) {
   const { data } = await api.post("/api/mvp/compliance/check", payload);
+  return data;
+}
+
+// ── 合规规则管理 ──
+export async function listComplianceRules(params?: Record<string, any>) {
+  const { data } = await api.get("/api/mvp/compliance/rules", { params });
+  return data;
+}
+
+export async function createComplianceRule(payload: Record<string, any>) {
+  const { data } = await api.post("/api/mvp/compliance/rules", payload);
+  return data;
+}
+
+export async function updateComplianceRule(ruleId: number, payload: Record<string, any>) {
+  const { data } = await api.put(`/api/mvp/compliance/rules/${ruleId}`, payload);
+  return data;
+}
+
+export async function deleteComplianceRule(ruleId: number) {
+  const { data } = await api.delete(`/api/mvp/compliance/rules/${ruleId}`);
+  return data;
+}
+
+export async function testComplianceRule(text: string) {
+  const { data } = await api.post("/api/mvp/compliance/test", { text });
   return data;
 }
 
@@ -737,7 +789,7 @@ export async function generateFullPipeline(payload: {
   tone?: string;
 }) {
   const { data } = await api.post("/api/mvp/generate/full-pipeline", payload, {
-    timeout: 120000,  // 全流程生成需要较长时间
+    timeout: 180000,  // 全流程生成需要较长时间（与后端180s超时对齐）
   });
   return data;
 }
@@ -795,4 +847,205 @@ export async function autoIngestPipeline(params: {
 }) {
   const { data } = await api.post('/api/mvp/raw-contents/auto-pipeline', params);
   return data;
+}
+
+// ── 反馈闭环 ──
+
+// 提交反馈
+export async function submitFeedback(params: {
+  generation_id: string;
+  query: string;
+  generated_text: string;
+  feedback_type: 'adopted' | 'modified' | 'rejected';
+  modified_text?: string;
+  rating?: number;
+  feedback_tags?: string[];
+  knowledge_ids_used?: number[];
+}) {
+  const { data } = await api.post('/api/mvp/feedback', params);
+  return data as {
+    success: boolean;
+    feedback_id: number;
+    message: string;
+    quality_scores_updated: number;
+  };
+}
+
+// 获取反馈统计
+export async function getFeedbackStats(days: number = 30) {
+  const { data } = await api.get(`/api/mvp/feedback/stats?days=${days}`);
+  return data as {
+    total_feedback: number;
+    adopted_count: number;
+    modified_count: number;
+    rejected_count: number;
+    adoption_rate: number;
+    modification_rate: number;
+    rejection_rate: number;
+    avg_rating: number | null;
+    recent_feedback_count: number;
+  };
+}
+
+// 获取知识库质量排行
+export async function getKnowledgeQualityRankings(limit: number = 20, order: 'asc' | 'desc' = 'desc') {
+  const { data } = await api.get(`/api/mvp/knowledge/quality/rankings?limit=${limit}&order=${order}`);
+  return data as {
+    items: Array<{
+      knowledge_id: number;
+      title: string;
+      quality_score: number;
+      reference_count: number;
+      positive_feedback: number;
+      negative_feedback: number;
+      weight_boost: number;
+      last_referenced_at: string | null;
+    }>;
+    total: number;
+  };
+}
+
+// 获取学习建议
+export async function getLearningSuggestions() {
+  const { data } = await api.get('/api/mvp/knowledge/quality/suggestions');
+  return data as {
+    suggestions: Array<{
+      type: string;
+      knowledge_id: number;
+      title: string;
+      current_score: number;
+      suggestion: string;
+      priority: string;
+      reason: string;
+    }>;
+    boost_candidates: number;
+    downgrade_candidates: number;
+    remove_candidates: number;
+  };
+}
+
+// 应用权重调整
+export async function applyWeightAdjustment() {
+  const { data } = await api.post('/api/mvp/knowledge/quality/adjust');
+  return data as {
+    boosted_count: number;
+    downgraded_count: number;
+    cold_marked_count: number;
+    message: string;
+    details: Array<Record<string, any>>;
+  };
+}
+
+// 获取反馈标签选项
+export async function getFeedbackTags() {
+  const { data } = await api.get('/api/mvp/feedback/tags');
+  return data.tags as string[];
+}
+
+// ── 知识图谱 ──
+
+// 构建全量知识图谱关系
+export async function buildKnowledgeGraph() {
+  const { data } = await api.post('/api/mvp/knowledge/graph/build');
+  return data as {
+    total_items: number;
+    processed: number;
+    relations_created: number;
+    errors: number;
+    message: string;
+  };
+}
+
+// 为单条知识构建关系
+export async function buildSingleKnowledgeRelations(knowledgeId: number) {
+  const { data } = await api.post(`/api/mvp/knowledge/${knowledgeId}/relations/build`);
+  return data as {
+    success: boolean;
+    knowledge_id: number;
+    relations_created: number;
+    message: string;
+  };
+}
+
+// 获取关联知识条目
+export async function getRelatedKnowledgeItems(
+  knowledgeId: number,
+  params?: { relation_type?: string; limit?: number }
+) {
+  const { data } = await api.get(`/api/mvp/knowledge/${knowledgeId}/related`, { params });
+  return data as { items: any[]; total: number };
+}
+
+// 获取知识图谱数据
+export async function getKnowledgeGraph(params?: { library_type?: string; limit?: number }) {
+  const { data } = await api.get('/api/mvp/knowledge/graph', { params });
+  return data as {
+    nodes: Array<{
+      id: number;
+      title: string;
+      platform: string | null;
+      audience: string | null;
+      topic: string | null;
+      library_type: string | null;
+      use_count: number;
+      is_hot: boolean;
+    }>;
+    edges: Array<{
+      source: number;
+      target: number;
+      type: string;
+      weight: number;
+    }>;
+    stats: { node_count: number; edge_count: number };
+  };
+}
+
+// 获取图谱统计
+export async function getGraphStats() {
+  const { data } = await api.get('/api/mvp/knowledge/graph/stats');
+  return data as {
+    node_count: number;
+    edge_count: number;
+    avg_degree: number;
+    nodes_with_relations: number;
+    nodes_with_embedding: number;
+    relation_type_stats: Record<string, number>;
+    connectivity_ratio: number;
+  };
+}
+
+// 获取主题聚类
+export async function getTopicClusters(minSize: number = 2) {
+  const { data } = await api.get(`/api/mvp/knowledge/graph/clusters?min_size=${minSize}`);
+  return data as {
+    clusters: Array<{
+      topic: string;
+      item_ids: number[];
+      items: Array<{ id: number; title: string; topic: string | null }>;
+      count: number;
+    }>;
+    total: number;
+  };
+}
+
+// 图增强检索
+export async function enhancedKnowledgeSearch(
+  query: string,
+  params?: { top_k?: number; expand_limit?: number }
+) {
+  const { data } = await api.get('/api/mvp/knowledge/graph/enhanced-search', {
+    params: { query, ...params }
+  });
+  return data as {
+    results: Array<{
+      id: number;
+      title: string;
+      content: string;
+      score: number;
+      source: string;
+      chunk_id: number | null;
+      relation_weight: number | null;
+    }>;
+    total: number;
+  };
 }

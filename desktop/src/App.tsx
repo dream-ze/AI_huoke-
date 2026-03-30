@@ -22,6 +22,7 @@ const SetupPage = React.lazy(() => import("./pages/SetupPage").then(m => ({ defa
 const MvpInboxPage = React.lazy(() => import("./pages/inbox/MvpInboxPage"));
 const MvpMaterialsPage = React.lazy(() => import("./pages/materials/MvpMaterialsPage"));
 const MvpWorkbenchPage = React.lazy(() => import("./pages/ai-workbench/MvpWorkbenchPage"));
+const ComplianceRulesPage = React.lazy(() => import("./pages/compliance/ComplianceRulesPage"));
 
 // 旧版页面（暂时保留import，路由已注释）
 // const InboxPage = React.lazy(() => import("./pages/inbox/InboxPage").then(m => ({ default: m.InboxPage })));
@@ -164,6 +165,9 @@ export default function App() {
                   {/* === 内容管理 === */}
                   <Route path="/mvp-inbox" element={<MvpInboxPage />} />
                   <Route path="/mvp-materials" element={<MvpMaterialsPage />} />
+                  
+                  {/* === 合规管理 === */}
+                  <Route path="/compliance-rules" element={<ComplianceRulesPage />} />
                   
                   {/* === 业务管理 === */}
                   <Route path="/leads" element={<LeadsPage />} />

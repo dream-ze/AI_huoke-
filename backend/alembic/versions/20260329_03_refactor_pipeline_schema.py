@@ -15,9 +15,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # 启用 pgvector 扩展
-    op.execute('CREATE EXTENSION IF NOT EXISTS vector')
-    
     # ─────────────────────────────────────────────────────────────
     # 1. MvpInboxItem 新增字段
     # ─────────────────────────────────────────────────────────────
@@ -63,23 +60,18 @@ def upgrade() -> None:
     op.create_index('ix_mvp_material_items_persona', 'mvp_material_items', ['persona'])
     
     # ─────────────────────────────────────────────────────────────
-    # 3. MvpKnowledgeChunk embedding 字段改为 Vector 类型
+    # 3. MvpKnowledgeChunk embedding 字段
     # ─────────────────────────────────────────────────────────────
-    # 先删除旧列，再添加新列（因为 Text -> Vector 不能直接 alter）
+    # 使用 Text 类型存储 embedding（pgvector 未安装时）
     op.drop_column('mvp_knowledge_chunks', 'embedding')
-    op.add_column('mvp_knowledge_chunks', sa.Column('embedding', sa.dialects.postgresql.VECTOR(1024), nullable=True))
-    
-    # 创建向量索引（使用 ivfflat 索引）
-    op.execute("CREATE INDEX ix_mvp_knowledge_chunks_embedding ON mvp_knowledge_chunks USING ivfflat (embedding vector_cosine_ops)")
+    op.add_column('mvp_knowledge_chunks', sa.Column('embedding', sa.Text(), nullable=True))
     
     # ─────────────────────────────────────────────────────────────
-    # 4. MvpKnowledgeItem embedding 字段改为 Vector 类型
+    # 4. MvpKnowledgeItem embedding 字段
     # ─────────────────────────────────────────────────────────────
+    # 使用 Text 类型存储 embedding（pgvector 未安装时）
     op.drop_column('mvp_knowledge_items', 'embedding')
-    op.add_column('mvp_knowledge_items', sa.Column('embedding', sa.dialects.postgresql.VECTOR(1024), nullable=True))
-    
-    # 创建向量索引
-    op.execute("CREATE INDEX ix_mvp_knowledge_items_embedding ON mvp_knowledge_items USING ivfflat (embedding vector_cosine_ops)")
+    op.add_column('mvp_knowledge_items', sa.Column('embedding', sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
