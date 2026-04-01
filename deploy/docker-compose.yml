@@ -4,3 +4,20 @@ services:
     extends:
       file: ../backend/docker-compose.yml
       service: backend
+
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # - ./nginx/ssl:/etc/nginx/ssl:ro  # SSL证书目录
+    depends_on:
+      - backend
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"

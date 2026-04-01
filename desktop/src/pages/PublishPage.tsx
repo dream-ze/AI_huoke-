@@ -11,10 +11,58 @@ import {
   getPublishTaskStats,
   listPublishTasks,
   listActiveUsers,
+  listSocialAccounts,
   rejectPublishTask,
   submitPublishTask,
+  getPublishStatsByPlatform,
+  getPublishRoiTrend,
+  getPublishContentAnalysis,
 } from "../lib/api";
 import { PublishTask, PublishTaskStats, UserSummary } from "../types";
+
+interface SocialAccount {
+  id: number;
+  platform: string;
+  account_name: string;
+  account_id: string | null;
+  status: string;
+}
+
+interface PlatformStats {
+  platform: string;
+  total_tasks: number;
+  completed_tasks: number;
+  total_views: number;
+  total_likes: number;
+  total_comments: number;
+  total_wechat_adds: number;
+  total_leads: number;
+  total_valid_leads: number;
+  total_conversions: number;
+  avg_views_per_task: number;
+  conversion_rate: number;
+}
+
+interface RoiTrendItem {
+  date: string;
+  publish_count: number;
+  total_leads: number;
+  total_valid_leads: number;
+  total_conversions: number;
+  lead_rate: number;
+  conversion_rate: number;
+}
+
+interface ContentAnalysisItem {
+  platform: string;
+  task_count: number;
+  avg_views: number;
+  avg_likes: number;
+  avg_wechat_adds: number;
+  avg_conversions: number;
+  best_task_title: string | null;
+  best_task_conversions: number;
+}
 
 const emptyStats: PublishTaskStats = {
   total: 0,
@@ -37,6 +85,13 @@ export function PublishPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [assignTaskId, setAssignTaskId] = useState(0);
+
+  // 效果分析数据
+  const [platformStats, setPlatformStats] = useState<PlatformStats[]>([]);
+  const [roiTrend, setRoiTrend] = useState<RoiTrendItem[]>([]);
+  const [contentAnalysis, setContentAnalysis] = useState<ContentAnalysisItem[]>([]);
+  const [statsDays, setStatsDays] = useState(30);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const [taskForm, setTaskForm] = useState({
     platform: "xiaohongshu",
@@ -67,6 +122,10 @@ export function PublishPage() {
     note: "",
   });
 
+  // 社交账号列表
+  const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+  const [useCustomAccount, setUseCustomAccount] = useState(false);
+
   const [message, setMessage] = useState("");
 
   async function refreshData() {
@@ -82,6 +141,34 @@ export function PublishPage() {
     setTasks(listData || []);
   }
 
+  async function loadEffectStats() {
+    setStatsLoading(true);
+    try {
+      const [platformData, roiData, contentData] = await Promise.all([
+        getPublishStatsByPlatform(statsDays).catch(() => []),
+        getPublishRoiTrend(statsDays).catch(() => []),
+        getPublishContentAnalysis(statsDays).catch(() => []),
+      ]);
+      setPlatformStats(platformData || []);
+      setRoiTrend(roiData || []);
+      setContentAnalysis(contentData || []);
+    } catch {
+      // 静默处理错误
+    } finally {
+      setStatsLoading(false);
+    }
+  }
+
+  // 加载社交账号列表
+  async function loadSocialAccounts(platform: string) {
+    try {
+      const accounts = await listSocialAccounts(platform);
+      setSocialAccounts(accounts.filter((a) => a.status === "active"));
+    } catch {
+      setSocialAccounts([]);
+    }
+  }
+
   useEffect(() => {
     async function run() {
       try {
@@ -91,13 +178,23 @@ export function PublishPage() {
         ]);
         setCurrentUserId(me.id);
         setUsers(activeUsers || []);
-        await refreshData();
+        await Promise.all([
+          refreshData(),
+          loadEffectStats(),
+        ]);
+        // 初始加载当前平台的社交账号
+        await loadSocialAccounts(taskForm.platform);
       } finally {
         setLoading(false);
       }
     }
     run();
   }, [platformFilter, statusFilter]);
+
+  // 当统计天数变化时重新加载效果分析
+  useEffect(() => {
+    loadEffectStats();
+  }, [statsDays]);
 
   function getUserLabel(userId?: number) {
     if (!userId) return "未分配";
@@ -319,6 +416,158 @@ export function PublishPage() {
         </div>
       </section>
 
+      {/* 效果分析区域 */}
+      <section className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h3>效果分析</h3>
+          <div>
+            <label style={{ marginRight: 8 }}>统计周期:</label>
+            <select value={statsDays} onChange={(e) => setStatsDays(Number(e.target.value))}>
+              <option value={7}>近7天</option>
+              <option value={30}>近30天</option>
+              <option value={90}>近90天</option>
+            </select>
+          </div>
+        </div>
+
+        {statsLoading ? (
+          <div className="muted">加载统计数据...</div>
+        ) : (
+          <>
+            {/* 平台效果对比 */}
+            <div style={{ marginBottom: 24 }}>
+              <h4 style={{ marginBottom: 12, fontSize: 16 }}>平台效果对比</h4>
+              {platformStats.length === 0 ? (
+                <div className="muted">暂无平台统计数据</div>
+              ) : (
+                <table className="table" style={{ fontSize: 14 }}>
+                  <thead>
+                    <tr>
+                      <th>平台</th>
+                      <th>总任务</th>
+                      <th>已完成</th>
+                      <th>总浏览</th>
+                      <th>总点赞</th>
+                      <th>加微</th>
+                      <th>线索</th>
+                      <th>转化</th>
+                      <th>均浏览</th>
+                      <th>转化率%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {platformStats.map((stat) => (
+                      <tr key={stat.platform}>
+                        <td>{stat.platform}</td>
+                        <td>{stat.total_tasks}</td>
+                        <td>{stat.completed_tasks}</td>
+                        <td>{stat.total_views.toLocaleString()}</td>
+                        <td>{stat.total_likes.toLocaleString()}</td>
+                        <td>{stat.total_wechat_adds}</td>
+                        <td>{stat.total_leads}</td>
+                        <td>{stat.total_conversions}</td>
+                        <td>{stat.avg_views_per_task.toLocaleString()}</td>
+                        <td>{stat.conversion_rate}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* ROI 趋势 */}
+            <div style={{ marginBottom: 24 }}>
+              <h4 style={{ marginBottom: 12, fontSize: 16 }}>ROI 趋势（发布-转化）</h4>
+              {roiTrend.length === 0 ? (
+                <div className="muted">暂无趋势数据</div>
+              ) : (
+                <table className="table" style={{ fontSize: 14 }}>
+                  <thead>
+                    <tr>
+                      <th>日期</th>
+                      <th>发布数</th>
+                      <th>线索</th>
+                      <th>有效线索</th>
+                      <th>转化</th>
+                      <th>线索率</th>
+                      <th>转化率</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roiTrend.slice(-7).map((item) => (
+                      <tr key={item.date}>
+                        <td>{item.date}</td>
+                        <td>{item.publish_count}</td>
+                        <td>{item.total_leads}</td>
+                        <td>{item.total_valid_leads}</td>
+                        <td>{item.total_conversions}</td>
+                        <td>{(item.lead_rate * 100).toFixed(1)}%</td>
+                        <td>{(item.conversion_rate * 100).toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* 内容类型效果分析 */}
+            <div>
+              <h4 style={{ marginBottom: 12, fontSize: 16 }}>内容效果分析</h4>
+              {contentAnalysis.length === 0 ? (
+                <div className="muted">暂无内容分析数据</div>
+              ) : (
+                <>
+                  <table className="table" style={{ fontSize: 14, marginBottom: 16 }}>
+                    <thead>
+                      <tr>
+                        <th>平台</th>
+                        <th>任务数</th>
+                        <th>均浏览</th>
+                        <th>均点赞</th>
+                        <th>均加微</th>
+                        <th>均转化</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {contentAnalysis.map((item) => (
+                        <tr key={item.platform}>
+                          <td>{item.platform}</td>
+                          <td>{item.task_count}</td>
+                          <td>{item.avg_views.toFixed(0)}</td>
+                          <td>{item.avg_likes.toFixed(1)}</td>
+                          <td>{item.avg_wechat_adds.toFixed(1)}</td>
+                          <td>{item.avg_conversions.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* 最佳内容标注 */}
+                  {contentAnalysis.some((item) => item.best_task_title) && (
+                    <div className="card" style={{ background: "#f0f9ff", borderLeft: "4px solid #3b82f6" }}>
+                      <h4 style={{ marginBottom: 8, fontSize: 14, color: "#1e40af" }}>最佳转化内容</h4>
+                      {contentAnalysis
+                        .filter((item) => item.best_task_title && item.best_task_conversions > 0)
+                        .sort((a, b) => b.best_task_conversions - a.best_task_conversions)
+                        .slice(0, 3)
+                        .map((item) => (
+                          <div key={item.platform} style={{ marginBottom: 8, fontSize: 13 }}>
+                            <span style={{ fontWeight: 600 }}>[{item.platform}]</span>{" "}
+                            <span>{item.best_task_title}</span>{" "}
+                            <span style={{ color: "#059669", fontWeight: 600 }}>
+                              {item.best_task_conversions} 转化
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+
       <section className="card">
         <h3>创建发布任务</h3>
         <form onSubmit={onCreateTask} className="grid">
@@ -327,7 +576,13 @@ export function PublishPage() {
               <label>平台</label>
               <select
                 value={taskForm.platform}
-                onChange={(e) => setTaskForm((current) => ({ ...current, platform: e.target.value }))}
+                onChange={(e) => {
+                  const newPlatform = e.target.value;
+                  setTaskForm((current) => ({ ...current, platform: newPlatform }));
+                  // 切换平台时重新加载社交账号
+                  loadSocialAccounts(newPlatform);
+                  setUseCustomAccount(false);
+                }}
               >
                 <option value="xiaohongshu">小红书</option>
                 <option value="douyin">抖音</option>
@@ -336,11 +591,50 @@ export function PublishPage() {
             </div>
             <div>
               <label>账号名称</label>
-              <input
-                value={taskForm.account_name}
-                onChange={(e) => setTaskForm((current) => ({ ...current, account_name: e.target.value }))}
-                required
-              />
+              {socialAccounts.length > 0 && !useCustomAccount ? (
+                <select
+                  value={taskForm.account_name}
+                  onChange={(e) => {
+                    if (e.target.value === "__custom__") {
+                      setUseCustomAccount(true);
+                      setTaskForm((current) => ({ ...current, account_name: "" }));
+                    } else {
+                      setTaskForm((current) => ({ ...current, account_name: e.target.value }));
+                    }
+                  }}
+                  required
+                >
+                  <option value="">请选择账号</option>
+                  {socialAccounts.map((account) => (
+                    <option key={account.id} value={account.account_name}>
+                      {account.account_name}
+                    </option>
+                  ))}
+                  <option value="__custom__">+ 手动输入...</option>
+                </select>
+              ) : (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    value={taskForm.account_name}
+                    onChange={(e) => setTaskForm((current) => ({ ...current, account_name: e.target.value }))}
+                    placeholder="输入账号名称"
+                    required
+                    style={{ flex: 1 }}
+                  />
+                  {socialAccounts.length > 0 && (
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => {
+                        setUseCustomAccount(false);
+                        setTaskForm((current) => ({ ...current, account_name: "" }));
+                      }}
+                    >
+                      选择已有账号
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

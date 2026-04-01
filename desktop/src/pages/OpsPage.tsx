@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { getSystemHealth, getSystemVersion, getAICallStats } from "../lib/api";
 import { AICallStatsResponse } from "../types";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+
 type HealthStatus = {
   status: string;
   database: string;
@@ -232,7 +234,7 @@ export function OpsPage() {
         <h3 style={{ marginBottom: 12 }}>🔗 运维资源</h3>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <a
-            href="http://116.62.86.160:8000/api/system/ops/health"
+            href={`${API_BASE_URL}/api/system/ops/health`}
             target="_blank"
             rel="noopener noreferrer"
             className="ghost"
@@ -248,7 +250,7 @@ export function OpsPage() {
             健康检查 API
           </a>
           <a
-            href="http://116.62.86.160:8000/docs"
+            href={`${API_BASE_URL}/docs`}
             target="_blank"
             rel="noopener noreferrer"
             style={{

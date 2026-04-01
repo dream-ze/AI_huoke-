@@ -1,10 +1,19 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { assignLeadOwner, convertLeadToCustomer, listLeads, updateLeadStatus } from "../../lib/api";
-import { LeadItem } from "../../types";
+import { assignLeadOwner, convertLeadToCustomer, getLeadAttribution, listLeads, updateLeadStatus } from "../../lib/api";
+import { LeadAttribution, LeadItem } from "../../types";
 
 const statusOptions = ["new", "contacted", "qualified", "converted", "lost"];
+
+const platformLabels: Record<string, string> = {
+  xiaohongshu: "小红书",
+  douyin: "抖音",
+  zhihu: "知乎",
+  xianyu: "闲鱼",
+  wechat: "微信",
+  other: "其他",
+};
 
 export function LeadsPage() {
   const navigate = useNavigate();
@@ -14,6 +23,8 @@ export function LeadsPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
+  const [attribution, setAttribution] = useState<LeadAttribution | null>(null);
+  const [attributionDays, setAttributionDays] = useState(30);
   const focusLeadId = Number(searchParams.get("focusLeadId") || 0);
   const focusCustomerId = Number(searchParams.get("customerId") || 0);
   const sourceTaskId = Number(searchParams.get("taskId") || 0);
@@ -23,16 +34,25 @@ export function LeadsPage() {
     setItems(data || []);
   }
 
+  async function refreshAttribution() {
+    try {
+      const data = await getLeadAttribution(attributionDays);
+      setAttribution(data);
+    } catch {
+      // ignore
+    }
+  }
+
   useEffect(() => {
     async function run() {
       try {
-        await refreshData();
+        await Promise.all([refreshData(), refreshAttribution()]);
       } finally {
         setLoading(false);
       }
     }
     run();
-  }, [statusFilter]);
+  }, [statusFilter, attributionDays]);
 
   async function handleStatus(leadId: number, status: string) {
     setBusyId(leadId);
@@ -83,6 +103,90 @@ export function LeadsPage() {
   return (
     <div className="page grid">
       <h2>线索池</h2>
+
+      {/* 归因分析区域 */}
+      <section className="card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>线索来源归因分析</h3>
+          <select
+            value={attributionDays}
+            onChange={(e) => setAttributionDays(Number(e.target.value))}
+            style={{ padding: "4px 8px" }}
+          >
+            <option value={7}>近7天</option>
+            <option value={30}>近30天</option>
+            <option value={90}>近90天</option>
+          </select>
+        </div>
+
+        {attribution && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            {/* 平台来源分布 */}
+            <div>
+              <h4 style={{ margin: "0 0 8px 0", color: "#666" }}>平台来源分布</h4>
+              <table className="table" style={{ fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    <th>平台</th>
+                    <th>线索数</th>
+                    <th>有效线索</th>
+                    <th>转化数</th>
+                    <th>转化率</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attribution.by_platform.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: "center", color: "#999" }}>暂无数据</td>
+                    </tr>
+                  ) : (
+                    attribution.by_platform.map((item) => (
+                      <tr key={item.platform}>
+                        <td>{platformLabels[item.platform] || item.platform}</td>
+                        <td>{item.lead_count}</td>
+                        <td>{item.valid_count}</td>
+                        <td>{item.conversion_count}</td>
+                        <td>{(item.conversion_rate * 100).toFixed(1)}%</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 最佳引流内容 */}
+            <div>
+              <h4 style={{ margin: "0 0 8px 0", color: "#666" }}>最佳引流内容 TOP 10</h4>
+              <table className="table" style={{ fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    <th>标题</th>
+                    <th>平台</th>
+                    <th>带来线索</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attribution.top_content.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: "center", color: "#999" }}>暂无数据</td>
+                    </tr>
+                  ) : (
+                    attribution.top_content.map((item, idx) => (
+                      <tr key={idx}>
+                        <td style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.title}>
+                          {item.title}
+                        </td>
+                        <td>{platformLabels[item.platform] || item.platform}</td>
+                        <td>{item.lead_count}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
 
       <section className="card">
         {focusLeadId > 0 && (

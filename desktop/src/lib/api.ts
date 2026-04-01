@@ -1,50 +1,20 @@
-import axios from "axios";
-import { clearToken, getToken } from "./auth";
+import api from "./httpClient";
+import { apiRoutes } from "../api/routes";
+import { leadApi } from "../api/leadApi";
+import { publishApi } from "../api/publishApi";
+import { insightApi } from "../api/insightApi";
+import { socialAccountApi } from "../api/socialAccountApi";
+import { systemApi } from "../api/systemApi";
 
-function resolveApiBaseUrl(): string {
-  const isElectron = typeof window !== "undefined" && !!(window as any).desktop?.isElectron;
-  if (typeof window !== "undefined") {
-    const runtimeBase = localStorage.getItem("zhk_api_base_url");
-    // Only Electron desktop should honor runtime localhost overrides.
-    if (isElectron && runtimeBase) return runtimeBase;
-  }
-  return import.meta.env.VITE_API_BASE_URL || "";
-}
-
-// When served by the backend on the same origin, baseURL can be empty.
-// During local dev (Vite on 5173), set VITE_API_BASE_URL=http://localhost:8000
-const api = axios.create({
-  baseURL: resolveApiBaseUrl(),
-  timeout: 20000
-});
-
-api.interceptors.request.use((config) => {
-  config.baseURL = resolveApiBaseUrl();
-  const token = getToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error?.response?.status === 401) {
-      clearToken("expired");
-    }
-    // 确保错误始终被reject，不会静默吞掉
-    return Promise.reject(error);
-  }
-);
+// Legacy 聚合 API。新增接口优先放到 src/api/* 模块，并复用 apiRoutes。
 
 export async function login(username: string, password: string) {
-  const { data } = await api.post("/api/auth/login", { username, password });
+  const { data } = await api.post(apiRoutes.auth.login, { username, password });
   return data;
 }
 
 export async function getCurrentUser() {
-  const { data } = await api.get("/api/auth/me");
+  const { data } = await api.get(apiRoutes.auth.me);
   return data as {
     id: number;
     username: string;
@@ -56,7 +26,7 @@ export async function getCurrentUser() {
 }
 
 export async function listActiveUsers() {
-  const { data } = await api.get("/api/auth/users/active");
+  const { data } = await api.get(apiRoutes.auth.activeUsers);
   return data as Array<{
     id: number;
     username: string;
@@ -66,27 +36,27 @@ export async function listActiveUsers() {
 }
 
 export async function getDashboardSummary() {
-  const { data } = await api.get("/api/dashboard/summary");
+  const { data } = await api.get(apiRoutes.dashboard.summary);
   return data;
 }
 
 export async function getDashboardStats() {
-  const { data } = await api.get("/api/mvp/dashboard/stats");
+  const { data } = await api.get(apiRoutes.dashboard.mvpStats);
   return data;
 }
 
 export async function getTrend(days = 7) {
-  const { data } = await api.get(`/api/dashboard/trend?days=${days}`);
+  const { data } = await api.get(`${apiRoutes.dashboard.trend}?days=${days}`);
   return data;
 }
 
 export async function getAICallStats(days = 7, scope: "me" | "all" = "me") {
-  const { data } = await api.get(`/api/dashboard/ai-call-stats?days=${days}&scope=${scope}`);
+  const { data } = await api.get(`${apiRoutes.dashboard.aiCallStats}?days=${days}&scope=${scope}`);
   return data;
 }
 
 export async function listContent() {
-  const { data } = await api.get("/api/v2/materials");
+  const { data } = await api.get(apiRoutes.v2.materials);
   return data;
 }
 
@@ -97,7 +67,7 @@ export async function submitManualToInbox(payload: {
   tags?: string[];
   note?: string;
 }) {
-  const { data } = await api.post("/api/v1/material/inbox/manual", {
+  const { data } = await api.post(apiRoutes.v1.materialInboxManual, {
     platform: payload.platform,
     title: payload.title,
     content: payload.content,
@@ -113,7 +83,7 @@ export async function rewriteContent(payload: {
   topic_name?: string;
   audience_tags?: string[];
 }) {
-  const { data } = await api.post(`/api/v2/materials/${payload.content_id}/rewrite`, {
+  const { data } = await api.post(apiRoutes.v2.materialRewrite(payload.content_id), {
     target_platform: payload.target_platform,
     task_type: "rewrite",
   });
@@ -126,7 +96,7 @@ export async function rewriteContent(payload: {
 
 // ── 素材中台 ──────────────────────────────────────────
 export async function analyzeCollect(contentId: number, forceCloud = false) {
-  const { data } = await api.post(`/api/v2/materials/${contentId}/analyze?force_cloud=${forceCloud}`);
+  const { data } = await api.post(`${apiRoutes.v2.materialAnalyze(contentId)}?force_cloud=${forceCloud}`);
   return data;
 }
 
@@ -139,17 +109,17 @@ export async function listCollect(params?: {
   skip?: number;
   limit?: number;
 }) {
-  const { data } = await api.get("/api/v2/materials", { params });
+  const { data } = await api.get(apiRoutes.v2.materials, { params });
   return data || [];
 }
 
 export async function getCollectDetail(id: number) {
-  const { data } = await api.get(`/api/v2/materials/${id}`);
+  const { data } = await api.get(apiRoutes.v2.materialDetail(id));
   return data;
 }
 
 export async function rewriteCollect(id: number, targetPlatform: "xiaohongshu" | "douyin" | "zhihu") {
-  const { data } = await api.post(`/api/v2/materials/${id}/rewrite`, {
+  const { data } = await api.post(apiRoutes.v2.materialRewrite(id), {
     target_platform: targetPlatform,
   });
   return {
@@ -164,7 +134,7 @@ export async function rewriteCollect(id: number, targetPlatform: "xiaohongshu" |
 }
 
 export async function adoptGenerationVersion(materialId: number, generationTaskId: number, reason?: string) {
-  const { data } = await api.post(`/api/v2/materials/${materialId}/generation/${generationTaskId}/adopt`, {
+  const { data } = await api.post(apiRoutes.v2.materialAdoptGeneration(materialId, generationTaskId), {
     adopt: true,
     reason,
   });
@@ -180,7 +150,7 @@ export async function updateCollect(
   id: number,
   payload: { review_note?: string; remark?: string; status?: string; title?: string; content?: string }
 ) {
-  const { data } = await api.patch(`/api/v2/materials/${id}`, {
+  const { data } = await api.patch(apiRoutes.v2.materialDetail(id), {
     title: payload.title,
     content_text: payload.content,
     review_note: payload.review_note,
@@ -191,7 +161,7 @@ export async function updateCollect(
 }
 
 export async function deleteCollect(id: number) {
-  const { data } = await api.delete(`/api/v2/materials/${id}`);
+  const { data } = await api.delete(apiRoutes.v2.materialDetail(id));
   return data;
 }
 
@@ -214,22 +184,22 @@ export async function analyzeArkVision(payload: {
   text: string;
   model?: string;
 }) {
-  const { data } = await api.post("/api/v1/ai/ark/vision", payload);
+  const { data } = await api.post(apiRoutes.v1.arkVision, payload);
   return data;
 }
 
 export async function checkCompliance(content: string) {
-  const { data } = await api.post("/api/compliance/check", { content, content_type: "post" });
+  const { data } = await api.post(apiRoutes.compliance.check, { content, content_type: "post" });
   return data;
 }
 
 export async function listCustomers() {
-  const { data } = await api.get("/api/customer/list");
+  const { data } = await api.get(apiRoutes.customer.list);
   return data;
 }
 
 export async function exportCustomersCsv(status?: string) {
-  const { data, headers } = await api.get("/api/customer/export/csv", {
+  const { data, headers } = await api.get(apiRoutes.customer.exportCsv, {
     params: status ? { status } : undefined,
     responseType: "blob",
   });
@@ -239,12 +209,21 @@ export async function exportCustomersCsv(status?: string) {
 export async function createCustomer(payload: {
   nickname: string;
   wechat_id?: string;
+  phone?: string;
   source_platform: string;
+  source_content_id?: number;
   tags: string[];
   intention_level: string;
   inquiry_content?: string;
+  // 扩展字段
+  company?: string;
+  position?: string;
+  industry?: string;
+  deal_value?: number;
+  email?: string;
+  address?: string;
 }) {
-  const { data } = await api.post("/api/customer/create", payload);
+  const { data } = await api.post(apiRoutes.customer.create, payload);
   return data;
 }
 
@@ -254,20 +233,15 @@ export async function listLeads(params?: {
   skip?: number;
   limit?: number;
 }) {
-  const { data } = await api.get("/api/lead/list", { params });
-  return data;
+  return leadApi.list(params);
 }
 
 export async function updateLeadStatus(leadId: number, status: string) {
-  const { data } = await api.put(`/api/lead/${leadId}/status`, { status });
-  return data;
+  return leadApi.updateStatus(leadId, status);
 }
 
 export async function assignLeadOwner(leadId: number, ownerId?: number) {
-  const { data } = await api.post(`/api/lead/${leadId}/assign`, {
-    owner_id: ownerId,
-  });
-  return data;
+  return leadApi.assignOwner(leadId, ownerId);
 }
 
 export async function convertLeadToCustomer(
@@ -281,23 +255,23 @@ export async function convertLeadToCustomer(
     inquiry_content?: string;
   },
 ) {
-  const { data } = await api.post(`/api/lead/${leadId}/convert-customer`, payload || {});
-  return data;
+  return leadApi.convertToCustomer(leadId, payload || {});
+}
+
+export async function getLeadAttribution(days?: number) {
+  return leadApi.getAttributionStats(days);
+}
+
+export async function getLeadFunnel(days?: number) {
+  return leadApi.getFunnelStats(days);
 }
 
 export async function getPublishTaskTrace(taskId: number) {
-  const { data } = await api.get(`/api/publish/tasks/${taskId}/trace`);
-  return data as {
-    task_id: number;
-    publish_record_id?: number;
-    lead_id?: number;
-    customer_id?: number;
-  };
+  return publishApi.getTaskTrace(taskId);
 }
 
 export async function listPublishRecords() {
-  const { data } = await api.get("/api/publish/list");
-  return data;
+  return publishApi.listRecords();
 }
 
 export async function createPublishRecord(payload: {
@@ -305,8 +279,7 @@ export async function createPublishRecord(payload: {
   platform: string;
   account_name: string;
 }) {
-  const { data } = await api.post("/api/publish/create", payload);
-  return data;
+  return publishApi.createRecord(payload);
 }
 
 export async function listPublishTasks(params?: {
@@ -316,19 +289,15 @@ export async function listPublishTasks(params?: {
   skip?: number;
   limit?: number;
 }) {
-  const { data } = await api.get("/api/publish/tasks/list", { params });
-  return data;
+  return publishApi.listTasks(params);
 }
 
 export async function exportPublishTasksCsv(params?: {
   status?: string;
   platform?: string;
 }) {
-  const { data, headers } = await api.get("/api/publish/tasks/export/csv", {
-    params,
-    responseType: "blob",
-  });
-  return { blob: data as Blob, headers };
+  const blob = await publishApi.exportTasksCsv(params);
+  return { blob, headers: undefined };
 }
 
 export async function createPublishTask(payload: {
@@ -340,28 +309,22 @@ export async function createPublishTask(payload: {
   assigned_to?: number;
   due_time?: string;
 }) {
-  const { data } = await api.post("/api/publish/tasks/create", payload);
-  return data;
+  return publishApi.createTask(payload);
 }
 
 export async function getPublishTaskStats() {
-  const { data } = await api.get("/api/publish/tasks/stats");
-  return data;
+  return publishApi.getTaskStats();
 }
 
 export async function claimPublishTask(taskId: number, note?: string) {
-  const { data } = await api.post(`/api/publish/tasks/${taskId}/claim`, {
-    note,
-  });
-  return data;
+  return publishApi.claimTask(taskId, note);
 }
 
 export async function assignPublishTask(taskId: number, payload: {
   assigned_to: number;
   note?: string;
 }) {
-  const { data } = await api.post(`/api/publish/tasks/${taskId}/assign`, payload);
-  return data;
+  return publishApi.assignTask(taskId, payload);
 }
 
 export async function submitPublishTask(
@@ -382,29 +345,35 @@ export async function submitPublishTask(
     note?: string;
   },
 ) {
-  const { data } = await api.post(`/api/publish/tasks/${taskId}/submit`, payload);
-  return data;
+  return publishApi.submitTask(taskId, payload);
 }
 
 export async function rejectPublishTask(taskId: number, note?: string) {
-  const { data } = await api.post(`/api/publish/tasks/${taskId}/reject`, {
-    note,
-  });
-  return data;
+  return publishApi.rejectTask(taskId, note);
 }
 
 export async function closePublishTask(taskId: number, note?: string) {
-  const { data } = await api.post(`/api/publish/tasks/${taskId}/close`, {
-    note,
-  });
-  return data;
+  return publishApi.closeTask(taskId, note);
+}
+
+// ── 发布效果统计 ──────────────────────────────────────
+
+export async function getPublishStatsByPlatform(days?: number) {
+  return publishApi.getStatsByPlatform(days);
+}
+
+export async function getPublishRoiTrend(days?: number) {
+  return publishApi.getRoiTrend(days);
+}
+
+export async function getPublishContentAnalysis(days?: number) {
+  return publishApi.getContentAnalysis(days);
 }
 
 // ── 爆款内容采集分析中心 ──────────────────────────────
 
 export async function listInsightTopics() {
-  const { data } = await api.get("/api/insight/topics");
-  return data;
+  return insightApi.listTopics();
 }
 
 export async function createInsightTopic(payload: {
@@ -414,8 +383,7 @@ export async function createInsightTopic(payload: {
   audience_tags?: string[];
   risk_notes?: string;
 }) {
-  const { data } = await api.post("/api/insight/topics", payload);
-  return data;
+  return insightApi.createTopic(payload);
 }
 
 export async function importInsightItem(payload: {
@@ -438,7 +406,7 @@ export async function importInsightItem(payload: {
   manual_note?: string;
   source_type?: string;
 }) {
-  const { data } = await api.post("/api/insight/import", {
+  return insightApi.importItem({
     content_type: "post",
     source_type: "manual",
     like_count: 0,
@@ -449,7 +417,6 @@ export async function importInsightItem(payload: {
     audience_tags: [],
     ...payload,
   });
-  return data;
 }
 
 export async function listInsightItems(params?: {
@@ -462,47 +429,34 @@ export async function listInsightItems(params?: {
   skip?: number;
   limit?: number;
 }) {
-  const { data } = await api.get("/api/insight/list", { params });
-  return data;
+  return insightApi.listItems(params);
 }
 
 export async function listInsightAnalyzeTasks(params?: {
   skip?: number;
   limit?: number;
 }) {
-  const { data } = await api.get("/api/insight/analyze/tasks", { params });
-  return data;
+  return insightApi.listAnalyzeTasks(params);
 }
 
 export async function getSystemVersion() {
-  const { data } = await api.get("/api/system/version");
-  return data;
+  return systemApi.getVersion();
 }
 
 export async function getSystemHealth() {
-  const { data } = await api.get("/api/system/ops/health");
-  return data as {
-    status: string;
-    database: string;
-    redis: string;
-    timestamp: string;
-    version?: string;
-  };
+  return systemApi.getHealth();
 }
 
 export async function analyzeInsightItem(itemId: number) {
-  const { data } = await api.post(`/api/insight/analyze/${itemId}`);
-  return data;
+  return insightApi.analyzeItem(itemId);
 }
 
 export async function deleteInsightItem(itemId: number) {
-  const { data } = await api.delete(`/api/insight/${itemId}`);
-  return data;
+  return insightApi.deleteItem(itemId);
 }
 
 export async function getInsightStats() {
-  const { data } = await api.get("/api/insight/stats");
-  return data;
+  return insightApi.getStats();
 }
 
 export async function retrieveInsightContext(payload: {
@@ -511,12 +465,11 @@ export async function retrieveInsightContext(payload: {
   audience_tags?: string[];
   limit?: number;
 }) {
-  const { data } = await api.post("/api/insight/retrieve", {
+  return insightApi.retrieve({
     audience_tags: [],
     limit: 5,
     ...payload,
   });
-  return data;
 }
 
 // ── 新采集链路（v1 pipeline）────────────────────────────────────
@@ -940,6 +893,44 @@ export async function applyWeightAdjustment() {
 export async function getFeedbackTags() {
   const { data } = await api.get('/api/mvp/feedback/tags');
   return data.tags as string[];
+}
+
+// ═══════════ 社交账号管理 API ═══════════
+
+export async function listSocialAccounts(platform?: string) {
+  return socialAccountApi.list(platform);
+}
+
+export async function createSocialAccount(payload: {
+  platform: string;
+  account_name: string;
+  account_id?: string;
+  avatar_url?: string;
+  notes?: string;
+}) {
+  return socialAccountApi.create(payload);
+}
+
+export async function updateSocialAccount(
+  id: number,
+  payload: {
+    account_name?: string;
+    account_id?: string;
+    avatar_url?: string;
+    status?: string;
+    followers_count?: number;
+    notes?: string;
+  }
+) {
+  return socialAccountApi.update(id, payload);
+}
+
+export async function deleteSocialAccount(id: number) {
+  return socialAccountApi.delete(id);
+}
+
+export async function getSocialPlatforms() {
+  return socialAccountApi.getPlatforms();
 }
 
 // ── 知识图谱 ──

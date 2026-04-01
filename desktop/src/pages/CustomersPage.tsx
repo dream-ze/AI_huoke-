@@ -8,9 +8,15 @@ export function CustomersPage() {
   const [items, setItems] = useState<Customer[]>([]);
   const [nickname, setNickname] = useState("");
   const [wechatId, setWechatId] = useState("");
+  const [phone, setPhone] = useState("");
   const [sourcePlatform, setSourcePlatform] = useState("xiaohongshu");
   const [tags, setTags] = useState("新线索");
   const [intention, setIntention] = useState("medium");
+  // 扩展字段
+  const [company, setCompany] = useState("");
+  const [position, setPosition] = useState("");
+  const [industry, setIndustry] = useState("");
+  const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const focusCustomerId = Number(searchParams.get("focusCustomerId") || 0);
   const fromLeadId = Number(searchParams.get("fromLeadId") || 0);
@@ -31,15 +37,26 @@ export function CustomersPage() {
       await createCustomer({
         nickname,
         wechat_id: wechatId || undefined,
+        phone: phone || undefined,
         source_platform: sourcePlatform,
         intention_level: intention,
         tags: tags
           .split(",")
           .map((s) => s.trim())
-          .filter(Boolean)
+          .filter(Boolean),
+        // 扩展字段
+        company: company || undefined,
+        position: position || undefined,
+        industry: industry || undefined,
+        email: email || undefined,
       });
       setNickname("");
       setWechatId("");
+      setPhone("");
+      setCompany("");
+      setPosition("");
+      setIndustry("");
+      setEmail("");
       setMessage("客户已录入");
       await fetchData();
     } catch (err: any) {
@@ -71,7 +88,7 @@ export function CustomersPage() {
         <form onSubmit={onSubmit} className="grid">
           <div className="form-row">
             <div>
-              <label>客户昵称</label>
+              <label>客户昵称 *</label>
               <input value={nickname} onChange={(e) => setNickname(e.target.value)} required />
             </div>
             <div>
@@ -82,7 +99,18 @@ export function CustomersPage() {
 
           <div className="form-row">
             <div>
-              <label>来源平台</label>
+              <label>手机号</label>
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </div>
+            <div>
+              <label>邮箱</label>
+              <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div>
+              <label>来源平台 *</label>
               <select value={sourcePlatform} onChange={(e) => setSourcePlatform(e.target.value)}>
                 <option value="xiaohongshu">小红书</option>
                 <option value="douyin">抖音</option>
@@ -100,9 +128,26 @@ export function CustomersPage() {
             </div>
           </div>
 
-          <div>
-            <label>标签（逗号分隔）</label>
-            <input value={tags} onChange={(e) => setTags(e.target.value)} />
+          <div className="form-row">
+            <div>
+              <label>公司名称</label>
+              <input value={company} onChange={(e) => setCompany(e.target.value)} />
+            </div>
+            <div>
+              <label>职位</label>
+              <input value={position} onChange={(e) => setPosition(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div>
+              <label>行业</label>
+              <input value={industry} onChange={(e) => setIndustry(e.target.value)} />
+            </div>
+            <div>
+              <label>标签（逗号分隔）</label>
+              <input value={tags} onChange={(e) => setTags(e.target.value)} />
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -130,6 +175,9 @@ export function CustomersPage() {
               <th>ID</th>
               <th>昵称</th>
               <th>微信号</th>
+              <th>手机号</th>
+              <th>公司</th>
+              <th>行业</th>
               <th>来源</th>
               <th>标签</th>
               <th>意向</th>
@@ -142,6 +190,9 @@ export function CustomersPage() {
                 <td>{item.id}</td>
                 <td>{item.nickname}</td>
                 <td>{item.wechat_id || "-"}</td>
+                <td>{item.phone || "-"}</td>
+                <td>{item.company || "-"}</td>
+                <td>{item.industry || "-"}</td>
                 <td>{item.source_platform}</td>
                 <td>{item.tags?.join(", ") || "-"}</td>
                 <td>{item.intention_level}</td>

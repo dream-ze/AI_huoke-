@@ -1,11 +1,9 @@
 from typing import Any, Dict, Literal, Optional
 
+from app.schemas.result import ContentItem
 from pydantic import BaseModel, Field, model_validator
 
-from app.schemas.result import ContentItem
-
-
-PlatformType = Literal["xiaohongshu"]
+PlatformType = Literal["xiaohongshu", "douyin", "zhihu"]
 
 
 class CollectDetailRequest(BaseModel):

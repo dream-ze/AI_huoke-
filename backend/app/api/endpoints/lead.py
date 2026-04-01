@@ -1,20 +1,240 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
 
 from app.core.database import get_db
 from app.core.security import verify_token
 from app.models import Customer, Lead, PublishTask, User
 from app.schemas import (
+    CustomerResponse,
     LeadAssignRequest,
     LeadConvertCustomerRequest,
     LeadCreate,
     LeadResponse,
     LeadStatusUpdate,
     LeadTraceResponse,
-    CustomerResponse,
 )
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api/lead", tags=["lead"])
+
+
+# ═══════════ 统计端点（必须在 /{lead_id} 路由之前）═══════════
+
+
+@router.get("/stats/attribution")
+def get_lead_attribution(
+    days: int = Query(30, ge=1, le=365),
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """
+    线索来源归因分析
+    分析哪个平台/哪条内容带来最多线索
+    """
+    start_date = datetime.utcnow() - timedelta(days=days)
+
+    # 按平台分组统计
+    platform_stats = (
+        db.query(
+            Lead.platform,
+            func.count(Lead.id).label("lead_count"),
+            func.sum(Lead.valid_leads).label("valid_count"),
+            func.sum(Lead.conversions).label("conversion_count"),
+        )
+        .filter(Lead.owner_id == current_user["user_id"])
+        .filter(Lead.created_at >= start_date)
+        .group_by(Lead.platform)
+        .all()
+    )
+
+    by_platform = []
+    for row in platform_stats:
+        lead_count = row.lead_count or 0
+        valid_count = row.valid_count or 0
+        conversion_count = row.conversion_count or 0
+        conversion_rate = (conversion_count / lead_count) if lead_count > 0 else 0
+        by_platform.append(
+            {
+                "platform": row.platform,
+                "lead_count": lead_count,
+                "valid_count": valid_count,
+                "conversion_count": conversion_count,
+                "conversion_rate": round(conversion_rate, 4),
+            }
+        )
+
+    # 按来源分组统计
+    source_stats = (
+        db.query(
+            Lead.source,
+            func.count(Lead.id).label("lead_count"),
+            func.sum(Lead.valid_leads).label("valid_count"),
+            func.sum(Lead.conversions).label("conversion_count"),
+        )
+        .filter(Lead.owner_id == current_user["user_id"])
+        .filter(Lead.created_at >= start_date)
+        .group_by(Lead.source)
+        .all()
+    )
+
+    by_source = []
+    for row in source_stats:
+        lead_count = row.lead_count or 0
+        valid_count = row.valid_count or 0
+        conversion_count = row.conversion_count or 0
+        conversion_rate = (conversion_count / lead_count) if lead_count > 0 else 0
+        by_source.append(
+            {
+                "source": row.source,
+                "lead_count": lead_count,
+                "valid_count": valid_count,
+                "conversion_count": conversion_count,
+                "conversion_rate": round(conversion_rate, 4),
+            }
+        )
+
+    # 最佳引流内容 - 关联 PublishTask 获取 task_title
+    top_content_query = (
+        db.query(
+            Lead.title,
+            Lead.platform,
+            Lead.publish_task_id,
+            PublishTask.task_title,
+            func.count(Lead.id).label("lead_count"),
+            func.sum(Lead.conversions).label("conversions"),
+        )
+        .outerjoin(PublishTask, Lead.publish_task_id == PublishTask.id)
+        .filter(Lead.owner_id == current_user["user_id"])
+        .filter(Lead.created_at >= start_date)
+        .group_by(Lead.title, Lead.platform, Lead.publish_task_id, PublishTask.task_title)
+        .order_by(func.count(Lead.id).desc())
+        .limit(10)
+        .all()
+    )
+
+    top_content = []
+    for row in top_content_query:
+        top_content.append(
+            {
+                "title": row.task_title or row.title,
+                "platform": row.platform,
+                "lead_count": row.lead_count or 0,
+                "conversions": row.conversions or 0,
+            }
+        )
+
+    return {
+        "by_platform": by_platform,
+        "by_source": by_source,
+        "top_content": top_content,
+        "period_days": days,
+    }
+
+
+@router.get("/stats/funnel")
+def get_lead_funnel(
+    days: int = Query(30, ge=1, le=365),
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """
+    转化漏斗统计
+    返回各阶段数量与转化率
+    """
+    start_date = datetime.utcnow() - timedelta(days=days)
+
+    # published: PublishTask 表的总数（指定时间范围）
+    published_count = (
+        db.query(func.count(PublishTask.id))
+        .filter(PublishTask.owner_id == current_user["user_id"])
+        .filter(PublishTask.created_at >= start_date)
+        .scalar()
+        or 0
+    )
+
+    # leads_generated: Lead 表总数
+    leads_generated_count = (
+        db.query(func.count(Lead.id))
+        .filter(Lead.owner_id == current_user["user_id"])
+        .filter(Lead.created_at >= start_date)
+        .scalar()
+        or 0
+    )
+
+    # contacted: Lead 表 status 为 contacted 及之后状态的数量
+    contacted_statuses = ["contacted", "qualified", "converted"]
+    contacted_count = (
+        db.query(func.count(Lead.id))
+        .filter(Lead.owner_id == current_user["user_id"])
+        .filter(Lead.created_at >= start_date)
+        .filter(Lead.status.in_(contacted_statuses))
+        .scalar()
+        or 0
+    )
+
+    # qualified: Lead 表 status 为 qualified 及之后状态的数量
+    qualified_statuses = ["qualified", "converted"]
+    qualified_count = (
+        db.query(func.count(Lead.id))
+        .filter(Lead.owner_id == current_user["user_id"])
+        .filter(Lead.created_at >= start_date)
+        .filter(Lead.status.in_(qualified_statuses))
+        .scalar()
+        or 0
+    )
+
+    # converted: Lead 表 status 为 converted 的数量
+    converted_count = (
+        db.query(func.count(Lead.id))
+        .filter(Lead.owner_id == current_user["user_id"])
+        .filter(Lead.created_at >= start_date)
+        .filter(Lead.status == "converted")
+        .scalar()
+        or 0
+    )
+
+    # 计算转化率（基于 published 作为基准）
+    stages = [
+        {
+            "stage": "published",
+            "stage_label": "发布内容",
+            "count": published_count,
+            "rate": 1.0,
+        },
+        {
+            "stage": "leads_generated",
+            "stage_label": "产生线索",
+            "count": leads_generated_count,
+            "rate": round(leads_generated_count / published_count, 4) if published_count > 0 else 0,
+        },
+        {
+            "stage": "contacted",
+            "stage_label": "已联系",
+            "count": contacted_count,
+            "rate": round(contacted_count / published_count, 4) if published_count > 0 else 0,
+        },
+        {
+            "stage": "qualified",
+            "stage_label": "已认定",
+            "count": qualified_count,
+            "rate": round(qualified_count / published_count, 4) if published_count > 0 else 0,
+        },
+        {
+            "stage": "converted",
+            "stage_label": "已转化",
+            "count": converted_count,
+            "rate": round(converted_count / published_count, 4) if published_count > 0 else 0,
+        },
+    ]
+
+    return {
+        "stages": stages,
+        "period_days": days,
+    }
+
+
+# ═══════════ 工具函数与 CRUD 端点 ═══════════
 
 
 def _lead_to_response(db: Session, lead: Lead, publish_record_id: int | None = None) -> dict:

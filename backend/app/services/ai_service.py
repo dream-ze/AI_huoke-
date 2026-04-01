@@ -1,26 +1,81 @@
-import httpx
 import json
 import logging
+import random
 import time
+from typing import Any, Callable, Dict
 from uuid import uuid4
-from typing import Dict, Any
-from sqlalchemy.orm import Session
+
+import httpx
 from app.core.config import settings
 from app.models import ArkCallLog
 from app.services.compliance_service import ComplianceService
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 
 class AIService:
     """LLM service for content rewriting"""
-    
+
     def __init__(self, db: Session | None = None):
         self.ollama_url = settings.OLLAMA_BASE_URL
         self.ollama_model = settings.OLLAMA_MODEL
         self.use_cloud = settings.USE_CLOUD_MODEL
         self.db = db
-    
+
+    async def _call_with_retry(
+        self, func: Callable, *args, max_retries: int = 3, base_delay: float = 2.0, **kwargs
+    ) -> Any:
+        """带指数退避的重试调用"""
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    delay = base_delay * (2**attempt) + random.uniform(0, 1)
+                    logger.warning(f"LLM调用失败(尝试{attempt+1}/{max_retries+1}), " f"{delay:.1f}秒后重试: {e}")
+                    await self._async_sleep(delay)
+                else:
+                    logger.error(f"LLM调用最终失败(已重试{max_retries}次): {e}")
+        raise last_error
+
+    async def _async_sleep(self, seconds: float):
+        """异步睡眠"""
+        import asyncio
+
+        await asyncio.sleep(seconds)
+
+    def _log_token_usage(self, model: str, prompt_tokens: int, completion_tokens: int, total_tokens: int):
+        """记录token使用统计"""
+        logger.info(
+            f"LLM Token统计 | model={model} | prompt={prompt_tokens} | "
+            f"completion={completion_tokens} | total={total_tokens}"
+        )
+
+    def _log_call_record(
+        self, db: Session, model: str, prompt: str, response: str, tokens_used: int, latency_ms: float, success: bool
+    ):
+        """记录到ArkCallLog表"""
+        try:
+            log = ArkCallLog(
+                model=model,
+                scene="llm_call_record",
+                provider="ark",
+                endpoint="/chat/completions",
+                input_tokens=tokens_used,
+                output_tokens=0,
+                total_tokens=tokens_used,
+                latency_ms=int(latency_ms),
+                success=success,
+                error_message=None if success else response[:2000] if response else None,
+            )
+            db.add(log)
+            db.commit()
+        except Exception as e:
+            logger.warning(f"记录调用日志失败: {e}")
+
     async def call_llm(
         self,
         prompt: str,
@@ -38,29 +93,32 @@ class AIService:
             return await self._call_ollama(prompt, system_prompt, max_tokens=max_tokens)
 
     async def _call_ollama(self, prompt: str, system_prompt: str = "", max_tokens: int | None = None) -> str:
-        """Call Ollama local model"""
-        try:
-            full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
+        """Call Ollama local model with retry"""
+        return await self._call_with_retry(
+            self._call_ollama_raw, prompt, system_prompt, max_tokens, max_retries=3, base_delay=2.0
+        )
 
-            async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
-                response = await client.post(
-                    f"{self.ollama_url}/api/generate",
-                    json={
-                        "model": self.ollama_model,
-                        "prompt": full_prompt,
-                        "stream": False,
-                        "temperature": 0.7,
-                        "num_predict": max_tokens or 800,  # 限制生成长度，加速响应
-                    }
-                )
+    async def _call_ollama_raw(self, prompt: str, system_prompt: str = "", max_tokens: int | None = None) -> str:
+        """原始Ollama调用（无重试）"""
+        full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
 
-                if response.status_code == 200:
-                    result = response.json()
-                    return result.get("response", "")
-                else:
-                    raise Exception(f"Ollama error: {response.text}")
-        except Exception as e:
-            raise Exception(f"Failed to call Ollama: {str(e)}")
+        async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
+            response = await client.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": self.ollama_model,
+                    "prompt": full_prompt,
+                    "stream": False,
+                    "temperature": 0.7,
+                    "num_predict": max_tokens or 800,  # 限制生成长度，加速响应
+                },
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("response", "")
+            else:
+                raise Exception(f"Ollama error: {response.text}")
 
     async def _call_ark(
         self,
@@ -70,7 +128,20 @@ class AIService:
         scene: str = "general",
         max_tokens: int | None = None,
     ) -> str:
-        """Call Volcano Engine (Fire Engine) using OpenAI-compatible chat/completions API"""
+        """Call Volcano Engine (Fire Engine) using OpenAI-compatible chat/completions API with retry"""
+        return await self._call_with_retry(
+            self._call_ark_raw, prompt, system_prompt, user_id, scene, max_tokens, max_retries=3, base_delay=2.0
+        )
+
+    async def _call_ark_raw(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        user_id: int | None = None,
+        scene: str = "general",
+        max_tokens: int | None = None,
+    ) -> str:
+        """原始Ark调用（无重试）"""
         if not settings.ARK_API_KEY:
             raise Exception("ARK_API_KEY is not configured")
 
@@ -86,6 +157,16 @@ class AIService:
         }
 
         data = await self._post_ark_chat_completions(payload, user_id=user_id, scene=scene)
+
+        # 记录token使用情况
+        usage = self._extract_chat_completions_usage(data)
+        self._log_token_usage(
+            model=settings.ARK_MODEL,
+            prompt_tokens=usage.get("prompt_tokens") or 0,
+            completion_tokens=usage.get("completion_tokens") or 0,
+            total_tokens=usage.get("total_tokens") or 0,
+        )
+
         return self._extract_chat_completions_text(data)
 
     async def analyze_image_with_ark(
@@ -238,7 +319,7 @@ class AIService:
 
     def _extract_chat_completions_text(self, data: Dict[str, Any]) -> str:
         """Extract text from OpenAI-compatible chat/completions response.
-        
+
         Expected format:
         {
             "choices": [
@@ -266,7 +347,7 @@ class AIService:
 
     def _extract_chat_completions_usage(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract usage from OpenAI-compatible chat/completions response.
-        
+
         Expected format:
         {
             "usage": {
@@ -346,7 +427,7 @@ class AIService:
         except Exception:
             self.db.rollback()
             logger.exception("Failed to persist ark call log")
-    
+
     async def rewrite_xiaohongshu(
         self,
         content: str,
@@ -389,7 +470,7 @@ class AIService:
 - 不超过 1000 字
 - 禁止使用【一定放款】【100%下款】等违规词语"""
         return await self.call_llm(prompt, system_prompt, user_id=user_id, scene="rewrite_xiaohongshu")
-    
+
     async def rewrite_douyin(
         self,
         content: str,
@@ -427,7 +508,7 @@ class AIService:
 - 不超过 300 字
 - 禁用违规承诺词语"""
         return await self.call_llm(prompt, system_prompt, user_id=user_id, scene="rewrite_douyin")
-    
+
     async def rewrite_zhihu(
         self,
         content: str,
@@ -463,7 +544,7 @@ class AIService:
 - 加入理性提醒和风险说明
 - 禁用担保、承诺类违规词语"""
         return await self.call_llm(prompt, system_prompt, user_id=user_id, scene="rewrite_zhihu")
-    
+
     async def generate_comment_reply(self, original_content: str, comment: str) -> str:
         """Generate reply to comments"""
         system_prompt = """You are a social media engagement expert.
@@ -478,10 +559,10 @@ Requirements:
 - Answer the question first
 - Avoid contact requests
 - No spam or pressure"""
-        
+
         prompt = f"Original content: {original_content}\n\nComment: {comment}\n\nGenerate 3 reply options."
         return await self.call_llm(prompt, system_prompt)
-    
+
     async def extract_structure(self, content: str) -> Dict[str, Any]:
         """Extract content structure and key elements"""
         system_prompt = """Analyze this content and extract:
@@ -494,11 +575,12 @@ Requirements:
 - Reusable angles
 
 Return as JSON."""
-        
+
         prompt = f"Analyze and extract structure:\n\n{content}"
         response = await self.call_llm(prompt, system_prompt)
-        
+
         try:
             return json.loads(response)
-        except:
+        except Exception as e:
+            logger.warning(f"AI response parsing failed: {e}")
             return {"raw_response": response}

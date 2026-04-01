@@ -74,3 +74,20 @@ alembic downgrade -1
 
 字段建议：
 - 编号、时间、环境、现象、影响范围、临时止血、根因、修复方案、回归结论、责任人。
+## 生产部署命令
+
+推荐使用：
+
+```bash
+cd /opt/zhihuokeke/backend
+docker compose --env-file .env.server -f docker-compose.prod.yml up -d --build
+```
+
+注意：
+
+- 生产环境不要直接复用开发用 `.env`
+- 容器内数据库、Redis、Ollama 必须使用 Docker 服务名：
+  - `postgres`
+  - `redis`
+  - `ollama`
+- 部署前必须替换 `.env.server` 中所有 `CHANGE_ME_*` 占位值

@@ -1,1189 +1,173 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Float, JSON, Enum, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-from datetime import datetime
-import enum
-from app.core.database import Base
-
-# pgvector 向量支持（可选，未安装时降级）
-try:
-    from pgvector.sqlalchemy import Vector
-except ImportError:
-    Vector = None  # pgvector未安装时降级
-
-
-class User(Base):
-    """User model"""
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(100), unique=True, index=True, nullable=False)
-    email = Column(String(100), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
-    role = Column(String(32), default="operator", nullable=False)
-    is_active = Column(Boolean, default=True)
-    wecom_userid = Column(String(64), unique=True, index=True, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # Relationships
-    contents = relationship("ContentAsset", back_populates="owner")
-    leads = relationship("Lead", back_populates="owner")
-    customers = relationship("Customer", back_populates="owner")
-    ark_call_logs = relationship("ArkCallLog", back_populates="user")
-
-
-class PlatformType(str, enum.Enum):
-    xiaohongshu = "xiaohongshu"
-    douyin = "douyin"
-    zhihu = "zhihu"
-    xianyu = "xianyu"
-    wechat = "wechat"
-    other = "other"
-
-
-class ContentType(str, enum.Enum):
-    post = "post"
-    video = "video"
-    answer = "answer"
-    listing = "listing"
-
-
-class ContentAsset(Base):
-    """Content asset collected from platforms"""
-    __tablename__ = "content_assets"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    platform = Column(String(32), nullable=False)
-    source_url = Column(String(500), nullable=True)
-    content_type = Column(String(32), nullable=False)
-    
-    title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)
-    author = Column(String(100), nullable=True)
-    publish_time = Column(DateTime, nullable=True)
-    
-    tags = Column(JSON, default=list)  # List of tags
-    comments_keywords = Column(JSON, default=list)  # Extracted comment keywords
-    top_comments = Column(JSON, default=list)  # Top 20 comments
-    
-    metrics = Column(JSON, default=dict)  # {likes, comments, favorites, shares}
-    heat_score = Column(Float, default=0.0)  # Calculated heat score
-    is_viral = Column(Boolean, default=False)  # Is this viral content?
-
-    source_type = Column(String(32), default="paste")  # link | paste | import
-    category = Column(String(64), nullable=True)  # domain category (e.g. 额度提升, 客户话术)
-
-    manual_note = Column(Text, nullable=True)
-    screenshots = Column(JSON, default=list)
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # Relationships
-    owner = relationship("User", back_populates="contents")
-    rewrites = relationship("RewrittenContent", back_populates="source_content")
-    blocks = relationship("ContentBlock", back_populates="content", cascade="all,delete-orphan")
-    comments = relationship("ContentComment", back_populates="content", cascade="all,delete-orphan")
-    snapshots = relationship("ContentSnapshot", back_populates="content", cascade="all,delete-orphan")
-    insights = relationship("ContentInsight", back_populates="content", cascade="all,delete-orphan")
-
-
-class ContentBlock(Base):
-    """Structured body blocks for a collected content item."""
-
-    __tablename__ = "content_blocks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    content_id = Column(Integer, ForeignKey("content_assets.id", ondelete="CASCADE"), nullable=False, index=True)
-    block_type = Column(String(32), nullable=False, default="paragraph")
-    block_order = Column(Integer, nullable=False, default=0)
-    block_text = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    content = relationship("ContentAsset", back_populates="blocks")
-
-
-class ContentComment(Base):
-    """Structured comments for a collected content item."""
-
-    __tablename__ = "content_comments"
-
-    id = Column(Integer, primary_key=True, index=True)
-    content_id = Column(Integer, ForeignKey("content_assets.id", ondelete="CASCADE"), nullable=False, index=True)
-    parent_comment_id = Column(Integer, ForeignKey("content_comments.id", ondelete="SET NULL"), nullable=True)
-    commenter_name = Column(String(100), nullable=True)
-    comment_text = Column(Text, nullable=False)
-    like_count = Column(Integer, default=0)
-    is_pinned = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    content = relationship("ContentAsset", back_populates="comments")
-
-
-class ContentSnapshot(Base):
-    """Page snapshots captured at collect time."""
-
-    __tablename__ = "content_snapshots"
-
-    id = Column(Integer, primary_key=True, index=True)
-    content_id = Column(Integer, ForeignKey("content_assets.id", ondelete="CASCADE"), nullable=False, index=True)
-    raw_html = Column(Text, nullable=True)
-    screenshot_url = Column(String(500), nullable=True)
-    page_meta_json = Column(JSON, default=dict)
-    collected_at = Column(DateTime, default=datetime.utcnow)
-
-    content = relationship("ContentAsset", back_populates="snapshots")
-
-
-class ContentInsight(Base):
-    """Asynchronous insight results for a content item."""
-
-    __tablename__ = "content_insights"
-
-    id = Column(Integer, primary_key=True, index=True)
-    content_id = Column(Integer, ForeignKey("content_assets.id", ondelete="CASCADE"), nullable=False, index=True)
-    high_freq_questions_json = Column(JSON, default=list)
-    key_sentences_json = Column(JSON, default=list)
-    title_pattern = Column(String(128), nullable=True)
-    suggested_topics_json = Column(JSON, default=list)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    content = relationship("ContentAsset", back_populates="insights")
-
-
-class RiskLevel(str, enum.Enum):
-    low = "low"
-    medium = "medium"
-    high = "high"
-
-
-class RewrittenContent(Base):
-    """Rewritten content in different styles"""
-    __tablename__ = "rewritten_contents"
-
-    id = Column(Integer, primary_key=True, index=True)
-    source_id = Column(Integer, ForeignKey("content_assets.id"), nullable=False)
-    
-    target_platform = Column(String(32), nullable=False)
-    content_type = Column(String(32), nullable=False)  # xiaohongshu, douyin, zhihu, etc.
-    
-    original_content = Column(Text, nullable=False)
-    rewritten_content = Column(Text, nullable=False)
-    
-    risk_level = Column(String(16), default="low")
-    compliance_score = Column(Float, default=0.0)  # 0-100
-    compliance_status = Column(String(32), default="pending")  # pending, passed, failed
-    
-    risk_points = Column(JSON, default=list)  # List of risk points
-    suggestions = Column(JSON, default=list)  # Suggestions for improvement
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # Relationships
-    source_content = relationship("ContentAsset", back_populates="rewrites")
-    publish_records = relationship("PublishRecord", back_populates="content")
-
-
-class IntentionLevel(str, enum.Enum):
-    low = "low"
-    medium = "medium"
-    high = "high"
-
-
-class CustomerStatus(str, enum.Enum):
-    new = "new"
-    contacted = "contacted"
-    pending_follow = "pending_follow"
-    qualified = "qualified"
-    converted = "converted"
-    lost = "lost"
-
-
-class Lead(Base):
-    """Lead pool entity generated from publish tasks and manual operations."""
-    __tablename__ = "leads"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    publish_task_id = Column(Integer, ForeignKey("publish_tasks.id"), nullable=True, index=True)
-
-    platform = Column(String(32), nullable=False)
-    source = Column(String(32), default="publish_task")
-    title = Column(String(255), nullable=False)
-    post_url = Column(String(500), nullable=True)
-
-    wechat_adds = Column(Integer, default=0)
-    leads = Column(Integer, default=0)
-    valid_leads = Column(Integer, default=0)
-    conversions = Column(Integer, default=0)
-
-    status = Column(String(32), default="new")  # new, contacted, qualified, converted, lost
-    intention_level = Column(String(16), default="medium")
-    note = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    owner = relationship("User", back_populates="leads")
-    publish_task = relationship("PublishTask", foreign_keys=[publish_task_id])
-    customer = relationship("Customer", back_populates="lead", uselist=False)
-
-
-class Customer(Base):
-    """Customer contact information"""
-    __tablename__ = "customers"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
-    nickname = Column(String(100), nullable=False)
-    wechat_id = Column(String(100), nullable=True)
-    phone = Column(String(20), nullable=True)
-    
-    source_platform = Column(String(32), nullable=False)
-    source_content_id = Column(Integer, nullable=True)
-    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True, unique=True)
-    
-    tags = Column(JSON, default=list)
-    intention_level = Column(String(16), default="medium")  # low, medium, high
-    customer_status = Column(String(32), default="new")
-    
-    inquiry_content = Column(Text, nullable=True)
-    follow_records = Column(JSON, default=list)  # [{date, content, owner}, ...]
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # Relationships
-    owner = relationship("User", back_populates="customers")
-    lead = relationship("Lead", back_populates="customer")
-
-
-class PublishRecord(Base):
-    """Content publish record"""
-    __tablename__ = "publish_records"
-
-    id = Column(Integer, primary_key=True, index=True)
-    rewritten_content_id = Column(Integer, ForeignKey("rewritten_contents.id"), nullable=False)
-    
-    platform = Column(String(32), nullable=False)
-    account_name = Column(String(128), nullable=False)
-    publish_time = Column(DateTime, default=datetime.utcnow)
-    published_by = Column(String(100), nullable=True)
-    
-    # Performance metrics
-    views = Column(Integer, default=0)
-    likes = Column(Integer, default=0)
-    comments = Column(Integer, default=0)
-    favorites = Column(Integer, default=0)
-    shares = Column(Integer, default=0)
-    private_messages = Column(Integer, default=0)
-    
-    # Conversion metrics
-    wechat_adds = Column(Integer, default=0)
-    leads = Column(Integer, default=0)
-    valid_leads = Column(Integer, default=0)
-    conversions = Column(Integer, default=0)
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # Relationships
-    content = relationship("RewrittenContent", back_populates="publish_records")
-
-
-class PublishTask(Base):
-    """Publish task workflow entity."""
-    __tablename__ = "publish_tasks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    rewritten_content_id = Column(Integer, ForeignKey("rewritten_contents.id"), nullable=True)
-    publish_record_id = Column(Integer, ForeignKey("publish_records.id"), nullable=True)
-
-    platform = Column(String(32), nullable=False)
-    account_name = Column(String(128), nullable=False)
-    task_title = Column(String(255), nullable=False)
-    content_text = Column(Text, nullable=False)
-
-    status = Column(String(32), default="pending")  # pending, claimed, submitted, rejected, closed
-    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
-    due_time = Column(DateTime, nullable=True)
-    claimed_at = Column(DateTime, nullable=True)
-    posted_at = Column(DateTime, nullable=True)
-    closed_at = Column(DateTime, nullable=True)
-
-    post_url = Column(String(500), nullable=True)
-    reject_reason = Column(Text, nullable=True)
-    close_reason = Column(Text, nullable=True)
-
-    views = Column(Integer, default=0)
-    likes = Column(Integer, default=0)
-    comments = Column(Integer, default=0)
-    favorites = Column(Integer, default=0)
-    shares = Column(Integer, default=0)
-    private_messages = Column(Integer, default=0)
-    wechat_adds = Column(Integer, default=0)
-    leads = Column(Integer, default=0)
-    valid_leads = Column(Integer, default=0)
-    conversions = Column(Integer, default=0)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    rewritten_content = relationship("RewrittenContent", foreign_keys=[rewritten_content_id])
-    publish_record = relationship("PublishRecord", foreign_keys=[publish_record_id])
-    feedbacks = relationship("PublishTaskFeedback", back_populates="task", cascade="all,delete-orphan")
-
-
-class PublishTaskFeedback(Base):
-    """Publish task action log and feedback."""
-    __tablename__ = "publish_task_feedbacks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("publish_tasks.id"), nullable=False, index=True)
-    action = Column(String(32), nullable=False)  # create, claim, submit, reject, close
-    note = Column(Text, nullable=True)
-    payload = Column(JSON, default=dict)
-    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    task = relationship("PublishTask", back_populates="feedbacks")
-
-
-class BrowserPluginCollection(Base):
-    """Content collected via browser plugin"""
-    __tablename__ = "plugin_collections"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
-    platform = Column(String(32), nullable=False)
-    title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)
-    
-    author = Column(String(100), nullable=True)
-    publish_time = Column(DateTime, nullable=True)
-    tags = Column(JSON, default=list)
-    comments_json = Column(JSON, default=list)
-    url = Column(String(500), nullable=False)
-    
-    heat_score = Column(Float, default=0.0)
-    is_viral = Column(Boolean, default=False)
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class InboxItem(Base):
-    """Collected content waiting in inbox before being promoted to material library."""
-    __tablename__ = "inbox_items"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    platform = Column(String(32), nullable=False)
-    source_url = Column(String(500), nullable=True)
-    content_type = Column(String(32), nullable=False, default="post")
-
-    title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)
-    author = Column(String(100), nullable=True)
-    publish_time = Column(DateTime, nullable=True)
-
-    tags = Column(JSON, default=list)
-    metrics = Column(JSON, default=dict)
-    source_type = Column(String(32), default="paste")
-    category = Column(String(64), nullable=True)
-    manual_note = Column(Text, nullable=True)
-
-    heat_score = Column(Float, default=0.0)
-    is_viral = Column(Boolean, default=False)
-    status = Column(String(32), default="pending")
-    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    assigned_at = Column(DateTime, nullable=True)
-    promoted_content_id = Column(Integer, ForeignKey("content_assets.id"), nullable=True)
-    promoted_insight_item_id = Column(Integer, ForeignKey("insight_content_items.id"), nullable=True)
-    review_note = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    owner = relationship("User", foreign_keys=[owner_id])
-    assignee = relationship("User", foreign_keys=[assigned_to])
-    promoted_content = relationship("ContentAsset", foreign_keys=[promoted_content_id])
-    promoted_insight_item = relationship("InsightContentItem", foreign_keys=[promoted_insight_item_id])
-
-
-class CollectTask(Base):
-    """Keyword based browser collection task."""
-
-    __tablename__ = "collect_tasks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    task_type = Column(String(30), nullable=False, default="keyword")
-    platform = Column(String(30), nullable=False)
-    keyword = Column(String(255), nullable=False)
-    max_items = Column(Integer, nullable=False, default=20)
-
-    status = Column(String(20), nullable=False, default="pending")
-    result_count = Column(Integer, nullable=False, default=0)
-    inserted_count = Column(Integer, nullable=False, default=0)
-    review_count = Column(Integer, nullable=False, default=0)
-    discard_count = Column(Integer, nullable=False, default=0)
-    duplicate_count = Column(Integer, nullable=False, default=0)
-    failed_count = Column(Integer, nullable=False, default=0)
-    error_message = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class EmployeeLinkSubmission(Base):
-    """Employee/manual/wechat link submissions before parsing."""
-
-    __tablename__ = "employee_link_submissions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    employee_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    source_type = Column(String(30), nullable=False)  # manual_link / wechat_robot
-    platform = Column(String(30), nullable=True)
-    url = Column(String(500), nullable=False)
-    note = Column(Text, nullable=True)
-
-    status = Column(String(20), nullable=False, default="pending")
-    error_message = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class MaterialInbox(Base):
-    """Unified intake inbox for all external content inputs."""
-
-    __tablename__ = "material_inbox"
-    __table_args__ = (
-        UniqueConstraint("owner_id", "platform", "source_id", name="uq_material_inbox_owner_platform_source"),
-    )
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-    source_channel = Column(String(30), nullable=False)  # collect_task / employee_submission / wechat_robot / manual_input
-    source_task_id = Column(Integer, ForeignKey("collect_tasks.id"), nullable=True, index=True)
-    source_submission_id = Column(Integer, ForeignKey("employee_link_submissions.id"), nullable=True, index=True)
-
-    platform = Column(String(30), nullable=False)
-    source_id = Column(String(255), nullable=True, index=True)
-    keyword = Column(String(255), nullable=True, index=True)
-    title = Column(String(255), nullable=True)
-    author = Column(String(255), nullable=True)
-    content = Column(Text, nullable=True)
-    url = Column(String(500), nullable=True)
-    cover_url = Column(String(500), nullable=True)
-
-    like_count = Column(Integer, default=0)
-    comment_count = Column(Integer, default=0)
-    collect_count = Column(Integer, default=0)
-    share_count = Column(Integer, default=0)
-    publish_time = Column(DateTime, nullable=True)
-
-    parse_status = Column(String(32), nullable=False, default="success", index=True)
-    risk_status = Column(String(32), nullable=False, default="safe", index=True)
-    quality_score = Column(Integer, nullable=False, default=0)
-    relevance_score = Column(Integer, nullable=False, default=0)
-    lead_score = Column(Integer, nullable=False, default=0)
-    is_duplicate = Column(Boolean, nullable=False, default=False, index=True)
-    filter_reason = Column(Text, nullable=True)
-
-    raw_data = Column(JSON, default=dict)
-
-    status = Column(String(20), nullable=False, default="pending", index=True)  # pending / review / discard
-    submitted_by_employee_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    remark = Column(Text, nullable=True)
-    review_note = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class SourceContent(Base):
-    """Raw content inputs from collector or manual submissions."""
-
-    __tablename__ = "source_contents"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-    source_channel = Column(String(30), nullable=False, default="manual_input", index=True)
-    source_task_id = Column(Integer, ForeignKey("collect_tasks.id"), nullable=True, index=True)
-    source_submission_id = Column(Integer, ForeignKey("employee_link_submissions.id"), nullable=True, index=True)
-    submitted_by_employee_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-
-    source_type = Column(String(20), nullable=False, default="manual")
-    source_platform = Column(String(50), nullable=False, index=True)
-    source_id = Column(String(128), nullable=True, index=True)
-    source_url = Column(Text, nullable=True)
-    keyword = Column(String(255), nullable=True, index=True)
-
-    raw_title = Column(Text, nullable=True)
-    raw_content = Column(Text, nullable=True)
-    raw_payload = Column(JSON, default=dict)
-
-    author_name = Column(String(255), nullable=True)
-    cover_url = Column(String(500), nullable=True)
-    publish_time = Column(DateTime, nullable=True)
-
-    like_count = Column(Integer, default=0)
-    comment_count = Column(Integer, default=0)
-    favorite_count = Column(Integer, default=0)
-    share_count = Column(Integer, default=0)
-
-    parse_status = Column(String(32), nullable=False, default="success")
-    risk_status = Column(String(32), nullable=False, default="safe")
-    remark = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    normalized_contents = relationship("NormalizedContent", back_populates="source_content", cascade="all,delete-orphan")
-
-
-class NormalizedContent(Base):
-    """Cleaned and standardized content payloads."""
-
-    __tablename__ = "normalized_contents"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    source_content_id = Column(Integer, ForeignKey("source_contents.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    title = Column(Text, nullable=True)
-    content_text = Column(Text, nullable=True)
-    content_preview = Column(Text, nullable=True)
-    content_hash = Column(String(64), nullable=False, index=True)
-
-    platform = Column(String(50), nullable=False, index=True)
-    source_id = Column(String(128), nullable=True, index=True)
-    source_url = Column(Text, nullable=True)
-    author_name = Column(String(255), nullable=True)
-    cover_url = Column(String(500), nullable=True)
-    publish_time = Column(DateTime, nullable=True)
-
-    like_count = Column(Integer, default=0)
-    comment_count = Column(Integer, default=0)
-    favorite_count = Column(Integer, default=0)
-    share_count = Column(Integer, default=0)
-
-    parse_status = Column(String(32), nullable=False, default="success")
-    risk_status = Column(String(32), nullable=False, default="safe")
-    keyword = Column(String(255), nullable=True, index=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    source_content = relationship("SourceContent", back_populates="normalized_contents")
-    material_items = relationship("MaterialItem", back_populates="normalized_content", cascade="all,delete-orphan")
-
-
-class MaterialItem(Base):
-    """Primary asset table. Inbox is only a filtered view of this table."""
-
-    __tablename__ = "material_items"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-    source_channel = Column(String(30), nullable=False, default="manual_input", index=True)
-    source_task_id = Column(Integer, ForeignKey("collect_tasks.id"), nullable=True, index=True)
-    source_submission_id = Column(Integer, ForeignKey("employee_link_submissions.id"), nullable=True, index=True)
-    submitted_by_employee_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-
-    source_content_id = Column(Integer, ForeignKey("source_contents.id", ondelete="SET NULL"), nullable=True, index=True)
-    normalized_content_id = Column(Integer, ForeignKey("normalized_contents.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    platform = Column(String(50), nullable=False, index=True)
-    source_id = Column(String(128), nullable=True, index=True)
-    source_url = Column(Text, nullable=True)
-    keyword = Column(String(255), nullable=True, index=True)
-
-    title = Column(Text, nullable=True)
-    content_text = Column(Text, nullable=True)
-    content_preview = Column(Text, nullable=True)
-    author_name = Column(String(255), nullable=True)
-    cover_url = Column(String(500), nullable=True)
-    publish_time = Column(DateTime, nullable=True)
-
-    like_count = Column(Integer, default=0)
-    comment_count = Column(Integer, default=0)
-    favorite_count = Column(Integer, default=0)
-    share_count = Column(Integer, default=0)
-
-    hot_level = Column(String(10), nullable=False, default="low")
-    lead_level = Column(String(10), nullable=False, default="low")
-    lead_reason = Column(Text, nullable=True)
-    quality_score = Column(Integer, nullable=False, default=0)
-    relevance_score = Column(Integer, nullable=False, default=0)
-    lead_score = Column(Integer, nullable=False, default=0)
-
-    parse_status = Column(String(32), nullable=False, default="success", index=True)
-    risk_status = Column(String(32), nullable=False, default="safe", index=True)
-    is_duplicate = Column(Boolean, nullable=False, default=False, index=True)
-    filter_reason = Column(Text, nullable=True)
-
-    status = Column(String(20), nullable=False, default="pending", index=True)
-    remark = Column(Text, nullable=True)
-    review_note = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    source_content = relationship("SourceContent", foreign_keys=[source_content_id])
-    normalized_content = relationship("NormalizedContent", back_populates="material_items")
-    knowledge_documents = relationship("KnowledgeDocument", back_populates="material_item", cascade="all,delete-orphan")
-    generation_tasks = relationship("GenerationTask", back_populates="material_item", cascade="all,delete-orphan")
-
-
-class KnowledgeDocument(Base):
-    """Structured knowledge extracted from materials."""
-
-    __tablename__ = "knowledge_documents"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    material_item_id = Column(Integer, ForeignKey("material_items.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    platform = Column(String(50), nullable=False, index=True)
-    account_type = Column(String(50), nullable=False, index=True)
-    target_audience = Column(String(50), nullable=False, index=True)
-    content_type = Column(String(50), nullable=False, index=True)
-    topic = Column(Text, nullable=True)
-
-    title = Column(Text, nullable=True)
-    summary = Column(Text, nullable=True)
-    content_text = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    material_item = relationship("MaterialItem", back_populates="knowledge_documents")
-    knowledge_chunks = relationship("KnowledgeChunk", back_populates="knowledge_document", cascade="all,delete-orphan")
-
-
-class KnowledgeChunk(Base):
-    """Retrieval chunks for knowledge documents."""
-
-    __tablename__ = "knowledge_chunks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    knowledge_document_id = Column(Integer, ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    chunk_type = Column(String(30), nullable=False, default="body")
-    chunk_text = Column(Text, nullable=False)
-    chunk_index = Column(Integer, nullable=False, default=0)
-    keywords = Column(JSON, default=list)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    knowledge_document = relationship("KnowledgeDocument", back_populates="knowledge_chunks")
-
-
-class Rule(Base):
-    """Generation boundary constraints."""
-
-    __tablename__ = "rules"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-    rule_type = Column(String(50), nullable=False, index=True)
-    platform = Column(String(50), nullable=True, index=True)
-    account_type = Column(String(50), nullable=True, index=True)
-    target_audience = Column(String(50), nullable=True, index=True)
-    name = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)
-    priority = Column(Integer, nullable=False, default=0)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class PromptTemplate(Base):
-    """Task-specific prompt templates."""
-
-    __tablename__ = "prompt_templates"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-    task_type = Column(String(50), nullable=False, index=True)
-    platform = Column(String(50), nullable=True, index=True)
-    account_type = Column(String(50), nullable=True, index=True)
-    target_audience = Column(String(50), nullable=True, index=True)
-    version = Column(String(30), nullable=False, default="v1")
-    system_prompt = Column(Text, nullable=False)
-    user_prompt_template = Column(Text, nullable=False)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class GenerationTask(Base):
-    """Persisted generation outputs and context snapshot."""
-
-    __tablename__ = "generation_tasks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    material_item_id = Column(Integer, ForeignKey("material_items.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    platform = Column(String(50), nullable=False, index=True)
-    account_type = Column(String(50), nullable=False, index=True)
-    target_audience = Column(String(50), nullable=False, index=True)
-    task_type = Column(String(50), nullable=False, index=True)
-    prompt_snapshot = Column(Text, nullable=True)
-    output_text = Column(Text, nullable=False)
-    reference_document_ids = Column(JSON, default=list)
-    tags_json = Column(JSON, default=dict)
-    copies_json = Column(JSON, default=list)
-    compliance_json = Column(JSON, default=dict)
-    selected_variant = Column(String(64), nullable=True)
-    selected_variant_index = Column(Integer, nullable=True)
-    adoption_status = Column(String(20), nullable=False, default="pending", index=True)
-    adopted_at = Column(DateTime, nullable=True)
-    adopted_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    material_item = relationship("MaterialItem", back_populates="generation_tasks")
-
-
-# ─────────────────────────────────────────────────────────────
-# 爆款内容采集分析中心 模型
-# ─────────────────────────────────────────────────────────────
-
-class InsightTopic(Base):
-    """主题库 – 征信查询多 / 负债高 / 个体户经营贷 … 每个主题汇聚爆款规律"""
-    __tablename__ = "insight_topics"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(64), unique=True, index=True, nullable=False)
-    description = Column(Text, nullable=True)
-    platform_focus = Column(JSON, default=list)     # ["xiaohongshu","douyin"]
-    audience_tags = Column(JSON, default=list)       # ["上班族","查询多"]
-    common_titles = Column(JSON, default=list)       # 常见标题模板
-    common_pain_points = Column(JSON, default=list)  # 常见痛点
-    common_structures = Column(JSON, default=list)   # 常见文案结构
-    common_ctas = Column(JSON, default=list)         # 常见 CTA
-    risk_notes = Column(Text, nullable=True)
-    content_count = Column(Integer, default=0)       # 关联内容数（冗余计数）
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # Relationships
-    content_items = relationship("InsightContentItem", back_populates="topic")
-    author_profiles = relationship("InsightAuthorProfile", back_populates="primary_topic")
-
-
-class InsightAuthorProfile(Base):
-    """账号分析档案 – 记录每个平台账号的定位、主题覆盖、风格与爆款率"""
-    __tablename__ = "insight_authors"
-
-    id = Column(Integer, primary_key=True, index=True)
-    platform = Column(String(32), nullable=False, index=True)
-    author_name = Column(String(100), nullable=False)
-    author_platform_id = Column(String(200), nullable=True)
-    author_profile_url = Column(String(500), nullable=True)
-    bio = Column(Text, nullable=True)
-    fans_count = Column(Integer, nullable=True)
-    content_count_at_capture = Column(Integer, nullable=True)
-
-    # 分析字段
-    account_type = Column(String(32), nullable=True)  # 流量号/专业顾问号/案例号/清单号/避坑号
-    account_tags = Column(JSON, default=list)
-    topic_coverage = Column(JSON, default=dict)   # {主题名: 内容数}
-    style_summary = Column(JSON, default=dict)    # {问题导向:3, 清单导向:5}
-    viral_rate = Column(Float, default=0.0)       # 近期爆款率 0-1
-    avg_engagement = Column(Float, default=0.0)   # 平均互动分
-
-    primary_topic_id = Column(Integer, ForeignKey("insight_topics.id"), nullable=True)
-    primary_topic = relationship("InsightTopic", back_populates="author_profiles")
-    content_items = relationship("InsightContentItem", back_populates="author_profile")
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class InsightContentItem(Base):
-    """
-    爆款内容标准化条目 – 六类统一字段（平台/账号/内容/互动/分析/风控）
-    支持手动录入、批量导入、插件上传三种来源
-    """
-    __tablename__ = "insight_content_items"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-    # ── 平台基础字段 ──────────────────────────
-    platform = Column(String(32), nullable=False, index=True)
-    source_type = Column(String(32), default="manual")   # manual / import / plugin
-    source_url = Column(String(500), nullable=True)
-    collect_time = Column(DateTime, default=datetime.utcnow)
-    collect_mode = Column(String(32), default="manual")  # manual / keyword / account / file
-
-    # ── 账号字段 ──────────────────────────────
-    author_platform_id = Column(String(200), nullable=True)
-    author_name = Column(String(100), nullable=True)
-    author_profile_url = Column(String(500), nullable=True)
-    fans_count = Column(Integer, nullable=True)
-    account_positioning = Column(String(64), nullable=True)
-    account_tags = Column(JSON, default=list)
-    author_id = Column(Integer, ForeignKey("insight_authors.id"), nullable=True)
-    author_profile = relationship("InsightAuthorProfile", back_populates="content_items")
-
-    # ── 内容字段 ──────────────────────────────
-    content_platform_id = Column(String(200), nullable=True)
-    content_type = Column(String(32), default="post")    # post / video / article
-    title = Column(String(500), nullable=False)
-    body_text = Column(Text, nullable=False)
-    content_summary = Column(Text, nullable=True)
-    publish_time = Column(DateTime, nullable=True)
-    raw_payload = Column(JSON, nullable=True)            # 原始采集数据存档
-    manual_note = Column(Text, nullable=True)
-
-    # ── 互动字段 ──────────────────────────────
-    like_count = Column(Integer, default=0)
-    comment_count = Column(Integer, default=0)
-    share_count = Column(Integer, default=0)
-    collect_count = Column(Integer, default=0)
-    view_count = Column(Integer, default=0)
-    follower_count_at_capture = Column(Integer, nullable=True)
-    engagement_score = Column(Float, default=0.0)        # 系统计算互动分
-    is_hot = Column(Boolean, default=False)
-    heat_tier = Column(String(16), default="normal")     # normal / warm / hot / viral
-
-    # ── AI 分析字段 ────────────────────────────
-    topic_id = Column(Integer, ForeignKey("insight_topics.id"), nullable=True, index=True)
-    topic = relationship("InsightTopic", back_populates="content_items")
-    audience_tags = Column(JSON, default=list)
-    structure_type = Column(String(64), nullable=True)   # 问题-原因-建议
-    hook_type = Column(String(64), nullable=True)        # 问题开头/数字开头/故事引入
-    tone_style = Column(String(64), nullable=True)       # 自然口语风/专业建议风
-    cta_type = Column(String(64), nullable=True)         # 评论引导/私信引导/关注引导
-    emotion_level = Column(Integer, default=3)           # 1-5
-    info_density = Column(Integer, default=3)            # 1-5
-    title_formula = Column(String(200), nullable=True)
-    pain_points = Column(JSON, default=list)
-    highlights = Column(JSON, default=list)              # 爆点摘要
-    ai_analysis = Column(JSON, default=dict)             # 完整 AI 分析原文
-    ai_analyzed = Column(Boolean, default=False)
-
-    # ── 风控字段 ──────────────────────────────
-    risk_level = Column(String(16), default="low")
-    risk_flags = Column(JSON, default=list)
-    rule_version = Column(String(32), nullable=True)
-    compliance_notes = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    owner = relationship("User")
-
-
-class InsightCollectTask(Base):
-    """采集任务记录 – 统一调度层，支持按账号/关键词/主题/链接/文件多种模式"""
-    __tablename__ = "insight_collect_tasks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    platform = Column(String(32), nullable=False)
-    collect_mode = Column(String(32), nullable=False)  # by_account/by_keyword/by_topic/link_import/file_import
-    target_value = Column(String(500), nullable=True)  # 账号名/关键词/主题名
-    time_range = Column(String(64), nullable=True)
-    status = Column(String(32), default="pending")     # pending/running/done/failed
-    result_count = Column(Integer, default=0)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    run_at = Column(DateTime, nullable=True)
-
-    owner = relationship("User")
-
-
-class ArkCallLog(Base):
-    """Ark API call log for observability and analytics"""
-    __tablename__ = "ark_call_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    scene = Column(String(64), nullable=False, default="general")
-    provider = Column(String(32), nullable=False, default="ark")
-    model = Column(String(128), nullable=False)
-    endpoint = Column(String(255), nullable=False, default="/responses")
-
-    success = Column(Boolean, default=True, nullable=False)
-    status_code = Column(Integer, nullable=True)
-    latency_ms = Column(Integer, default=0, nullable=False)
-
-    input_tokens = Column(Integer, default=0, nullable=False)
-    output_tokens = Column(Integer, default=0, nullable=False)
-    total_tokens = Column(Integer, default=0, nullable=False)
-
-    error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-
-    user = relationship("User", back_populates="ark_call_logs")
-
-
-# ═══════════ MVP 核心模型 ═══════════
-
-class MvpInboxItem(Base):
-    """MVP收件箱条目 - 采集内容进入的第一站"""
-    __tablename__ = "mvp_inbox_items"
-
-    id = Column(Integer, primary_key=True, index=True)
-    platform = Column(String(50), nullable=False, default="xiaohongshu")
-    source_id = Column(String(200), nullable=True)           # 平台内容ID
-    title = Column(String(500), nullable=False)
-    content = Column(Text, nullable=False)
-    content_preview = Column(Text, nullable=True)             # 内容摘要（前200字）
-    author = Column(String(200), nullable=True)
-    author_name = Column(String(200), nullable=True)          # 作者（冗余字段，便于查询）
-    publish_time = Column(DateTime, nullable=True)            # 发布时间
-    source_url = Column(String(1000), nullable=True)
-    url = Column(String(500), nullable=True)                  # 原始链接（冗余字段）
-    source_type = Column(String(50), nullable=False, default="collect")  # collect / manual
-    keyword = Column(String(200), nullable=True)
-    risk_level = Column(String(20), nullable=False, default="low")  # low / medium / high
-    duplicate_status = Column(String(20), nullable=False, default="unique")  # unique / suspected / duplicate
-    score = Column(Float, nullable=False, default=0.0)
-    quality_score = Column(Float, default=0.0)                # 质量评分
-    risk_score = Column(Float, default=0.0)                   # 风险评分
-    tech_status = Column(String(30), nullable=False, default="parsed")  # raw / parsed / enriched
-    biz_status = Column(String(30), nullable=False, default="pending")  # pending / to_material / discarded
-    clean_status = Column(String(20), default='pending')      # pending/cleaned/failed
-    quality_status = Column(String(20), default='pending')    # pending/good/normal/low
-    risk_status = Column(String(20), default='normal')        # normal/low_risk/high_risk
-    material_status = Column(String(20), default='not_in')    # not_in/in_material/ignored
-    cleaned_at = Column(DateTime, nullable=True)
-    screened_at = Column(DateTime, nullable=True)
-    like_count = Column(Integer, default=0)
-    comment_count = Column(Integer, default=0)
-    favorite_count = Column(Integer, default=0)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class MvpMaterialItem(Base):
-    """MVP素材库条目 - 经过筛选的优质素材"""
-    __tablename__ = "mvp_material_items"
-
-    id = Column(Integer, primary_key=True, index=True)
-    platform = Column(String(50), nullable=False)
-    title = Column(String(500), nullable=False)
-    content = Column(Text, nullable=False)
-    source_url = Column(String(1000), nullable=True)
-    like_count = Column(Integer, nullable=False, default=0)
-    comment_count = Column(Integer, nullable=False, default=0)
-    author = Column(String(200), nullable=True)
-    is_hot = Column(Boolean, nullable=False, default=False)
-    risk_level = Column(String(20), nullable=False, default="low")
-    use_count = Column(Integer, nullable=False, default=0)
-    source_inbox_id = Column(Integer, ForeignKey("mvp_inbox_items.id"), nullable=True)
-    inbox_item_id = Column(Integer, ForeignKey("mvp_inbox_items.id"), nullable=True)  # 关联收件箱条目
-    quality_score = Column(Float, nullable=True)  # 质量评分
-    risk_score = Column(Float, nullable=True)     # 风险评分
-    tags_json = Column(Text, nullable=True)       # JSON格式标签
-    topic = Column(String(100), nullable=True)    # 主题
-    persona = Column(String(100), nullable=True)  # 人设/受众画像
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    # relationships
-    tags = relationship("MvpTag", secondary="mvp_material_tag_rel", back_populates="materials")
-    knowledge_items = relationship("MvpKnowledgeItem", back_populates="source_material")
-    generation_results = relationship("MvpGenerationResult", back_populates="source_material")
-
-
-class MvpTag(Base):
-    """MVP标签 - 用于素材分类"""
-    __tablename__ = "mvp_tags"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    type = Column(String(50), nullable=False)  # platform / audience / style / topic / scenario / content_type
-    created_at = Column(DateTime, server_default=func.now())
-
-    # unique constraint on (name, type)
-    __table_args__ = (UniqueConstraint("name", "type", name="uq_mvp_tag_name_type"),)
-
-    materials = relationship("MvpMaterialItem", secondary="mvp_material_tag_rel", back_populates="tags")
-
-
-class MvpMaterialTagRel(Base):
-    """MVP素材-标签关联表"""
-    __tablename__ = "mvp_material_tag_rel"
-
-    material_id = Column(Integer, ForeignKey("mvp_material_items.id", ondelete="CASCADE"), primary_key=True)
-    tag_id = Column(Integer, ForeignKey("mvp_tags.id", ondelete="CASCADE"), primary_key=True)
-
-
-class MvpKnowledgeItem(Base):
-    """MVP知识库条目 - 提取的可复用知识"""
-    __tablename__ = "mvp_knowledge_items"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(500), nullable=False)
-    content = Column(Text, nullable=False)
-    category = Column(String(100), nullable=True)
-    platform = Column(String(50), nullable=True)
-    audience = Column(String(100), nullable=True)
-    style = Column(String(100), nullable=True)
-    source_material_id = Column(Integer, ForeignKey("mvp_material_items.id"), nullable=True)
-    use_count = Column(Integer, nullable=False, default=0)
-    embedding = Column(Vector(768), nullable=True) if Vector else Column(Text, nullable=True)  # 向量化字段
-    created_at = Column(DateTime, server_default=func.now())
-    
-    # 增强字段 - 结构化内容分类
-    topic = Column(String(100), nullable=True, comment="内容主题：loan/credit/online_loan/housing_fund")
-    content_type = Column(String(50), nullable=True, comment="内容类型：案例/知识/规则/模板")
-    opening_type = Column(String(50), nullable=True, comment="开头方式：提问/数据/故事/痛点")
-    hook_sentence = Column(Text, nullable=True, comment="爆点句/钩子句")
-    cta_style = Column(String(100), nullable=True, comment="转化方式：私信/评论/关注")
-    risk_level = Column(String(20), nullable=True, comment="风险等级：low/medium/high")
-    summary = Column(Text, nullable=True, comment="内容摘要")
-
-    source_material = relationship("MvpMaterialItem", back_populates="knowledge_items")
-
-    # 分库与层级
-    library_type = Column(String(50), default='industry_phrases', index=True)  # hot_content/industry_phrases/platform_rules/audience_profile/account_positioning/prompt_templates/compliance_rules
-    layer = Column(String(30), default='structured')  # raw/structured/rule/generation
-
-    # 原始素材信息
-    source_url = Column(String(500), nullable=True)
-    author = Column(String(200), nullable=True)
-
-    # 互动数据
-    like_count = Column(Integer, default=0)
-    comment_count = Column(Integer, default=0)
-    collect_count = Column(Integer, default=0)
-
-    # 增强字段
-    emotion_intensity = Column(String(20), nullable=True)  # low/medium/high
-    conversion_goal = Column(String(50), nullable=True)  # private_message/consultation/conversion
-    is_hot = Column(Boolean, default=False)
-
-
-class MvpKnowledgeChunk(Base):
-    """MVP知识库切块表 - 支持向量检索"""
-    __tablename__ = "mvp_knowledge_chunks"
-
-    id = Column(Integer, primary_key=True, index=True)
-    knowledge_id = Column(Integer, ForeignKey("mvp_knowledge_items.id", ondelete="CASCADE"), nullable=False, index=True)
-    chunk_type = Column(String(30), nullable=False)  # post/paragraph/rule/template
-    chunk_index = Column(Integer, default=0)  # 切块序号
-    content = Column(Text, nullable=False)  # 切块内容
-    metadata_json = Column(Text, nullable=True)  # JSON格式元数据
-    # 向量数据：使用 pgvector Vector 类型 (768维)
-    embedding = Column(Vector(768), nullable=True) if Vector else Column(Text, nullable=True)
-    token_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=func.now())
-
-    # 关系
-    knowledge_item = relationship("MvpKnowledgeItem", backref="chunks")
-
-
-class MvpPromptTemplate(Base):
-    """MVP提示词模板"""
-    __tablename__ = "mvp_prompt_templates"
-
-    id = Column(Integer, primary_key=True, index=True)
-    platform = Column(String(50), nullable=True)
-    audience = Column(String(100), nullable=True)
-    style = Column(String(100), nullable=True)
-    template = Column(Text, nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-
-
-class MvpGenerationResult(Base):
-    """MVP内容生成结果"""
-    __tablename__ = "mvp_generation_results"
-
-    id = Column(Integer, primary_key=True, index=True)
-    source_material_id = Column(Integer, ForeignKey("mvp_material_items.id"), nullable=True)
-    input_text = Column(Text, nullable=False)
-    output_title = Column(String(500), nullable=True)
-    output_text = Column(Text, nullable=False)
-    version = Column(String(50), nullable=False)  # professional / casual / seeding
-    platform = Column(String(50), nullable=True)
-    audience = Column(String(100), nullable=True)
-    style = Column(String(100), nullable=True)
-    is_final = Column(Boolean, nullable=False, default=False)
-    compliance_status = Column(String(30), nullable=True)  # passed / warning / blocked
-    created_at = Column(DateTime, server_default=func.now())
-
-    source_material = relationship("MvpMaterialItem", back_populates="generation_results")
-
-
-class MvpComplianceRule(Base):
-    """MVP合规规则"""
-    __tablename__ = "mvp_compliance_rules"
-
-    id = Column(Integer, primary_key=True, index=True)
-    rule_type = Column(String(50), nullable=False)  # keyword / regex / semantic
-    keyword = Column(String(200), nullable=False)
-    suggestion = Column(Text, nullable=True)
-    risk_level = Column(String(20), nullable=False, default="medium")  # low / medium / high
-
-
-class MvpGenerationFeedback(Base):
-    """生成结果反馈表 - 收集用户对AI生成内容的反馈"""
-    __tablename__ = "mvp_generation_feedback"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    generation_id = Column(String(100), nullable=False, index=True)  # 生成任务ID
-    query = Column(Text, nullable=False)  # 原始查询/请求参数
-    generated_text = Column(Text, nullable=False)  # 生成的文本
-    feedback_type = Column(String(20), nullable=False, index=True)  # adopted/modified/rejected
-    modified_text = Column(Text, nullable=True)  # 用户修改后的文本（如果有）
-    rating = Column(Integer, nullable=True)  # 1-5 评分
-    feedback_tags = Column(Text, nullable=True)  # JSON: ["太长", "不够专业", "数据错误"]
-    knowledge_ids_used = Column(Text, nullable=True)  # JSON: 引用的知识库条目IDs
-    created_at = Column(DateTime, default=func.now(), index=True)
-
-
-class MvpKnowledgeQualityScore(Base):
-    """知识库条目质量评分表 - 持续学习机制"""
-    __tablename__ = "mvp_knowledge_quality_scores"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    knowledge_id = Column(Integer, ForeignKey("mvp_knowledge_items.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
-    reference_count = Column(Integer, default=0)  # 被引用次数
-    positive_feedback = Column(Integer, default=0)  # 正面反馈次数
-    negative_feedback = Column(Integer, default=0)  # 负面反馈次数
-    neutral_feedback = Column(Integer, default=0)  # 中性反馈次数（修改后采纳）
-    quality_score = Column(Float, default=0.5)  # 综合质量分 0-1
-    weight_boost = Column(Float, default=1.0)  # 检索权重加成 0.5-1.5
-    last_referenced_at = Column(DateTime, nullable=True)  # 最后引用时间
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    
-    knowledge_item = relationship("MvpKnowledgeItem", backref="quality_score")
-
-
-class MvpKnowledgeRelation(Base):
-    """知识条目关系表 - 知识图谱"""
-    __tablename__ = "mvp_knowledge_relations"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    source_id = Column(Integer, ForeignKey("mvp_knowledge_items.id", ondelete="CASCADE"), nullable=False, index=True)
-    target_id = Column(Integer, ForeignKey("mvp_knowledge_items.id", ondelete="CASCADE"), nullable=False, index=True)
-    relation_type = Column(String(50), nullable=False)  # similar_topic, same_audience, same_platform, complementary, derived_from
-    weight = Column(Float, default=0.5)  # 关系强度 0-1
-    metadata_json = Column(Text, nullable=True)  # 额外元数据 JSON
-    created_at = Column(DateTime, default=func.now())
-
-    source = relationship("MvpKnowledgeItem", foreign_keys=[source_id], backref="outgoing_relations")
-    target = relationship("MvpKnowledgeItem", foreign_keys=[target_id], backref="incoming_relations")
-
-    __table_args__ = (
-        UniqueConstraint("source_id", "target_id", "relation_type", name="uq_knowledge_relation_source_target_type"),
-    )
+"""
+兼容层 - 所有模型已拆分到独立文件
+
+保留此文件以兼容现有的 from app.models.models import X
+
+所有模型已按功能域拆分为以下模块：
+- base.py: Base, TimestampMixin
+- enums.py: PlatformType, ContentType, RiskLevel, IntentionLevel, CustomerStatus
+- user.py: User
+- content.py: ContentAsset, ContentBlock, ContentComment, ContentSnapshot, ContentInsight, RewrittenContent
+- crm.py: Lead, Customer, LeadProfile
+- publish.py: PublishRecord, PublishTask, PublishTaskFeedback
+- collect.py: BrowserPluginCollection, InboxItem, CollectTask, EmployeeLinkSubmission, MaterialInbox, SourceContent, NormalizedContent, MaterialItem
+- knowledge.py: KnowledgeDocument, KnowledgeChunk, Rule, PromptTemplate
+- generation.py: GenerationTask
+- mvp.py: MvpInboxItem, MvpMaterialItem, MvpTag, MvpMaterialTagRel, MvpKnowledgeItem, MvpKnowledgeChunk, MvpPromptTemplate, MvpGenerationResult, MvpComplianceRule, MvpGenerationFeedback, MvpKnowledgeQualityScore, MvpKnowledgeRelation
+- insight.py: InsightTopic, InsightAuthorProfile, InsightContentItem, InsightCollectTask, ArkCallLog
+- social.py: SocialAccount, Conversation, Message
+- workflow.py: WorkflowTask, SkillExecution, ReminderConfig, ReminderLog
+- topic.py: TopicPlan, TopicIdea, HotTopic, TrafficStrategy
+
+推荐使用新的导入方式：
+    from app.models import User, ContentAsset
+"""
+
+# 基础
+from app.models.base import Base, TimestampMixin
+
+# 采集模型
+from app.models.collect import (
+    BrowserPluginCollection,
+    CollectTask,
+    EmployeeLinkSubmission,
+    InboxItem,
+    MaterialInbox,
+    MaterialItem,
+    NormalizedContent,
+    SourceContent,
+)
+
+# 内容资产模型
+from app.models.content import (
+    ContentAsset,
+    ContentBlock,
+    ContentComment,
+    ContentInsight,
+    ContentSnapshot,
+    RewrittenContent,
+)
+
+# CRM模型
+from app.models.crm import Customer, Lead, LeadProfile
+
+# 枚举类型
+from app.models.enums import ContentType, CustomerStatus, IntentionLevel, PlatformType, RiskLevel
+
+# 生成任务模型
+from app.models.generation import GenerationTask
+
+# Insight分析模型
+from app.models.insight import ArkCallLog, InsightAuthorProfile, InsightCollectTask, InsightContentItem, InsightTopic
+
+# 知识库模型
+from app.models.knowledge import KnowledgeChunk, KnowledgeDocument, PromptTemplate, Rule
+
+# MVP模型
+from app.models.mvp import (
+    MvpComplianceRule,
+    MvpGenerationFeedback,
+    MvpGenerationResult,
+    MvpInboxItem,
+    MvpKnowledgeChunk,
+    MvpKnowledgeItem,
+    MvpKnowledgeQualityScore,
+    MvpKnowledgeRelation,
+    MvpMaterialItem,
+    MvpMaterialTagRel,
+    MvpPromptTemplate,
+    MvpTag,
+)
+
+# 发布模型
+from app.models.publish import PublishRecord, PublishTask, PublishTaskFeedback
+
+# 社交账号模型
+from app.models.social import Conversation, Message, SocialAccount
+
+# 选题计划模型
+from app.models.topic import HotTopic, TopicIdea, TopicPlan, TrafficStrategy
+
+# 用户模型
+from app.models.user import User
+
+# 工作流模型
+from app.models.workflow import ReminderConfig, ReminderLog, SkillExecution, WorkflowTask
+
+__all__ = [
+    # 基础
+    "Base",
+    "TimestampMixin",
+    # 枚举
+    "PlatformType",
+    "ContentType",
+    "RiskLevel",
+    "IntentionLevel",
+    "CustomerStatus",
+    # 用户
+    "User",
+    # 内容资产
+    "ContentAsset",
+    "ContentBlock",
+    "ContentComment",
+    "ContentSnapshot",
+    "ContentInsight",
+    "RewrittenContent",
+    # CRM
+    "Lead",
+    "Customer",
+    "LeadProfile",
+    # 发布
+    "PublishRecord",
+    "PublishTask",
+    "PublishTaskFeedback",
+    # 采集
+    "BrowserPluginCollection",
+    "InboxItem",
+    "CollectTask",
+    "EmployeeLinkSubmission",
+    "MaterialInbox",
+    "SourceContent",
+    "NormalizedContent",
+    "MaterialItem",
+    # 知识库
+    "KnowledgeDocument",
+    "KnowledgeChunk",
+    "Rule",
+    "PromptTemplate",
+    # 生成任务
+    "GenerationTask",
+    # MVP
+    "MvpInboxItem",
+    "MvpMaterialItem",
+    "MvpTag",
+    "MvpMaterialTagRel",
+    "MvpKnowledgeItem",
+    "MvpKnowledgeChunk",
+    "MvpPromptTemplate",
+    "MvpGenerationResult",
+    "MvpComplianceRule",
+    "MvpGenerationFeedback",
+    "MvpKnowledgeQualityScore",
+    "MvpKnowledgeRelation",
+    # Insight
+    "InsightTopic",
+    "InsightAuthorProfile",
+    "InsightContentItem",
+    "InsightCollectTask",
+    "ArkCallLog",
+    # 社交
+    "SocialAccount",
+    "Conversation",
+    "Message",
+    # 工作流
+    "WorkflowTask",
+    "SkillExecution",
+    "ReminderConfig",
+    "ReminderLog",
+    # 选题
+    "TopicPlan",
+    "TopicIdea",
+    "HotTopic",
+    "TrafficStrategy",
+]

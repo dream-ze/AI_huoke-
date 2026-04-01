@@ -1,0 +1,33 @@
+{
+  "dashboard": {
+    "title": "智获客系统概览",
+    "panels": [
+      {
+        "title": "服务状态",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+        "targets": [{"expr": "up{job=\"zhk-backend\"}", "legendFormat": "后端服务"}]
+      },
+      {
+        "title": "请求总量 (QPS)",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+        "targets": [{"expr": "rate(http_requests_total[5m])", "legendFormat": "method endpoint"}]
+      },
+      {
+        "title": "活跃任务数",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+        "targets": [{"expr": "celery_active_tasks", "legendFormat": "活跃任务"}]
+      },
+      {
+        "title": "响应时间 (P95)",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+        "targets": [{"expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))", "legendFormat": "P95"}]
+      }
+    ],
+    "time": {"from": "now-1h", "to": "now"},
+    "refresh": "10s"
+  }
+}

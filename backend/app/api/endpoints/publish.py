@@ -1,17 +1,14 @@
-from datetime import datetime
 import csv
 import io
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
 
 from app.core.database import get_db
 from app.core.permissions import require_roles
 from app.core.security import verify_token
 from app.models import Customer, Lead, PublishRecord, PublishTask, PublishTaskFeedback, RewrittenContent, User
 from app.schemas import (
+    ContentAnalysisItem,
+    PlatformStatsResponse,
     PublishRecordCreate,
     PublishRecordResponse,
     PublishRecordUpdate,
@@ -22,7 +19,12 @@ from app.schemas import (
     PublishTaskResponse,
     PublishTaskStatsResponse,
     PublishTaskSubmit,
+    RoiTrendItem,
 )
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy import Date, cast, func, or_
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api/publish", tags=["publish"])
 
@@ -124,20 +126,13 @@ def _upsert_lead_from_task(db: Session, task: PublishTask) -> Lead:
 
 @router.post("/create", response_model=PublishRecordResponse)
 def create_publish_record(
-    record_data: PublishRecordCreate,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    record_data: PublishRecordCreate, current_user: dict = Depends(verify_token), db: Session = Depends(get_db)
 ):
     """Create publish record."""
-    rewritten = db.query(RewrittenContent).filter(
-        RewrittenContent.id == record_data.rewritten_content_id
-    ).first()
+    rewritten = db.query(RewrittenContent).filter(RewrittenContent.id == record_data.rewritten_content_id).first()
 
     if not rewritten:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Rewritten content not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rewritten content not found")
 
     publish_record = PublishRecord(**record_data.model_dump())
     db.add(publish_record)
@@ -148,17 +143,11 @@ def create_publish_record(
 
 @router.post("/tasks/create", response_model=PublishTaskResponse)
 def create_publish_task(
-    task_data: PublishTaskCreate,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    task_data: PublishTaskCreate, current_user: dict = Depends(verify_token), db: Session = Depends(get_db)
 ):
     """Create publish task for assignment and lifecycle tracking."""
     if task_data.rewritten_content_id is not None:
-        rewritten = (
-            db.query(RewrittenContent)
-            .filter(RewrittenContent.id == task_data.rewritten_content_id)
-            .first()
-        )
+        rewritten = db.query(RewrittenContent).filter(RewrittenContent.id == task_data.rewritten_content_id).first()
         if not rewritten:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -189,7 +178,7 @@ def list_publish_records(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, le=1000),
     current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """List publish records."""
     query = db.query(PublishRecord)
@@ -197,8 +186,7 @@ def list_publish_records(
     if platform:
         query = query.filter(PublishRecord.platform == platform)
 
-    records = query.order_by(PublishRecord.publish_time.desc())\
-        .offset(skip).limit(limit).all()
+    records = query.order_by(PublishRecord.publish_time.desc()).offset(skip).limit(limit).all()
     return records
 
 
@@ -210,7 +198,7 @@ def list_publish_tasks(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """List publish tasks that the user created or is assigned to."""
     query = db.query(PublishTask).filter(
@@ -231,10 +219,7 @@ def list_publish_tasks(
 
 
 @router.get("/tasks/stats", response_model=PublishTaskStatsResponse)
-def publish_task_stats(
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
-):
+def publish_task_stats(current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
     """Get task status summary for current user's scope."""
     rows = (
         db.query(PublishTask.status, func.count(PublishTask.id))
@@ -260,40 +245,25 @@ def publish_task_stats(
 
 
 @router.get("/{record_id}", response_model=PublishRecordResponse)
-def get_publish_record(
-    record_id: int,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
-):
+def get_publish_record(record_id: int, current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
     """Get specific publish record."""
     record = db.query(PublishRecord).filter(PublishRecord.id == record_id).first()
 
     if not record:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Publish record not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Publish record not found")
 
     return record
 
 
 @router.get("/tasks/{task_id}", response_model=PublishTaskDetailResponse)
-def get_publish_task(
-    task_id: int,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
-):
+def get_publish_task(task_id: int, current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
     task = _get_task_or_404(db, task_id)
     _check_task_access(task, current_user["user_id"])
     return task
 
 
 @router.get("/tasks/{task_id}/trace")
-def get_publish_task_trace(
-    task_id: int,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
-):
+def get_publish_task_trace(task_id: int, current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
     """Return trace IDs for publish_task -> lead -> customer link."""
     task = _get_task_or_404(db, task_id)
     _check_task_access(task, current_user["user_id"])
@@ -314,16 +284,13 @@ def update_publish_record(
     record_id: int,
     record_data: PublishRecordUpdate,
     current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Update publish record metrics."""
     record = db.query(PublishRecord).filter(PublishRecord.id == record_id).first()
 
     if not record:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Publish record not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Publish record not found")
 
     update_data = record_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
@@ -339,7 +306,7 @@ def claim_publish_task(
     task_id: int,
     req: PublishTaskActionRequest,
     current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Claim a pending task for execution."""
     task = _get_task_or_404(db, task_id)
@@ -406,10 +373,7 @@ def assign_publish_task(
 
 @router.post("/tasks/{task_id}/submit", response_model=PublishTaskResponse)
 def submit_publish_task(
-    task_id: int,
-    req: PublishTaskSubmit,
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    task_id: int, req: PublishTaskSubmit, current_user: dict = Depends(verify_token), db: Session = Depends(get_db)
 ):
     """Submit publish result and write metrics back."""
     task = _get_task_or_404(db, task_id)
@@ -486,7 +450,7 @@ def reject_publish_task(
     task_id: int,
     req: PublishTaskActionRequest,
     current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Reject task and request rework."""
     task = _get_task_or_404(db, task_id)
@@ -515,7 +479,7 @@ def close_publish_task(
     task_id: int,
     req: PublishTaskActionRequest,
     current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Close task lifecycle after completion or cancellation."""
     task = _get_task_or_404(db, task_id)
@@ -564,38 +528,42 @@ def export_publish_tasks_csv(
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow([
-        "id",
-        "platform",
-        "account_name",
-        "task_title",
-        "status",
-        "assigned_to",
-        "post_url",
-        "wechat_adds",
-        "leads",
-        "valid_leads",
-        "conversions",
-        "created_at",
-        "updated_at",
-    ])
+    writer.writerow(
+        [
+            "id",
+            "platform",
+            "account_name",
+            "task_title",
+            "status",
+            "assigned_to",
+            "post_url",
+            "wechat_adds",
+            "leads",
+            "valid_leads",
+            "conversions",
+            "created_at",
+            "updated_at",
+        ]
+    )
 
     for item in tasks:
-        writer.writerow([
-            item.id,
-            item.platform,
-            item.account_name,
-            item.task_title,
-            item.status,
-            item.assigned_to or "",
-            item.post_url or "",
-            item.wechat_adds or 0,
-            item.leads or 0,
-            item.valid_leads or 0,
-            item.conversions or 0,
-            item.created_at.isoformat() if item.created_at else "",
-            item.updated_at.isoformat() if item.updated_at else "",
-        ])
+        writer.writerow(
+            [
+                item.id,
+                item.platform,
+                item.account_name,
+                item.task_title,
+                item.status,
+                item.assigned_to or "",
+                item.post_url or "",
+                item.wechat_adds or 0,
+                item.leads or 0,
+                item.valid_leads or 0,
+                item.conversions or 0,
+                item.created_at.isoformat() if item.created_at else "",
+                item.updated_at.isoformat() if item.updated_at else "",
+            ]
+        )
 
     filename = "publish_tasks_export.csv"
     return StreamingResponse(
@@ -603,3 +571,180 @@ def export_publish_tasks_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/stats/by-platform", response_model=list[PlatformStatsResponse])
+def get_publish_stats_by_platform(
+    days: int = Query(30, ge=1, le=365), current_user: dict = Depends(verify_token), db: Session = Depends(get_db)
+):
+    """Get platform performance comparison stats."""
+    since = datetime.utcnow() - timedelta(days=days)
+
+    # Query stats grouped by platform
+    results = (
+        db.query(
+            PublishTask.platform,
+            func.count(PublishTask.id).label("total_tasks"),
+            func.sum(func.case([(PublishTask.status == "submitted", 1)], else_=0)).label("completed_tasks"),
+            func.coalesce(func.sum(PublishTask.views), 0).label("total_views"),
+            func.coalesce(func.sum(PublishTask.likes), 0).label("total_likes"),
+            func.coalesce(func.sum(PublishTask.comments), 0).label("total_comments"),
+            func.coalesce(func.sum(PublishTask.wechat_adds), 0).label("total_wechat_adds"),
+            func.coalesce(func.sum(PublishTask.leads), 0).label("total_leads"),
+            func.coalesce(func.sum(PublishTask.valid_leads), 0).label("total_valid_leads"),
+            func.coalesce(func.sum(PublishTask.conversions), 0).label("total_conversions"),
+        )
+        .filter(
+            or_(
+                PublishTask.owner_id == current_user["user_id"],
+                PublishTask.assigned_to == current_user["user_id"],
+            ),
+            PublishTask.created_at >= since,
+        )
+        .group_by(PublishTask.platform)
+        .all()
+    )
+
+    response = []
+    for row in results:
+        total_tasks = row.total_tasks or 0
+        completed_tasks = row.completed_tasks or 0
+        total_views = row.total_views or 0
+        total_conversions = row.total_conversions or 0
+
+        avg_views = round(total_views / completed_tasks, 2) if completed_tasks > 0 else 0.0
+        conversion_rate = round(total_conversions / completed_tasks * 100, 2) if completed_tasks > 0 else 0.0
+
+        response.append(
+            {
+                "platform": row.platform,
+                "total_tasks": total_tasks,
+                "completed_tasks": completed_tasks,
+                "total_views": total_views,
+                "total_likes": row.total_likes or 0,
+                "total_comments": row.total_comments or 0,
+                "total_wechat_adds": row.total_wechat_adds or 0,
+                "total_leads": row.total_leads or 0,
+                "total_valid_leads": row.total_valid_leads or 0,
+                "total_conversions": total_conversions,
+                "avg_views_per_task": avg_views,
+                "conversion_rate": conversion_rate,
+            }
+        )
+
+    return response
+
+
+@router.get("/stats/roi-trend", response_model=list[RoiTrendItem])
+def get_publish_roi_trend(
+    days: int = Query(30, ge=1, le=365), current_user: dict = Depends(verify_token), db: Session = Depends(get_db)
+):
+    """Get daily publish-to-conversion ROI trend."""
+    since = datetime.utcnow() - timedelta(days=days)
+
+    # Query daily stats based on posted_at date
+    results = (
+        db.query(
+            cast(PublishTask.posted_at, Date).label("date"),
+            func.count(PublishTask.id).label("publish_count"),
+            func.coalesce(func.sum(PublishTask.leads), 0).label("total_leads"),
+            func.coalesce(func.sum(PublishTask.valid_leads), 0).label("total_valid_leads"),
+            func.coalesce(func.sum(PublishTask.conversions), 0).label("total_conversions"),
+        )
+        .filter(
+            or_(
+                PublishTask.owner_id == current_user["user_id"],
+                PublishTask.assigned_to == current_user["user_id"],
+            ),
+            PublishTask.posted_at >= since,
+            PublishTask.posted_at.isnot(None),
+        )
+        .group_by(cast(PublishTask.posted_at, Date))
+        .order_by(cast(PublishTask.posted_at, Date))
+        .all()
+    )
+
+    response = []
+    for row in results:
+        publish_count = row.publish_count or 0
+        total_leads = row.total_leads or 0
+        total_conversions = row.total_conversions or 0
+
+        lead_rate = round(total_leads / publish_count, 2) if publish_count > 0 else 0.0
+        conversion_rate = round(total_conversions / publish_count, 2) if publish_count > 0 else 0.0
+
+        response.append(
+            {
+                "date": str(row.date) if row.date else "",
+                "publish_count": publish_count,
+                "total_leads": total_leads,
+                "total_valid_leads": row.total_valid_leads or 0,
+                "total_conversions": total_conversions,
+                "lead_rate": lead_rate,
+                "conversion_rate": conversion_rate,
+            }
+        )
+
+    return response
+
+
+@router.get("/stats/content-analysis", response_model=list[ContentAnalysisItem])
+def get_publish_content_analysis(
+    days: int = Query(30, ge=1, le=365), current_user: dict = Depends(verify_token), db: Session = Depends(get_db)
+):
+    """Analyze content performance by platform."""
+    since = datetime.utcnow() - timedelta(days=days)
+
+    # Query platform-level content analysis
+    results = (
+        db.query(
+            PublishTask.platform,
+            func.count(PublishTask.id).label("task_count"),
+            func.coalesce(func.avg(PublishTask.views), 0).label("avg_views"),
+            func.coalesce(func.avg(PublishTask.likes), 0).label("avg_likes"),
+            func.coalesce(func.avg(PublishTask.wechat_adds), 0).label("avg_wechat_adds"),
+            func.coalesce(func.avg(PublishTask.conversions), 0).label("avg_conversions"),
+        )
+        .filter(
+            or_(
+                PublishTask.owner_id == current_user["user_id"],
+                PublishTask.assigned_to == current_user["user_id"],
+            ),
+            PublishTask.created_at >= since,
+            PublishTask.status == "submitted",
+        )
+        .group_by(PublishTask.platform)
+        .all()
+    )
+
+    response = []
+    for row in results:
+        # Find best performing task for this platform
+        best_task = (
+            db.query(PublishTask.task_title, PublishTask.conversions)
+            .filter(
+                PublishTask.platform == row.platform,
+                or_(
+                    PublishTask.owner_id == current_user["user_id"],
+                    PublishTask.assigned_to == current_user["user_id"],
+                ),
+                PublishTask.created_at >= since,
+            )
+            .order_by(PublishTask.conversions.desc())
+            .first()
+        )
+
+        response.append(
+            {
+                "platform": row.platform,
+                "task_count": row.task_count or 0,
+                "avg_views": round(row.avg_views or 0, 2),
+                "avg_likes": round(row.avg_likes or 0, 2),
+                "avg_wechat_adds": round(row.avg_wechat_adds or 0, 2),
+                "avg_conversions": round(row.avg_conversions or 0, 2),
+                "best_task_title": best_task.task_title if best_task else None,
+                "best_task_conversions": best_task.conversions or 0 if best_task else 0,
+            }
+        )
+
+    return response

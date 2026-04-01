@@ -1,15 +1,15 @@
 from datetime import datetime
 from typing import Any, Optional
 
+from app.collector.metrics import CollectMetricsQuery, get_recent_stats
+from app.collector.services.collect_service import PLATFORM_LABELS, CollectService
+from app.core.database import get_db
+from app.core.security import verify_token
+from app.models import CollectTask, MaterialItem
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-
-from app.core.database import get_db
-from app.core.security import verify_token
-from app.collector.services.collect_service import CollectService, PLATFORM_LABELS
-from app.models import MaterialItem
 
 
 class ExtractFromUrlRequest(BaseModel):
@@ -268,9 +268,22 @@ def collect_logs(
 def collect_stats(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
+    days: int = Query(7, ge=1, le=90, description="查询天数范围（1-90天）"),
+    platform: Optional[str] = Query(None, description="按平台筛选"),
 ):
+    """
+    获取采集统计信息。
+
+    返回近期采集任务的统计数据，包括：
+    - 成功率、失败率
+    - 按平台分布
+    - 去重统计
+    - 平均耗时
+    """
     owner_id = current_user["user_id"]
-    total = db.query(func.count(MaterialItem.id)).filter(MaterialItem.owner_id == owner_id).scalar() or 0
+
+    # 1. 素材库整体统计
+    total_materials = db.query(func.count(MaterialItem.id)).filter(MaterialItem.owner_id == owner_id).scalar() or 0
     by_platform_rows = (
         db.query(MaterialItem.platform, func.count(MaterialItem.id))
         .filter(MaterialItem.owner_id == owner_id)
@@ -289,12 +302,81 @@ def collect_stats(
         .scalar()
         or 0
     )
+
+    # 2. 近期采集任务统计（使用 metrics 模块）
+    recent_stats = get_recent_stats(db, owner_id, days=days, platform=platform)
+
+    # 3. 近期任务明细（最近10条）
+    recent_tasks = (
+        db.query(CollectTask)
+        .filter(CollectTask.owner_id == owner_id)
+        .order_by(CollectTask.created_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    task_list = []
+    for task in recent_tasks:
+        task_list.append(
+            {
+                "task_id": task.id,
+                "platform": task.platform,
+                "keyword": task.keyword,
+                "status": task.status,
+                "result_count": task.result_count or 0,
+                "inserted_count": task.inserted_count or 0,
+                "failed_count": task.failed_count or 0,
+                "duplicate_count": task.duplicate_count or 0,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "completed_at": (
+                    task.completed_at.isoformat() if hasattr(task, "completed_at") and task.completed_at else None
+                ),
+            }
+        )
+
     return {
-        "total": int(total),
-        "duplicate_count": int(duplicate_count),
-        "by_platform": {platform: count for platform, count in by_platform_rows if platform},
-        "by_status": {status: count for status, count in by_status_rows if status},
+        "summary": {
+            "total_materials": int(total_materials),
+            "duplicate_count": int(duplicate_count),
+            "by_platform": {platform: count for platform, count in by_platform_rows if platform},
+            "by_status": {status: count for status, count in by_status_rows if status},
+        },
+        "recent_period": {"days": days, "platform_filter": platform, **recent_stats},
+        "recent_tasks": task_list,
     }
+
+
+@collect_routes.get("/stats/overview")
+def collect_stats_overview(
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """
+    获取采集系统整体概览统计。
+
+    适用于仪表盘展示。
+    """
+    owner_id = current_user["user_id"]
+
+    overall = CollectMetricsQuery.get_overall_stats(db, owner_id)
+
+    # 今日统计
+    from datetime import timedelta
+
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    today_tasks = (
+        db.query(CollectTask).filter(CollectTask.owner_id == owner_id, CollectTask.created_at >= today_start).all()
+    )
+
+    today_stats = {
+        "tasks_count": len(today_tasks),
+        "inserted": sum(t.inserted_count or 0 for t in today_tasks),
+        "failed": sum(t.failed_count or 0 for t in today_tasks),
+        "duplicate": sum(t.duplicate_count or 0 for t in today_tasks),
+    }
+
+    return {"overall": overall, "today": today_stats}
 
 
 v2_collect_router = APIRouter()

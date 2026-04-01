@@ -1,8 +1,8 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
-from typing import Literal
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, EmailStr, Field
 
 
 # ===== Auth Schemas =====
@@ -58,6 +58,7 @@ class MobileH5TicketResponse(BaseModel):
 
 class WecomOAuthConfigResponse(BaseModel):
     """返回给前端的企业微信 OAuth 公开配置（不含 secret）"""
+
     corp_id: str
     agent_id: str
     oauth_enabled: bool
@@ -65,6 +66,7 @@ class WecomOAuthConfigResponse(BaseModel):
 
 class WecomBindRequest(BaseModel):
     """管理员为当前登录用户绑定企业微信 userid"""
+
     wecom_userid: str = Field(min_length=1, max_length=64)
 
 
@@ -115,7 +117,7 @@ class AIRewriteRequest(BaseModel):
     style: Optional[str] = "formal"
     marketing_strength: str = Field(default="medium")  # low, medium, high
     target_audience: Optional[str] = None
-    topic_name: Optional[str] = None          # 关联洞察主题，自动拉取知识库参考
+    topic_name: Optional[str] = None  # 关联洞察主题，自动拉取知识库参考
     audience_tags: List[str] = Field(default_factory=list)  # 目标人群标签
 
 
@@ -170,14 +172,29 @@ class CustomerCreate(BaseModel):
     tags: List[str] = Field(default_factory=list)
     intention_level: str = "medium"
     inquiry_content: Optional[str] = None
+    # 扩展字段
+    company: Optional[str] = None
+    position: Optional[str] = None
+    industry: Optional[str] = None
+    deal_value: Optional[float] = 0
+    email: Optional[str] = None
+    address: Optional[str] = None
 
 
 class CustomerUpdate(BaseModel):
     nickname: Optional[str] = None
     wechat_id: Optional[str] = None
+    phone: Optional[str] = None
     tags: Optional[List[str]] = None
     intention_level: Optional[str] = None
     customer_status: Optional[str] = None
+    # 扩展字段
+    company: Optional[str] = None
+    position: Optional[str] = None
+    industry: Optional[str] = None
+    deal_value: Optional[float] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
 
 
 class CustomerFollowRecord(BaseModel):
@@ -189,11 +206,19 @@ class CustomerResponse(BaseModel):
     id: int
     nickname: str
     wechat_id: Optional[str]
+    phone: Optional[str]
     source_platform: str
     tags: List[str]
     intention_level: str
     customer_status: str
     follow_records: List[Dict[str, Any]]
+    # 扩展字段
+    company: Optional[str]
+    position: Optional[str]
+    industry: Optional[str]
+    deal_value: Optional[float]
+    email: Optional[str]
+    address: Optional[str]
     created_at: datetime
 
     class Config:
@@ -414,6 +439,49 @@ class PublishTaskStatsResponse(BaseModel):
     closed: int
 
 
+# ===== Publish Stats Schemas =====
+class PlatformStatsResponse(BaseModel):
+    """Platform performance comparison stats."""
+
+    platform: str
+    total_tasks: int
+    completed_tasks: int
+    total_views: int
+    total_likes: int
+    total_comments: int
+    total_wechat_adds: int
+    total_leads: int
+    total_valid_leads: int
+    total_conversions: int
+    avg_views_per_task: float
+    conversion_rate: float
+
+
+class RoiTrendItem(BaseModel):
+    """Daily ROI trend data."""
+
+    date: str
+    publish_count: int
+    total_leads: int
+    total_valid_leads: int
+    total_conversions: int
+    lead_rate: float
+    conversion_rate: float
+
+
+class ContentAnalysisItem(BaseModel):
+    """Content type performance analysis."""
+
+    platform: str
+    task_count: int
+    avg_views: float
+    avg_likes: float
+    avg_wechat_adds: float
+    avg_conversions: float
+    best_task_title: Optional[str] = None
+    best_task_conversions: int = 0
+
+
 # ===== Dashboard Schemas =====
 class DashboardSummary(BaseModel):
     today_new_customers: int
@@ -510,8 +578,10 @@ class PluginContentResponse(BaseModel):
 
 # ===== Collect (素材中台) Schemas =====
 
+
 class CollectSaveRequest(BaseModel):
     """Save collected material – superset of ContentAssetCreate"""
+
     platform: str
     source_url: Optional[str] = None
     content_type: str = "post"
@@ -523,7 +593,7 @@ class CollectSaveRequest(BaseModel):
     comments_keywords: List[str] = Field(default_factory=list)
     metrics: Dict[str, Any] = Field(default_factory=dict)
     manual_note: Optional[str] = None
-    source_type: str = "paste"   # link | paste | import
+    source_type: str = "paste"  # link | paste | import
     category: Optional[str] = None
 
 
@@ -563,6 +633,7 @@ class CollectAnalyzeResponse(BaseModel):
 
 class ContentAssetDetailResponse(BaseModel):
     """Full content asset with body and collect fields"""
+
     id: int
     platform: str
     source_url: Optional[str]
@@ -740,6 +811,7 @@ class InboxDedupePreviewResponse(BaseModel):
 
 # ===== 爆款内容采集分析中心 Schemas =====
 
+
 class InsightTopicCreate(BaseModel):
     name: str = Field(..., max_length=64)
     description: Optional[str] = None
@@ -768,6 +840,7 @@ class InsightTopicResponse(BaseModel):
 
 class InsightContentImport(BaseModel):
     """单条内容导入 – 手动录入 / 链接解析后提交 / 插件上传"""
+
     platform: str
     title: str
     body_text: str
@@ -783,15 +856,16 @@ class InsightContentImport(BaseModel):
     share_count: int = 0
     collect_count: int = 0
     view_count: int = 0
-    topic_name: Optional[str] = None           # 直接关联到现有主题名
+    topic_name: Optional[str] = None  # 直接关联到现有主题名
     audience_tags: List[str] = Field(default_factory=list)
     manual_note: Optional[str] = None
-    source_type: str = "manual"                # manual / import / plugin
+    source_type: str = "manual"  # manual / import / plugin
     raw_payload: Optional[Dict[str, Any]] = None
 
 
 class InsightBatchImport(BaseModel):
     """批量导入 – JSON 数组"""
+
     items: List[InsightContentImport] = Field(..., min_length=1, max_length=200)
 
 
@@ -876,6 +950,7 @@ class InsightAuthorResponse(BaseModel):
 
 class InsightRetrieveRequest(BaseModel):
     """检索召回请求 – 给文案生成模块提供参考上下文"""
+
     platform: str
     topic_name: Optional[str] = None
     audience_tags: List[str] = Field(default_factory=list)
@@ -884,6 +959,7 @@ class InsightRetrieveRequest(BaseModel):
 
 class InsightRetrieveResponse(BaseModel):
     """检索召回结果 – 结构化参考特征，不返回原文"""
+
     topic_name: Optional[str]
     platform: str
     title_examples: List[str]
@@ -897,7 +973,7 @@ class InsightRetrieveResponse(BaseModel):
 
 
 # ===== 文案改写 Schemas =====
-Platform = Literal["xiaohongshu", "douyin"]
+Platform = Literal["xiaohongshu", "douyin", "zhihu"]
 AccountType = Literal["personal_ip", "sales", "agency"]
 ToneType = Literal["natural", "emotional", "professional"]
 
@@ -950,3 +1026,43 @@ class CopyGenerateResponse(BaseModel):
     success: bool = True
     tags: TagResult
     copies: List[CopyVariant]
+
+
+# ===== Social Account Schemas =====
+class SocialAccountCreate(BaseModel):
+    platform: str
+    account_name: str
+    account_id: Optional[str] = None
+    avatar_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SocialAccountUpdate(BaseModel):
+    account_name: Optional[str] = None
+    account_id: Optional[str] = None
+    avatar_url: Optional[str] = None
+    status: Optional[str] = None
+    followers_count: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class SocialAccountResponse(BaseModel):
+    id: int
+    owner_id: int
+    platform: str
+    account_id: Optional[str]
+    account_name: str
+    avatar_url: Optional[str]
+    status: str
+    followers_count: int
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SocialAccountPlatform(BaseModel):
+    value: str
+    label: str

@@ -6,8 +6,9 @@ psycopg2-binary>=2.9.9
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 python-jose[cryptography]>=3.3.0
+PyJWT>=2.8.0
 passlib[bcrypt]>=1.7.4
-bcrypt<5
+bcrypt>=4.1.0,<5
 python-multipart>=0.0.6
 aiohttp>=3.9.1
 playwright>=1.48.0
@@ -20,3 +21,6 @@ redis>=5.0.1
 pillow>=10.0.0
 pytesseract>=0.3.10
 pgvector>=0.2.4
+celery>=5.3.0
+pytest>=7.4.3
+pytest-asyncio>=0.21.1

@@ -13,6 +13,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/ai-hub", label: "AI中枢", icon: "📊" },
       { to: "/collect-center", label: "采集中心", icon: "🔍" },
+      { to: "/topic", label: "选题规划", icon: "📋" },
       { to: "/mvp-workbench", label: "AI工作台", icon: "✨" },
     ],
   },
@@ -39,7 +40,10 @@ const navGroups: NavGroup[] = [
     title: "业务管理",
     items: [
       { to: "/leads", label: "线索管理", icon: "👤" },
+      { to: "/conversations", label: "会话管理", icon: "💬" },
       { to: "/customers", label: "客户管理", icon: "👥" },
+      { to: "/traffic-strategies", label: "引流策略", icon: "🚀" },
+      { to: "/reminders", label: "提醒设置", icon: "🔔" },
     ],
   },
   {

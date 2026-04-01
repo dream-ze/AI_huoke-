@@ -39,7 +39,7 @@ describe("LeadsPage", () => {
 
   it("renders lead rows from API", async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <LeadsPage />
       </MemoryRouter>,
     );
@@ -51,7 +51,7 @@ describe("LeadsPage", () => {
 
   it("updates lead status and converts to customer", async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <LeadsPage />
       </MemoryRouter>,
     );

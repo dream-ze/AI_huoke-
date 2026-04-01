@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import html
+import logging
+import re
+import time
 from collections import Counter
 from datetime import datetime
 from difflib import SequenceMatcher
-import html
-import hashlib
-import re
 from typing import Any, Optional
 
-from sqlalchemy import desc
-from sqlalchemy.orm import Session, selectinload
-
+from app.collector.services.browser_client import BrowserCollectorClient
 from app.models import (
     CollectTask,
     EmployeeLinkSubmission,
@@ -24,13 +24,29 @@ from app.models import (
     Rule,
     SourceContent,
 )
-from app.services.mvp_compliance_service import MvpComplianceService
 from app.services.compliance_service import ComplianceService
-from app.collector.services.browser_client import BrowserCollectorClient
+from app.services.mvp_compliance_service import MvpComplianceService
+from sqlalchemy import desc
+from sqlalchemy.orm import Session, selectinload
+
+logger = logging.getLogger(__name__)
 
 
 class AcquisitionIntakeService:
-    """First-principles acquisition pipeline: source -> normalized -> material -> knowledge -> generation."""
+    """First-principles acquisition pipeline: source -> normalized -> material -> knowledge -> generation.
+
+    增强功能：
+    - 单条失败不阻断：_process_item 使用 try-except 包裹，失败时记录错误并跳过
+    - 简单断路器：连续失败 N 次后暂停采集
+    - 入库前去重检查：基于 content_hash 查询
+    """
+
+    # 断路器配置
+    _CIRCUIT_BREAKER_THRESHOLD = 5
+    _CIRCUIT_BREAKER_COOLDOWN_SECONDS = 60  # 冷却时间60秒
+    _consecutive_failures = 0
+    _circuit_open = False
+    _last_failure_ts: float | None = None
 
     _TARGET_TERMS = ["贷款", "资金", "征信", "负债", "网贷", "融资", "周转"]
     _INTENT_TERMS = ["怎么办", "求助", "急需", "有没有", "推荐", "私信", "加微", "联系"]
@@ -254,7 +270,7 @@ class AcquisitionIntakeService:
             if re.fullmatch(r"[\u4e00-\u9fff]{2,}", token):
                 for size in (2, 3):
                     for idx in range(0, max(len(token) - size + 1, 0)):
-                        tokens.append(token[idx: idx + size])
+                        tokens.append(token[idx : idx + size])
         return tokens
 
     @staticmethod
@@ -264,11 +280,13 @@ class AcquisitionIntakeService:
 
     @staticmethod
     def _build_content_hash(title: str, content: str, source_url: Optional[str]) -> str:
-        payload = "\n".join([
-            AcquisitionIntakeService._normalize_text(title),
-            AcquisitionIntakeService._normalize_text(content),
-            AcquisitionIntakeService._normalize_text(source_url),
-        ])
+        payload = "\n".join(
+            [
+                AcquisitionIntakeService._normalize_text(title),
+                AcquisitionIntakeService._normalize_text(content),
+                AcquisitionIntakeService._normalize_text(source_url),
+            ]
+        )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
@@ -281,7 +299,9 @@ class AcquisitionIntakeService:
         content_text = AcquisitionIntakeService._clean_content_text(raw_content_text)
         if not title and content_text:
             title = AcquisitionIntakeService._clean_title_text(content_text[:40])
-        normalized_platform = AcquisitionIntakeService._normalize_text(item.get("platform") or platform or "other") or "other"
+        normalized_platform = (
+            AcquisitionIntakeService._normalize_text(item.get("platform") or platform or "other") or "other"
+        )
 
         return {
             "platform": normalized_platform,
@@ -291,16 +311,23 @@ class AcquisitionIntakeService:
             "raw_title": AcquisitionIntakeService._normalize_text(raw_title) or None,
             "raw_content_text": AcquisitionIntakeService._normalize_text(raw_content_text) or None,
             "title": title or None,
-            "author_name": AcquisitionIntakeService._normalize_text(item.get("author_name") or item.get("author") or item.get("nickname")) or None,
+            "author_name": AcquisitionIntakeService._normalize_text(
+                item.get("author_name") or item.get("author") or item.get("nickname")
+            )
+            or None,
             "content_text": content_text or None,
             "cover_url": AcquisitionIntakeService._normalize_text(item.get("cover_url")) or None,
             "publish_time": AcquisitionIntakeService._to_datetime(item.get("publish_time") or item.get("upload_time")),
             "like_count": AcquisitionIntakeService._to_int(item.get("like_count") or item.get("liked_count")),
             "comment_count": AcquisitionIntakeService._to_int(item.get("comment_count")),
-            "favorite_count": AcquisitionIntakeService._to_int(item.get("collect_count") or item.get("favorite_count") or item.get("collected_count")),
+            "favorite_count": AcquisitionIntakeService._to_int(
+                item.get("collect_count") or item.get("favorite_count") or item.get("collected_count")
+            ),
             "share_count": AcquisitionIntakeService._to_int(item.get("share_count")),
-            "parse_status": AcquisitionIntakeService._normalize_text(item.get("parse_status") or "success").lower() or "success",
-            "risk_status": AcquisitionIntakeService._normalize_text(item.get("risk_status") or "safe").lower() or "safe",
+            "parse_status": AcquisitionIntakeService._normalize_text(item.get("parse_status") or "success").lower()
+            or "success",
+            "risk_status": AcquisitionIntakeService._normalize_text(item.get("risk_status") or "safe").lower()
+            or "safe",
             "raw_payload": item,
         }
 
@@ -655,9 +682,13 @@ class AcquisitionIntakeService:
             corrected = reviewed_content != reviewed_input
 
         second_pass = ComplianceService.check_compliance(reviewed_content)
-        risk_score = second_pass.get("risk_score") if second_pass.get("risk_score") is not None else first_pass.get("risk_score")
+        risk_score = (
+            second_pass.get("risk_score") if second_pass.get("risk_score") is not None else first_pass.get("risk_score")
+        )
         risk_level = second_pass.get("risk_level") or first_pass.get("risk_level") or "low"
-        publish_blocked = bool(risk_level == "high" or (risk_score is not None and float(risk_score) >= float(threshold)))
+        publish_blocked = bool(
+            risk_level == "high" or (risk_score is not None and float(risk_score) >= float(threshold))
+        )
         return {
             "content": reviewed_content,
             "corrected": corrected,
@@ -755,7 +786,9 @@ class AcquisitionIntakeService:
             source_task_id=source_task_id,
             source_submission_id=source_submission_id,
             submitted_by_employee_id=submitted_by_employee_id,
-            source_type="crawler" if source_channel in {"collect_task", "employee_submission", "wechat_robot"} else "manual",
+            source_type=(
+                "crawler" if source_channel in {"collect_task", "employee_submission", "wechat_robot"} else "manual"
+            ),
             source_platform=normalized["platform"],
             source_id=normalized.get("source_id"),
             source_url=normalized.get("source_url"),
@@ -830,7 +863,9 @@ class AcquisitionIntakeService:
             platform=material.platform,
             account_type=AcquisitionIntakeService._classify_account_type(text),
             target_audience=AcquisitionIntakeService._classify_target_audience(text),
-            content_type=AcquisitionIntakeService._classify_content_type(material.title or "", material.content_text or ""),
+            content_type=AcquisitionIntakeService._classify_content_type(
+                material.title or "", material.content_text or ""
+            ),
             topic=AcquisitionIntakeService._extract_topic(material.title or "", material.content_text or ""),
             title=material.title,
             summary=(material.content_text or material.content_preview or "")[:120],
@@ -974,8 +1009,7 @@ class AcquisitionIntakeService:
 
             # 提取platform
             platform = AcquisitionIntakeService._extract_mvp_platform(
-                source_content.source_url,
-                source_content.source_platform
+                source_content.source_url, source_content.source_platform
             )
 
             # 去重检查：title + platform
@@ -999,7 +1033,7 @@ class AcquisitionIntakeService:
             cta_style = AcquisitionIntakeService._infer_mvp_cta_style(merged_text)
             summary = AcquisitionIntakeService._generate_mvp_summary(content_text)
             category = AcquisitionIntakeService._infer_mvp_category(content_type, merged_text)
-            
+
             # 推断分库类型
             library_type = "industry_phrases"  # 默认
             category_lower = (category or "").lower()
@@ -1015,14 +1049,14 @@ class AcquisitionIntakeService:
                 library_type = "account_positioning"
             elif any(kw in category_lower for kw in ["模板", "提示词", "prompt", "cta"]):
                 library_type = "prompt_templates"
-            
+
             # 推断层级
             layer = "structured"
             if library_type in ("compliance_rules", "platform_rules"):
                 layer = "rule"
             elif library_type in ("prompt_templates", "account_positioning"):
                 layer = "generation"
-            
+
             # 计算风险等级：调用合规服务
             risk_level = "medium"  # 默认值
             try:
@@ -1031,7 +1065,7 @@ class AcquisitionIntakeService:
                 risk_level = compliance_result.get("risk_level", "medium")
             except Exception:
                 pass  # 合规服务调用失败，使用默认值
-            
+
             # 创建 MvpKnowledgeItem
             knowledge_item = MvpKnowledgeItem(
                 title=title[:500] if title else "无标题",
@@ -1056,11 +1090,13 @@ class AcquisitionIntakeService:
             )
             db.add(knowledge_item)
             db.flush()
-            
+
             # 异步切块+向量化
             try:
-                from app.services.chunking_service import get_chunking_service
                 import asyncio
+
+                from app.services.chunking_service import get_chunking_service
+
                 chunking = get_chunking_service(db)
                 try:
                     loop = asyncio.get_event_loop()
@@ -1073,13 +1109,52 @@ class AcquisitionIntakeService:
                     pass
             except Exception as e:
                 import logging
+
                 logging.getLogger(__name__).warning(f"采集入库切块失败(不影响主流程): {e}")
-            
+
             return knowledge_item
 
         except Exception:
             # 任何错误不应阻断整个采集流程
             return None
+
+    @staticmethod
+    def _check_circuit_breaker() -> bool:
+        """检查断路器状态，返回是否允许继续执行"""
+        if AcquisitionIntakeService._circuit_open:
+            # 冷却时间过后允许试探性请求（半开状态）
+            if (
+                AcquisitionIntakeService._last_failure_ts is not None
+                and time.time() - AcquisitionIntakeService._last_failure_ts
+                >= AcquisitionIntakeService._CIRCUIT_BREAKER_COOLDOWN_SECONDS
+            ):
+                logger.info("Pipeline circuit breaker entering half-open state, allowing probe request")
+                return True
+            logger.error("Pipeline circuit breaker is OPEN - too many consecutive failures")
+            return False
+        return True
+
+    @staticmethod
+    def _record_failure() -> None:
+        """记录一次失败，更新断路器状态"""
+        AcquisitionIntakeService._consecutive_failures += 1
+        AcquisitionIntakeService._last_failure_ts = time.time()
+        if AcquisitionIntakeService._consecutive_failures >= AcquisitionIntakeService._CIRCUIT_BREAKER_THRESHOLD:
+            AcquisitionIntakeService._circuit_open = True
+            logger.error(
+                "Pipeline circuit breaker OPENED after %d consecutive failures",
+                AcquisitionIntakeService._consecutive_failures,
+            )
+
+    @staticmethod
+    def _record_success() -> None:
+        """记录一次成功，重置失败计数"""
+        if AcquisitionIntakeService._consecutive_failures > 0:
+            AcquisitionIntakeService._consecutive_failures = 0
+            logger.debug("Pipeline circuit breaker failure count reset after success")
+        if AcquisitionIntakeService._circuit_open:
+            AcquisitionIntakeService._circuit_open = False
+            logger.info("Pipeline circuit breaker CLOSED - resuming normal operations")
 
     @staticmethod
     def _process_item(
@@ -1094,6 +1169,60 @@ class AcquisitionIntakeService:
         submitted_by_employee_id: Optional[int] = None,
         remark: Optional[str] = None,
     ) -> dict[str, Any]:
+        """
+        处理单条采集数据。
+
+        增强功能：
+        - 使用 try-except 包裹，单条失败不阻断整批处理
+        - 失败时记录错误日志并返回失败状态
+        - 集成断路器模式
+        """
+        # 检查断路器状态
+        if not AcquisitionIntakeService._check_circuit_breaker():
+            raise RuntimeError("Circuit breaker is open - too many consecutive failures")
+
+        try:
+            result = AcquisitionIntakeService._process_item_internal(
+                db=db,
+                owner_id=owner_id,
+                source_channel=source_channel,
+                raw_item=raw_item,
+                platform=platform,
+                keyword=keyword,
+                source_task_id=source_task_id,
+                source_submission_id=source_submission_id,
+                submitted_by_employee_id=submitted_by_employee_id,
+                remark=remark,
+            )
+            AcquisitionIntakeService._record_success()
+            return result
+        except Exception as e:
+            AcquisitionIntakeService._record_failure()
+            logger.error(
+                "Failed to process item: platform=%s, keyword=%s, error=%s", platform, keyword, str(e), exc_info=True
+            )
+            return {
+                "created": False,
+                "duplicate": False,
+                "material": None,
+                "status": "failed",
+                "reason": f"processing_error: {str(e)}",
+            }
+
+    @staticmethod
+    def _process_item_internal(
+        db: Session,
+        owner_id: int,
+        source_channel: str,
+        raw_item: dict[str, Any],
+        platform: str,
+        keyword: str,
+        source_task_id: Optional[int] = None,
+        source_submission_id: Optional[int] = None,
+        submitted_by_employee_id: Optional[int] = None,
+        remark: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """内部处理方法，包含实际业务逻辑。"""
         normalized = AcquisitionIntakeService._normalize_collected_item(platform, keyword, raw_item)
         validation_reason = AcquisitionIntakeService._validate_required_fields(normalized, source_channel)
         content_hash = AcquisitionIntakeService._build_content_hash(
@@ -1128,7 +1257,9 @@ class AcquisitionIntakeService:
             submitted_by_employee_id=submitted_by_employee_id,
             remark=remark,
         )
-        normalized_content = AcquisitionIntakeService._create_normalized_content(db, owner_id, source, normalized, content_hash)
+        normalized_content = AcquisitionIntakeService._create_normalized_content(
+            db, owner_id, source, normalized, content_hash
+        )
 
         quality_score = AcquisitionIntakeService._calculate_quality(normalized)
         relevance_score = AcquisitionIntakeService._calculate_relevance(normalized, keyword)
@@ -1286,15 +1417,30 @@ class AcquisitionIntakeService:
         submitted_by_employee_id: Optional[int] = None,
         remark: Optional[str] = None,
     ) -> dict[str, int]:
+        """
+        批量处理采集数据。
+
+        增强功能：
+        - 单条失败不阻断整批处理
+        - 统计失败数量和去重数量
+        - 断路器保护
+        """
         stats = {
             "inserted_count": 0,
             "review_count": 0,
             "discard_count": 0,
             "duplicate_count": 0,
             "failed_count": 0,
+            "skipped_count": 0,
         }
 
-        for raw in items:
+        for idx, raw in enumerate(items):
+            # 检查断路器状态
+            if not AcquisitionIntakeService._check_circuit_breaker():
+                logger.error("Circuit breaker open, skipping remaining %d items", len(items) - idx)
+                stats["skipped_count"] += len(items) - idx
+                break
+
             try:
                 result = AcquisitionIntakeService.ingest_item(
                     db=db,
@@ -1309,19 +1455,36 @@ class AcquisitionIntakeService:
                     remark=remark,
                     auto_commit=False,
                 )
-                if result["duplicate"]:
+                if result.get("status") == "failed":
+                    stats["failed_count"] += 1
+                elif result["duplicate"]:
                     stats["duplicate_count"] += 1
-                    continue
-                if result["status"] == "pending":
+                elif result["status"] == "pending":
                     stats["inserted_count"] += 1
                 elif result["status"] == "review":
                     stats["review_count"] += 1
                 else:
                     stats["discard_count"] += 1
-            except Exception:
+            except Exception as e:
+                # 这里捕获的是断路器抛出的异常或其他未预期的异常
                 stats["failed_count"] += 1
+                logger.error("Unexpected error in _ingest_items at item %d: %s", idx, str(e), exc_info=True)
 
         db.commit()
+
+        # 记录批量处理统计
+        logger.info(
+            "Ingest batch completed: total=%d, inserted=%d, review=%d, discard=%d, "
+            "duplicate=%d, failed=%d, skipped=%d",
+            len(items),
+            stats["inserted_count"],
+            stats["review_count"],
+            stats["discard_count"],
+            stats["duplicate_count"],
+            stats["failed_count"],
+            stats.get("skipped_count", 0),
+        )
+
         return stats
 
     @staticmethod
@@ -1620,7 +1783,10 @@ class AcquisitionIntakeService:
         current_status = str(item.status or "pending")
         if target_status not in AcquisitionIntakeService._STATUS_TRANSITIONS:
             raise ValueError("无效状态，仅支持 pending/review/discard")
-        if target_status != current_status and target_status not in AcquisitionIntakeService._STATUS_TRANSITIONS[current_status]:
+        if (
+            target_status != current_status
+            and target_status not in AcquisitionIntakeService._STATUS_TRANSITIONS[current_status]
+        ):
             raise ValueError(f"不允许从 {current_status} 流转到 {target_status}")
 
         item.status = target_status
@@ -1683,7 +1849,9 @@ class AcquisitionIntakeService:
             )
             .filter(KnowledgeDocument.owner_id == owner_id)
         )
-        filtered_query = AcquisitionIntakeService._apply_structure_filter(base_query, platform, account_type, target_audience)
+        filtered_query = AcquisitionIntakeService._apply_structure_filter(
+            base_query, platform, account_type, target_audience
+        )
         candidates = filtered_query.order_by(desc(KnowledgeDocument.id)).limit(100).all()
 
         if not candidates:
@@ -1705,8 +1873,16 @@ class AcquisitionIntakeService:
             keyword_score = AcquisitionIntakeService._keyword_score(query_tokens, document)
             semantic_score = AcquisitionIntakeService._semantic_score(query_text, document)
             material = document.material_item
-            hot_boost = 1.0 if material and material.hot_level == "high" else 0.5 if material and material.hot_level == "medium" else 0.0
-            lead_boost = 1.0 if material and material.lead_level == "high" else 0.5 if material and material.lead_level == "medium" else 0.0
+            hot_boost = (
+                1.0
+                if material and material.hot_level == "high"
+                else 0.5 if material and material.hot_level == "medium" else 0.0
+            )
+            lead_boost = (
+                1.0
+                if material and material.lead_level == "high"
+                else 0.5 if material and material.lead_level == "medium" else 0.0
+            )
             final_score = round((keyword_score * 2.0) + (semantic_score * 10.0) + hot_boost + lead_boost, 4)
             chunks = sorted(document.knowledge_chunks or [], key=lambda item: item.chunk_index)[:3]
             ranked.append(
@@ -1786,7 +1962,9 @@ class AcquisitionIntakeService:
         )
         query = query.filter((PromptTemplate.platform == platform) | (PromptTemplate.platform.is_(None)))
         query = query.filter((PromptTemplate.account_type == account_type) | (PromptTemplate.account_type.is_(None)))
-        query = query.filter((PromptTemplate.target_audience == target_audience) | (PromptTemplate.target_audience.is_(None)))
+        query = query.filter(
+            (PromptTemplate.target_audience == target_audience) | (PromptTemplate.target_audience.is_(None))
+        )
         template = query.order_by(desc(PromptTemplate.id)).first()
         if template is not None:
             return template
@@ -1869,7 +2047,9 @@ class AcquisitionIntakeService:
         )
         rules = AcquisitionIntakeService._load_rules(db, owner_id, platform, account_type, target_audience)
         compliance_policy = AcquisitionIntakeService._load_compliance_policy(db, owner_id, platform)
-        template = AcquisitionIntakeService._select_prompt_template(db, owner_id, task_type, platform, account_type, target_audience)
+        template = AcquisitionIntakeService._select_prompt_template(
+            db, owner_id, task_type, platform, account_type, target_audience
+        )
 
         reference_lines = []
         for ref in references:
@@ -1880,9 +2060,13 @@ class AcquisitionIntakeService:
 
         rule_lines = [f"- {rule.name}: {rule.content}" for rule in rules]
         system_prompt = template.system_prompt if template else "你是内容生成助手，负责基于素材和知识库生成可发布文案。"
-        user_prompt = template.user_prompt_template if template else (
-            "请基于以下素材生成一篇{task_type}文案。目标平台:{platform}；账号类型:{account_type}；目标人群:{target_audience}。"
-            "必须吸收参考知识的结构和洞察，但不能直接复制原文。输出只返回最终文案。"
+        user_prompt = (
+            template.user_prompt_template
+            if template
+            else (
+                "请基于以下素材生成一篇{task_type}文案。目标平台:{platform}；账号类型:{account_type}；目标人群:{target_audience}。"
+                "必须吸收参考知识的结构和洞察，但不能直接复制原文。输出只返回最终文案。"
+            )
         )
         prompt_body = user_prompt.format(
             task_type=task_type,
@@ -1948,27 +2132,37 @@ class AcquisitionIntakeService:
             None,
         )
         if preferred_variant is None:
-            preferred_variant = reviewed_variants[0] if reviewed_variants else {
-                "variant_name": "默认版",
-                "title": material.title or "改写结果",
-                "content": output_text,
-                "hashtags": [],
-                "compliance": {
-                    "corrected": False,
-                    "is_compliant": True,
-                    "risk_level": "low",
-                    "risk_score": 0,
-                    "risk_points": [],
-                    "suggestions": [],
-                    "publish_blocked": False,
-                    "block_threshold": compliance_policy.get("block_score_threshold", AcquisitionIntakeService._DEFAULT_COMPLIANCE_BLOCK_SCORE),
-                },
-            }
+            preferred_variant = (
+                reviewed_variants[0]
+                if reviewed_variants
+                else {
+                    "variant_name": "默认版",
+                    "title": material.title or "改写结果",
+                    "content": output_text,
+                    "hashtags": [],
+                    "compliance": {
+                        "corrected": False,
+                        "is_compliant": True,
+                        "risk_level": "low",
+                        "risk_score": 0,
+                        "risk_points": [],
+                        "suggestions": [],
+                        "publish_blocked": False,
+                        "block_threshold": compliance_policy.get(
+                            "block_score_threshold", AcquisitionIntakeService._DEFAULT_COMPLIANCE_BLOCK_SCORE
+                        ),
+                    },
+                }
+            )
 
         selected_output_text = preferred_variant["content"]
         final_compliance = preferred_variant["compliance"]
         selected_variant_index = next(
-            (idx for idx, item in enumerate(reviewed_variants) if item.get("variant_name") == preferred_variant.get("variant_name")),
+            (
+                idx
+                for idx, item in enumerate(reviewed_variants)
+                if item.get("variant_name") == preferred_variant.get("variant_name")
+            ),
             None,
         )
 

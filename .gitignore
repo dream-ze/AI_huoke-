@@ -31,6 +31,8 @@ desktop/release/
 **/.env.local
 **/.env.production
 **/.env.development
+**/.env.*.local
+backend/.env
 
 # IDE
 .vscode/

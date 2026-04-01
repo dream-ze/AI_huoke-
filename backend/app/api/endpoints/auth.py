@@ -1,15 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from datetime import timedelta, datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 from urllib.parse import urlencode
 
 import httpx
-from jose import JWTError, jwt
-
-from app.core.database import get_db
-from app.core.security import create_access_token, verify_token
 from app.core.config import settings
+from app.core.database import get_db
+from app.core.security import blacklist_token, create_access_token, verify_token
 from app.models import User
 from app.schemas import (
     MobileH5TicketCreateRequest,
@@ -23,6 +20,9 @@ from app.schemas import (
     WecomOAuthConfigResponse,
 )
 from app.services import UserService
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from jose import JWTError, jwt
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 MOBILE_H5_TICKET_PURPOSE = "mobile_h5_ticket"
@@ -95,12 +95,7 @@ def _build_token_response(user: User) -> dict:
 @router.post("/register", response_model=UserResponse)
 def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """Register new user"""
-    user = UserService.create_user(
-        db, 
-        username=user_data.username,
-        email=user_data.email,
-        password=user_data.password
-    )
+    user = UserService.create_user(db, username=user_data.username, email=user_data.email, password=user_data.password)
     return user
 
 
@@ -109,6 +104,34 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     """Login user"""
     user = UserService.authenticate_user(db, credentials.username, credentials.password)
     return _build_token_response(user)
+
+
+@router.post("/logout")
+def logout(
+    request: Request,
+    current_user: dict = Depends(verify_token),
+):
+    """
+    Logout - add current token to blacklist.
+    The token will be invalid for subsequent requests.
+    """
+    # Get the raw token from Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Decode token to get expiration time
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            exp = payload.get("exp")
+            if exp:
+                remaining = exp - int(time.time())
+                if remaining > 0:
+                    blacklist_token(token, remaining)
+        except JWTError:
+            pass  # Token already validated by verify_token, this shouldn't happen
+
+    return {"message": "登出成功"}
 
 
 @router.get("/me", response_model=UserResponse)
@@ -122,12 +145,7 @@ def get_current_user(current_user: dict = Depends(verify_token), db: Session = D
 def list_active_users(current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
     """List active users for task assignment options."""
     _ = current_user
-    users = (
-        db.query(User)
-        .filter(User.is_active.is_(True))
-        .order_by(User.username.asc())
-        .all()
-    )
+    users = db.query(User).filter(User.is_active.is_(True)).order_by(User.username.asc()).all()
     return users
 
 
@@ -181,6 +199,7 @@ def exchange_mobile_h5_ticket(ticket: str, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # 企业微信 OAuth 相关接口
 # ---------------------------------------------------------------------------
+
 
 @router.get("/wecom/config", response_model=WecomOAuthConfigResponse)
 def get_wecom_oauth_config():

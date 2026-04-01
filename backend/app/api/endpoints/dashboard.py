@@ -1,30 +1,30 @@
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import verify_token
-from app.schemas import DashboardSummary, TrendResponse, AICallStatsResponse
+from app.schemas import AICallStatsResponse, DashboardSummary, TrendResponse
 from app.services import DashboardService
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 @router.get("/summary", response_model=DashboardSummary)
-def get_dashboard_summary(
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
-):
+def get_dashboard_summary(current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
     """Get dashboard summary"""
     summary = DashboardService.get_today_summary(db, current_user["user_id"])
 
-    from app.models import RewrittenContent, Customer
-    pending_review = db.query(RewrittenContent).filter(
-        RewrittenContent.compliance_status == "pending"
-    ).count()
+    from app.models import Customer, RewrittenContent
 
-    pending_follow = db.query(Customer).filter(
-        (Customer.owner_id == current_user["user_id"]) &
-        (Customer.customer_status.in_(["new", "pending_follow", "contacted"]))
-    ).count()
+    pending_review = db.query(RewrittenContent).filter(RewrittenContent.compliance_status == "pending").count()
+
+    pending_follow = (
+        db.query(Customer)
+        .filter(
+            (Customer.owner_id == current_user["user_id"])
+            & (Customer.customer_status.in_(["new", "pending_follow", "contacted"]))
+        )
+        .count()
+    )
 
     summary["pending_follow_count"] = pending_follow
     summary["pending_review_count"] = pending_review
@@ -34,23 +34,15 @@ def get_dashboard_summary(
 
 @router.get("/trend", response_model=TrendResponse)
 def get_trend_data(
-    days: int = Query(7, ge=1, le=30),
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    days: int = Query(7, ge=1, le=30), current_user: dict = Depends(verify_token), db: Session = Depends(get_db)
 ):
     """Get trend data"""
     trends = DashboardService.get_trend_data(db, days)
-    return {
-        "data": trends,
-        "period": f"{days}days"
-    }
+    return {"data": trends, "period": f"{days}days"}
 
 
 @router.get("/platform")
-def get_platform_analytics(
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
-):
+def get_platform_analytics(current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
     """Get platform analytics"""
     analytics = DashboardService.get_platform_analytics(db)
     return analytics
@@ -58,9 +50,7 @@ def get_platform_analytics(
 
 @router.get("/topics")
 def get_top_topics(
-    limit: int = Query(10, ge=1, le=50),
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    limit: int = Query(10, ge=1, le=50), current_user: dict = Depends(verify_token), db: Session = Depends(get_db)
 ):
     """Get top performing topics"""
     topics = DashboardService.get_top_topics(db, limit)
@@ -69,9 +59,7 @@ def get_top_topics(
 
 @router.get("/high-quality-content")
 def get_high_quality_content(
-    limit: int = Query(20, ge=1, le=100),
-    current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    limit: int = Query(20, ge=1, le=100), current_user: dict = Depends(verify_token), db: Session = Depends(get_db)
 ):
     """Get high-quality customer source content"""
     content = DashboardService.get_high_quality_content(db, limit)
@@ -83,7 +71,7 @@ def get_ai_call_stats(
     days: int = Query(7, ge=1, le=90),
     scope: str = Query("me", pattern="^(me|all)$"),
     current_user: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Get daily AI call stats grouped by user."""
     stats = DashboardService.get_ai_call_stats(
@@ -97,3 +85,17 @@ def get_ai_call_stats(
         "scope": scope,
         "data": stats,
     }
+
+
+@router.get("/metrics")
+def get_business_metrics(current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
+    """获取业务核心指标"""
+    metrics = DashboardService.get_business_metrics(db, current_user["user_id"])
+    return metrics
+
+
+@router.get("/funnel")
+def get_conversion_funnel(current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
+    """获取转化漏斗数据"""
+    funnel_data = DashboardService.get_conversion_funnel(db, current_user["user_id"])
+    return funnel_data

@@ -10,11 +10,15 @@ const api = vi.hoisted(() => ({
   closePublishTask: vi.fn(),
   createPublishTask: vi.fn(),
   exportPublishTasksCsv: vi.fn(),
+  getPublishContentAnalysis: vi.fn(),
+  getPublishRoiTrend: vi.fn(),
+  getPublishStatsByPlatform: vi.fn(),
   getCurrentUser: vi.fn(),
   getPublishTaskTrace: vi.fn(),
   getPublishTaskStats: vi.fn(),
   listPublishTasks: vi.fn(),
   listActiveUsers: vi.fn(),
+  listSocialAccounts: vi.fn(),
   rejectPublishTask: vi.fn(),
   submitPublishTask: vi.fn(),
 }));
@@ -48,13 +52,17 @@ describe("PublishPage", () => {
         conversions: 0,
       },
     ]);
+    api.getPublishStatsByPlatform.mockResolvedValue([]);
+    api.getPublishRoiTrend.mockResolvedValue([]);
+    api.getPublishContentAnalysis.mockResolvedValue([]);
+    api.listSocialAccounts.mockResolvedValue([]);
     api.createPublishTask.mockResolvedValue({ id: 102 });
     api.exportPublishTasksCsv.mockResolvedValue({ blob: new Blob(["ok"]) });
   });
 
   it("renders stats and task list from API", async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PublishPage />
       </MemoryRouter>,
     );
@@ -69,7 +77,7 @@ describe("PublishPage", () => {
 
   it("submits create task form with cleaned payload", async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PublishPage />
       </MemoryRouter>,
     );

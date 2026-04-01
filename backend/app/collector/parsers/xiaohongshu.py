@@ -4,15 +4,14 @@ from pathlib import Path
 from urllib.parse import quote, urljoin
 from uuid import uuid4
 
-from playwright.sync_api import Page
-
 from app.collector.adapters.base import BaseCollector
+from app.collector.services.enricher import enrich_item, should_drop
+from app.collector.services.normalizer import build_item
 from app.schemas.detail import CollectDetailRequest
 from app.schemas.request import CollectRequest
 from app.schemas.result import CollectStats, ContentItem
-from app.collector.services.enricher import enrich_item, should_drop
-from app.collector.services.normalizer import build_item
 from app.utils.browser import create_browser
+from playwright.sync_api import Page
 
 
 class XiaohongshuCollector(BaseCollector):
@@ -20,6 +19,7 @@ class XiaohongshuCollector(BaseCollector):
     SEARCH_URL = "https://www.xiaohongshu.com/search_result"
 
     def __init__(self) -> None:
+        super().__init__()
         root_dir = Path(__file__).resolve().parents[2]
         self._artifacts_dir = root_dir / "artifacts"
         self._screenshots_dir = self._artifacts_dir / "screenshots"
@@ -38,7 +38,9 @@ class XiaohongshuCollector(BaseCollector):
         page.set_default_timeout(req.timeout_sec * 1000)
         try:
             search_url = f"{self.SEARCH_URL}?keyword={quote(req.keyword)}&source=web_search_result_notes&type=51"
+            self.before_navigate(page)
             page.goto(search_url, wait_until="domcontentloaded")
+            self.after_navigate(page)
             page.wait_for_timeout(3000)
 
             scroll_round = 0
@@ -79,7 +81,9 @@ class XiaohongshuCollector(BaseCollector):
                         merged = item.model_dump()
                         merged.update(detail_data)
                         merged["parse_stage"] = "detail"
-                        merged["parse_status"] = "detail_success" if self._is_detail_success(merged) else "detail_failed"
+                        merged["parse_status"] = (
+                            "detail_success" if self._is_detail_success(merged) else "detail_failed"
+                        )
                         item = ContentItem(**merged)
                         if item.parse_status == "detail_success":
                             stats.detail_success += 1
@@ -175,7 +179,9 @@ class XiaohongshuCollector(BaseCollector):
         }
 
     def _fetch_detail_data(self, page: Page, url: str, need_comments: bool) -> dict:
+        self.before_navigate(page)
         page.goto(url, wait_until="domcontentloaded")
+        self.after_navigate(page)
         page.wait_for_timeout(2500)
 
         title = self._first_text(page, ["h1", "#detail-title", ".note-title"])
@@ -376,14 +382,18 @@ class XiaohongshuCollector(BaseCollector):
         if exact_match:
             year, month, day, hour, minute, second = exact_match.groups()
             try:
-                return datetime(
-                    int(year),
-                    int(month),
-                    int(day),
-                    int(hour),
-                    int(minute),
-                    int(second or 0),
-                ).astimezone().isoformat()
+                return (
+                    datetime(
+                        int(year),
+                        int(month),
+                        int(day),
+                        int(hour),
+                        int(minute),
+                        int(second or 0),
+                    )
+                    .astimezone()
+                    .isoformat()
+                )
             except ValueError:
                 return None
 

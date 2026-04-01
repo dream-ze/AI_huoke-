@@ -1,7 +1,7 @@
 from typing import List
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 INSECURE_SECRET_KEYS = {
     "",
@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     API_TITLE: str = "智获客 API"
     API_VERSION: str = "0.1.0"
     DEBUG: bool = False
+    LOG_LEVEL: str = "INFO"
+    LOG_JSON_FORMAT: bool = True  # 生产环境建议启用 JSON 格式
 
     # Database
     DATABASE_URL: str = "postgresql://postgres:password@localhost/zhihuokeke"
@@ -68,6 +70,16 @@ class Settings(BaseSettings):
             raise ValueError("生产环境禁止 CORS_ORIGINS 包含 '*'，请配置明确来源白名单")
         return self
 
+    @model_validator(mode="after")
+    def validate_security(self):
+        import warnings
+
+        if len(self.SECRET_KEY) < 32:
+            warnings.warn("SECRET_KEY 长度不足32字符，生产环境请使用强密钥！")
+        if self.DATABASE_PASSWORD == "password":
+            warnings.warn("DATABASE_PASSWORD 使用了默认密码，生产环境请更改！")
+        return self
+
     # AI Models
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama2-chinese"
@@ -76,10 +88,10 @@ class Settings(BaseSettings):
 
     # Embedding 配置（向后兼容）
     EMBEDDING_DIMENSION: int = 768  # nomic-embed-text: 768
-    
+
     # 火山方舟文本embedding模型（Task #10）
     ARK_EMBEDDING_MODEL: str = "doubao-embedding-large-text-240915"  # 2048维
-    
+
     # 多模型池配置
     DEFAULT_EMBEDDING_MODEL: str = "doubao-embedding-large-text"  # Task #10: 默认使用火山方舟
     DEFAULT_LLM_MODEL: str = "qwen2.5"
@@ -93,26 +105,26 @@ class Settings(BaseSettings):
                 "provider": "ark",
                 "dimension": 2048,
                 "description": "火山方舟文本embedding（优先）",
-                "ark_model": "doubao-embedding-large-text-240915"
+                "ark_model": "doubao-embedding-large-text-240915",
             },
             # Ollama 本地模型（降级备选）
             "nomic-embed-text": {
                 "provider": "ollama",
                 "dimension": 768,
                 "description": "轻量级本地模型（降级备选）",
-                "ollama_name": "nomic-embed-text"
+                "ollama_name": "nomic-embed-text",
             },
             "qwen3-embedding": {
                 "provider": "ollama",
                 "dimension": 1024,
                 "description": "通义千问嵌入",
-                "ollama_name": "qwen3-embedding"
+                "ollama_name": "qwen3-embedding",
             },
             "all-minilm": {
                 "provider": "ollama",
                 "dimension": 384,
                 "description": "最小化模型",
-                "ollama_name": "all-minilm"
+                "ollama_name": "all-minilm",
             },
         }
 
@@ -120,15 +132,11 @@ class Settings(BaseSettings):
     def LLM_MODELS(self) -> dict:
         """LLM模型池配置"""
         return {
-            "qwen2.5": {
-                "provider": "ollama",
-                "description": "本地通义千问",
-                "ollama_name": "qwen2.5"
-            },
+            "qwen2.5": {"provider": "ollama", "description": "本地通义千问", "ollama_name": "qwen2.5"},
             "doubao-1-5-pro-32k": {
                 "provider": "ark",
                 "description": "火山方舟豆包",
-                "ark_model": "doubao-1-5-pro-32k-250115"
+                "ark_model": "doubao-1-5-pro-32k-250115",
             },
         }
 
@@ -145,10 +153,21 @@ class Settings(BaseSettings):
     INSIGHT_BATCH_ANALYZE_RATE_LIMIT_PER_MINUTE: int = 6
     INSIGHT_BATCH_ANALYZE_RATE_LIMIT_WINDOW_SECONDS: int = 60
 
+    # 火山引擎账号级别凭证
+    VOLC_ACCESS_KEY_ID: str = ""
+    VOLC_SECRET_ACCESS_KEY: str = ""
+
     # Redis (distributed rate limiting)
     USE_REDIS_RATE_LIMIT: bool = True
     REDIS_URL: str = "redis://localhost:6379/0"
     RATE_LIMIT_KEY_PREFIX: str = "zhihuokeke"
+
+    # Celery 异步任务队列
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+
+    # 前端URL（用于企微消息中的链接）
+    FRONTEND_URL: str = "http://localhost:5173"
 
     # File Upload
     MAX_UPLOAD_SIZE: int = 52428800  # 50MB
@@ -166,5 +185,6 @@ class Settings(BaseSettings):
     BROWSER_VIEWPORT_WIDTH: int = 1440
     BROWSER_VIEWPORT_HEIGHT: int = 900
     BROWSER_TIMEOUT_MS: int = 30000
+
 
 settings = Settings()

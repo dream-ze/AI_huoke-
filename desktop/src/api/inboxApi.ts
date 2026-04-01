@@ -1,16 +1,6 @@
 import { RawContentInboxItem, InboxListParams, InboxListResponse } from '../types';
-
-// 获取 API 基础 URL（与 lib/api.ts 保持一致）
-function resolveApiBaseUrl(): string {
-  const isElectron = typeof window !== "undefined" && !!(window as any).desktop?.isElectron;
-  if (typeof window !== "undefined") {
-    const runtimeBase = localStorage.getItem("zhk_api_base_url");
-    if (isElectron && runtimeBase) return runtimeBase;
-  }
-  return import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
-}
-
-const API_BASE = resolveApiBaseUrl();
+import { apiFetch, requireApiResult } from '../lib/httpClient';
+import { apiRoutes } from './routes';
 
 // Mock 数据兜底
 const MOCK_ITEMS: RawContentInboxItem[] = [
@@ -113,41 +103,6 @@ const MOCK_ITEMS: RawContentInboxItem[] = [
   }
 ];
 
-// 获取认证 Token
-function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('zhk_token');
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  return headers;
-}
-
-// 通用 API 请求方法
-async function apiFetch<T>(url: string, options?: RequestInit): Promise<T | null> {
-  try {
-    const resp = await fetch(`${API_BASE}${url}`, {
-      headers: getAuthHeaders(),
-      ...options,
-    });
-    if (!resp.ok) {
-      console.warn(`API HTTP ${resp.status}: ${url}`);
-      return null;
-    }
-    return await resp.json();
-  } catch (e) {
-    console.warn('API call failed:', e);
-    return null;
-  }
-}
-
-function requireApiResult<T>(data: T | null, errorMessage: string): T {
-  if (data === null) {
-    throw new Error(errorMessage);
-  }
-  return data;
-}
-
 export const inboxApi = {
   /**
    * 获取收件箱列表
@@ -159,7 +114,7 @@ export const inboxApi = {
         query.set(k, String(v));
       }
     });
-    const data = await apiFetch<InboxListResponse>(`/api/mvp/inbox?${query}`);
+    const data = await apiFetch<InboxListResponse>(`${apiRoutes.mvp.inbox}?${query}`);
     if (data && data.items) {
       return data;
     }
@@ -172,7 +127,7 @@ export const inboxApi = {
    */
   async clean(id: number): Promise<{ success: boolean; message?: string }> {
     const data = await apiFetch<{ success: boolean; message?: string }>(
-      `/api/mvp/inbox/${id}/clean`,
+      `${apiRoutes.mvp.inbox}/${id}/clean`,
       { method: 'POST' }
     );
     return requireApiResult(data, '清洗失败');
@@ -183,7 +138,7 @@ export const inboxApi = {
    */
   async batchClean(ids: number[]): Promise<{ success: boolean; total?: number }> {
     const data = await apiFetch<{ success: boolean; total?: number }>(
-      '/api/mvp/inbox/batch-clean',
+      `${apiRoutes.mvp.inbox}/batch-clean`,
       { method: 'POST', body: JSON.stringify({ ids }) }
     );
     return requireApiResult(data, '批量清洗失败');
@@ -194,7 +149,7 @@ export const inboxApi = {
    */
   async screen(id: number): Promise<{ success: boolean; message?: string }> {
     const data = await apiFetch<{ success: boolean; message?: string }>(
-      `/api/mvp/inbox/${id}/screen`,
+      `${apiRoutes.mvp.inbox}/${id}/screen`,
       { method: 'POST' }
     );
     return requireApiResult(data, '质量筛选失败');
@@ -205,7 +160,7 @@ export const inboxApi = {
    */
   async batchScreen(ids: number[]): Promise<{ success: boolean; total?: number }> {
     const data = await apiFetch<{ success: boolean; total?: number }>(
-      '/api/mvp/inbox/batch-screen',
+      `${apiRoutes.mvp.inbox}/batch-screen`,
       { method: 'POST', body: JSON.stringify({ ids }) }
     );
     return requireApiResult(data, '批量质量筛选失败');
@@ -216,7 +171,7 @@ export const inboxApi = {
    */
   async toMaterial(id: number): Promise<{ success: boolean; message?: string }> {
     const data = await apiFetch<{ success: boolean; message?: string }>(
-      `/api/mvp/inbox/${id}/to-material`,
+      `${apiRoutes.mvp.inbox}/${id}/to-material`,
       { method: 'POST' }
     );
     return requireApiResult(data, '入素材库失败');
@@ -227,7 +182,7 @@ export const inboxApi = {
    */
   async batchToMaterial(ids: number[]): Promise<{ success: boolean; total?: number }> {
     const data = await apiFetch<{ success: boolean; total?: number }>(
-      '/api/mvp/inbox/batch-to-material',
+      `${apiRoutes.mvp.inbox}/batch-to-material`,
       { method: 'POST', body: JSON.stringify({ ids }) }
     );
     return requireApiResult(data, '批量入素材库失败');
@@ -238,7 +193,7 @@ export const inboxApi = {
    */
   async ignore(id: number): Promise<{ success: boolean; message?: string }> {
     const data = await apiFetch<{ success: boolean; message?: string }>(
-      `/api/mvp/inbox/${id}/ignore`,
+      `${apiRoutes.mvp.inbox}/${id}/ignore`,
       { method: 'POST' }
     );
     return requireApiResult(data, '忽略失败');
@@ -249,7 +204,7 @@ export const inboxApi = {
    */
   async batchIgnore(ids: number[]): Promise<{ success: boolean; total?: number }> {
     const data = await apiFetch<{ success: boolean; total?: number }>(
-      '/api/mvp/inbox/batch-ignore',
+      `${apiRoutes.mvp.inbox}/batch-ignore`,
       { method: 'POST', body: JSON.stringify({ ids }) }
     );
     return requireApiResult(data, '批量忽略失败');

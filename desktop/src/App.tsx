@@ -1,11 +1,7 @@
 import React, { Suspense, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import {
-  clearToken,
-  getLogoutEventName,
-  isLoggedIn,
-  saveRedirectPath,
-} from "./lib/auth";
+import { useAuthStore } from "./store";
+import { saveRedirectPath } from "./lib/auth";
 import { AppLayout } from "./components/AppLayout";
 
 // 懒加载页面组件
@@ -16,6 +12,8 @@ const AIHubPage = React.lazy(() => import("./pages/ai-hub/AIHubPage").then(m => 
 const KnowledgePage = React.lazy(() => import("./pages/knowledge/KnowledgePage"));
 const CustomersPage = React.lazy(() => import("./pages/CustomersPage").then(m => ({ default: m.CustomersPage })));
 const LeadsPage = React.lazy(() => import("./pages/leads/LeadsPage").then(m => ({ default: m.LeadsPage })));
+const ConversationsPage = React.lazy(() => import("./pages/conversations/ConversationsPage"));
+const SocialAccountsPage = React.lazy(() => import("./pages/social-accounts/SocialAccountsPage").then(m => ({ default: m.SocialAccountsPage })));
 const SetupPage = React.lazy(() => import("./pages/SetupPage").then(m => ({ default: m.SetupPage })));
 
 // MVP 页面（核心）
@@ -23,6 +21,9 @@ const MvpInboxPage = React.lazy(() => import("./pages/inbox/MvpInboxPage"));
 const MvpMaterialsPage = React.lazy(() => import("./pages/materials/MvpMaterialsPage"));
 const MvpWorkbenchPage = React.lazy(() => import("./pages/ai-workbench/MvpWorkbenchPage"));
 const ComplianceRulesPage = React.lazy(() => import("./pages/compliance/ComplianceRulesPage"));
+const RemindersPage = React.lazy(() => import("./pages/reminders/RemindersPage"));
+const TrafficStrategyPage = React.lazy(() => import("./pages/traffic/TrafficStrategyPage").then(m => ({ default: m.TrafficStrategyPage })));
+const TopicPlanningPage = React.lazy(() => import("./pages/topic/TopicPlanningPage"));
 
 // 旧版页面（暂时保留import，路由已注释）
 // const InboxPage = React.lazy(() => import("./pages/inbox/InboxPage").then(m => ({ default: m.InboxPage })));
@@ -48,7 +49,8 @@ function applyRuntimeApiBaseUrl(port?: string) {
 
 function Protected({ children }: { children: JSX.Element }) {
   const location = useLocation();
-  if (!isLoggedIn()) {
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  if (!isAuthenticated) {
     const redirect = `${location.pathname}${location.search}${location.hash}`;
     saveRedirectPath(redirect);
     return <Navigate to="/login" replace state={{ from: location }} />;
@@ -108,13 +110,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const eventName = getLogoutEventName();
     const onLogout = () => {
       navigate("/login", { replace: true });
     };
 
-    window.addEventListener(eventName, onLogout as EventListener);
-    return () => window.removeEventListener(eventName, onLogout as EventListener);
+    window.addEventListener("zhk-auth-logout", onLogout as EventListener);
+    return () => window.removeEventListener("zhk-auth-logout", onLogout as EventListener);
   }, [navigate]);
 
   // 开发模式或非 Electron：直接跳入主 app
@@ -148,7 +149,7 @@ export default function App() {
             <Protected>
               <AppLayout
                 onLogout={() => {
-                  clearToken("manual");
+                  useAuthStore.getState().logout();
                   navigate("/login");
                 }}
               >
@@ -162,6 +163,9 @@ export default function App() {
                   <Route path="/mvp-workbench" element={<MvpWorkbenchPage />} />
                   <Route path="/knowledge" element={<KnowledgePage />} />
                   
+                  {/* === 选题规划 === */}
+                  <Route path="/topic" element={<TopicPlanningPage />} />
+                  
                   {/* === 内容管理 === */}
                   <Route path="/mvp-inbox" element={<MvpInboxPage />} />
                   <Route path="/mvp-materials" element={<MvpMaterialsPage />} />
@@ -171,7 +175,11 @@ export default function App() {
                   
                   {/* === 业务管理 === */}
                   <Route path="/leads" element={<LeadsPage />} />
+                  <Route path="/conversations" element={<ConversationsPage />} />
                   <Route path="/customers" element={<CustomersPage />} />
+                  <Route path="/social-accounts" element={<SocialAccountsPage />} />
+                  <Route path="/reminders" element={<RemindersPage />} />
+                  <Route path="/traffic-strategies" element={<TrafficStrategyPage />} />
                   
                   {/* === 管理层 === */}
                   <Route path="/dashboard" element={<DashboardPage />} />

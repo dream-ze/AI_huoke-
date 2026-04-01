@@ -1,14 +1,13 @@
 from datetime import datetime, timezone
 
 import requests
-from fastapi import APIRouter, status
-from fastapi.responses import JSONResponse
-from sqlalchemy import text
-
 from app.core.config import settings
 from app.core.database import engine
 from app.core.metrics import get_user_sequence_metrics_snapshot
 from app.schemas import SystemVersionResponse
+from fastapi import APIRouter, status
+from fastapi.responses import JSONResponse, PlainTextResponse
+from sqlalchemy import text
 
 try:
     import redis
@@ -168,3 +167,42 @@ def get_ops_readiness():
     if payload["checks"]["database"]["ok"] and payload["checks"]["redis"]["ok"]:
         return payload
     return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload)
+
+
+@router.get("/metrics")
+async def metrics():
+    """Prometheus 指标端点"""
+    lines = []
+
+    # 基础服务状态指标
+    lines.append("# HELP up Service is up.")
+    lines.append("# TYPE up gauge")
+    lines.append("up 1")
+
+    # 尝试获取进程指标
+    try:
+        import psutil
+
+        process = psutil.Process()
+        mem = process.memory_info()
+
+        lines.append("# HELP process_resident_memory_bytes Resident memory size in bytes.")
+        lines.append("# TYPE process_resident_memory_bytes gauge")
+        lines.append(f"process_resident_memory_bytes {mem.rss}")
+
+        lines.append("# HELP process_cpu_seconds_total Total CPU time.")
+        lines.append("# TYPE process_cpu_seconds_total counter")
+        cpu_times = process.cpu_times()
+        lines.append(f"process_cpu_seconds_total {cpu_times.user + cpu_times.system}")
+
+        lines.append("# HELP process_open_fds Number of open file descriptors.")
+        lines.append("# TYPE process_open_fds gauge")
+        try:
+            lines.append(f"process_open_fds {process.num_fds()}")
+        except AttributeError:
+            lines.append(f"process_open_fds {len(process.open_files())}")
+    except ImportError:
+        # psutil 未安装时跳过进程指标
+        pass
+
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; charset=utf-8")

@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # 智获客 - Windows 端一键部署脚本
 # 功能: 构建桌面端 → 上传 → 在服务器启动 Docker 服务
 #
@@ -93,7 +93,8 @@ Write-Host "[3.5/4] 上传前端 dist 到服务器..." -ForegroundColor Green
 Run-SSH "mkdir -p /opt/zhihuokeke/desktop"
 if (Test-Path "$DesktopDir\dist\index.html") {
     if (Get-Command rsync -ErrorAction SilentlyContinue) {
-        & rsync -az -e "ssh $($SshOpts -join ' ')" "$DesktopDir/dist/" "${ServerUser}@${ServerIP}:/opt/zhihuokeke/desktop/dist/"
+        $sshCmd = "ssh " + ($SshOpts -join ' ')
+        & rsync -az -e $sshCmd "$DesktopDir/dist/" "${ServerUser}@${ServerIP}:/opt/zhihuokeke/desktop/dist/"
     } else {
         Run-SCP "$DesktopDir\dist" "/opt/zhihuokeke/desktop/"
     }
@@ -105,7 +106,7 @@ if (Test-Path "$DesktopDir\dist\index.html") {
 # ── Step 4: 远程执行部署 ─────────────────────────────────────────
 Write-Host ""
 Write-Host "[4/4] 在服务器执行 deploy.sh..." -ForegroundColor Green
-Run-SSH "cd /opt/zhihuokeke/backend && sed -i 's/\r$//' deploy.sh entrypoint.sh setup-venv.sh 2>/dev/null || true && chmod +x deploy.sh entrypoint.sh setup-venv.sh && bash deploy.sh"
+Run-SSH 'cd /opt/zhihuokeke/backend && sed -i "s/\r$//" deploy.sh entrypoint.sh setup-venv.sh 2>/dev/null || true && chmod +x deploy.sh entrypoint.sh setup-venv.sh && bash deploy.sh'
 
 # ── 完成 ─────────────────────────────────────────────────────────
 Write-Host ""

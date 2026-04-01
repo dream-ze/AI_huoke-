@@ -1,0 +1,1257 @@
+智获客 2.0 全链路升级方案与 PRD
+📊 一、系统现状全景
+1.1 已建成能力
+plaintext
+┌─────────────────────────────────────────────────────────────────────┐
+│                        智获客 1.x 当前架构                           │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐            │
+│  │  采集   │ → │  收件箱  │ → │  素材库  │ → │ 知识库  │            │
+│  │ (插件)  │   │ (清洗)   │   │ (质量筛) │   │(pgvector)│            │
+│  └─────────┘   └─────────┘   └─────────┘   └─────────┘            │
+│                                                 │                   │
+│                                                 ▼                   │
+│  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐            │
+│  │  发布   │ ← │  合规   │ ← │  改写   │ ← │ AI工作台 │            │
+│  │  任务   │   │  审核   │   │ (3版本) │   │ (检索)  │            │
+│  └─────────┘   └─────────┘   └─────────┘   └─────────┘            │
+│       │                                                             │
+│       ▼                                                             │
+│  ┌─────────┐   ┌─────────┐   ┌─────────┐                          │
+│  │  线索   │ → │  客户   │ → │  看板   │                          │
+│  │  池    │   │  管理   │   │  统计   │                          │
+│  └─────────┘   └─────────┘   └─────────┘                          │
+│                                                                     │
+│  技术栈：FastAPI + PostgreSQL + pgvector + Ollama/火山引擎          │
+│  知识库：4层架构 + 7类分库 + 混合检索 + Rerank                       │
+├─────────────────────────────────────────────────────────────────────┤
+│  ✅ 已完成：四层链路、知识库升级、质量筛选、多版本生成、合规检测      │
+│  ❌ 缺失：工作流编排、异步任务、线索会话、企业微信提醒、统一状态机    │
+└─────────────────────────────────────────────────────────────────────┘
+1.2 核心差距分析
+维度	当前状态	目标状态	差距说明
+流程编排	手动触发每一步	自动化流水线	缺工作流引擎
+任务执行	同步接口直调	异步队列处理	tasks/ 占位实现
+线索互动	仅记录线索	自动评论/私信	缺会话引擎
+跟进提醒	无	企业微信机器人	wecom_tasks 占位
+状态管理	分散在各模块	统一状态机	缺统一定义
+可观测性	基础日志	trace_id + 监控	几乎没有
+🎯 二、产品重新定位
+2.1 新定位
+贷款行业全自动获客与线索转化系统从"内容生产工具"升级为"自动获客机器"
+2.2 六层架构设计
+plaintext
+┌─────────────────────────────────────────────────────────────────────┐
+│                      智获客 2.0 六层架构                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  第一层：内容引流引擎                                                │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ 选题挖掘 → 内容采集 → 清洗打标 → 入知识库 → AI生成 → 合规检测 │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              ↓                                      │
+│  第二层：智能分发引擎                                                │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ 多平台适配 → 定时发布 → 效果回收 → 失败重试 → 热度追踪        │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              ↓                                      │
+│  第三层：线索会话引擎 ⭐ 新增                                        │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ 评论监听 → 意图识别 → 自动回复 → 私信筛选 → 高意向升级 → 人工接管│   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              ↓                                      │
+│  第四层：客户转化引擎                                                │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ 自动打标签 → 画像抽取 → 意向分级 → 跟进提醒 → 企微推送 → 成交推进│   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              ↓                                      │
+│  第五层：老板驾驶舱                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ 实时监控 → 业务指标 → 转化漏斗 → 异常告警 → 一键接管          │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│  基础设施层：工作流编排引擎                                          │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ Skill 插件化 │ 状态机 │ 异步队列 │ 事件记录 │ trace_id │ 可观测 │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+📋 三、产品需求文档 (PRD)
+3.1 模块概览与优先级
+优先级	模块	核心能力	预计工期
+P0	工作流编排引擎	Skill 插件化 + 状态机 + 异步队列	2周
+P0	跟进提醒推送	企业微信机器人 + 定时任务	1周
+P1	线索会话引擎	评论回复 + 私信首轮 + 人工接管	2周
+P1	主链路串联	采集→发布→线索 自动编排	1周
+P2	老板驾驶舱升级	业务指标 + 实时监控 + 告警	1周
+3.2 P0-1：工作流编排引擎
+3.2.1 目录结构设计
+plaintext
+backend/app/
+├── workflows/                  # 工作流定义
+│   ├── __init__.py
+│   ├── base.py                 # 工作流基类
+│   ├── content_pipeline.py     # 内容生产流水线
+│   ├── publish_pipeline.py     # 发布分发流水线
+│   └── lead_pipeline.py        # 线索转化流水线
+│
+├── skills/                     # Skill 节点（插件化）
+│   ├── __init__.py             # SkillRegistry 注册机制
+│   ├── base_skill.py           # Skill 基类
+│   ├── collect_skill.py        # 采集技能
+│   ├── clean_skill.py          # 清洗技能
+│   ├── classify_skill.py       # 分类打标技能
+│   ├── knowledge_skill.py      # 入知识库技能
+│   ├── retrieve_skill.py       # 知识检索技能
+│   ├── rewrite_skill.py        # AI改写技能（调用现有5步链路）
+│   ├── compliance_skill.py     # 合规检查技能
+│   ├── publish_skill.py        # 发布技能
+│   ├── reply_skill.py          # 回复建议技能
+│   └── follow_skill.py         # 跟进提醒技能
+│
+├── tasks/                      # 异步任务执行
+│   ├── celery_app.py           # Celery 配置
+│   ├── workflow_tasks.py       # 工作流任务
+│   ├── skill_tasks.py          # Skill 执行任务
+│   ├── reminder_tasks.py       # 提醒任务（升级）
+│   └── wecom_tasks.py          # 企微推送任务（升级）
+│
+└── events/                     # 事件记录
+    ├── __init__.py
+    └── event_store.py          # 节点状态变化记录
+3.2.2 Skill 基类设计
+python
+# backend/app/skills/base_skill.py
+
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SkillContext:
+    """Skill 执行上下文"""
+    trace_id: str
+    user_id: int
+    workflow_task_id: int
+    input_data: Dict[str, Any]
+    previous_results: Dict[str, Any] = None  # 上游 Skill 的输出
+
+
+@dataclass
+class SkillResult:
+    """Skill 执行结果"""
+    success: bool
+    data: Dict[str, Any]
+    error: Optional[str] = None
+    duration_ms: int = 0
+    should_continue: bool = True  # False 则中断流水线
+    next_skill: Optional[str] = None  # 动态路由到指定 Skill
+
+
+class BaseSkill(ABC):
+    """
+    Skill 基类，所有技能节点继承此类。
+    
+    设计原则：
+    1. 单一职责：每个 Skill 只做一件事
+    2. 可组合：通过 workflow 串联多个 Skill
+    3. 可重试：失败后支持自动重试
+    4. 可追溯：记录输入输出和执行时间
+    """
+    
+    name: str           # 技能名称（唯一标识）
+    version: str        # 版本号
+    description: str    # 描述
+    max_retries: int = 3
+    timeout_seconds: int = 60
+    
+    @abstractmethod
+    async def execute(self, context: SkillContext) -> SkillResult:
+        """执行技能核心逻辑"""
+        pass
+    
+    def validate_input(self, context: SkillContext) -> bool:
+        """校验输入参数"""
+        return True
+    
+    async def on_success(self, context: SkillContext, result: SkillResult):
+        """成功回调"""
+        logger.info(f"[{self.name}] Success in {result.duration_ms}ms")
+    
+    async def on_failure(self, context: SkillContext, error: Exception):
+        """失败回调"""
+        logger.error(f"[{self.name}] Failed: {error}")
+    
+    async def run(self, context: SkillContext) -> SkillResult:
+        """带重试和计时的执行入口"""
+        if not self.validate_input(context):
+            return SkillResult(success=False, data={}, error="Input validation failed")
+        
+        start = datetime.utcnow()
+        last_error = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                result = await self.execute(context)
+                result.duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+                
+                if result.success:
+                    await self.on_success(context, result)
+                return result
+                
+            except Exception as e:
+                last_error = e
+                logger.warning(f"[{self.name}] Attempt {attempt + 1} failed: {e}")
+                if attempt < self.max_retries - 1:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)  # 指数退避
+        
+        await self.on_failure(context, last_error)
+        return SkillResult(
+            success=False,
+            data={},
+            error=str(last_error),
+            duration_ms=int((datetime.utcnow() - start).total_seconds() * 1000)
+        )
+3.2.3 Skill 注册机制
+python
+# backend/app/skills/__init__.py
+
+from typing import Dict, Type, List
+
+class SkillRegistry:
+    """Skill 注册中心，支持动态注册和获取"""
+    
+    _skills: Dict[str, Type['BaseSkill']] = {}
+    
+    @classmethod
+    def register(cls, skill_class: Type['BaseSkill']):
+        """装饰器：注册 Skill"""
+        cls._skills[skill_class.name] = skill_class
+        return skill_class
+    
+    @classmethod
+    def get(cls, name: str) -> 'BaseSkill':
+        """获取 Skill 实例"""
+        skill_class = cls._skills.get(name)
+        if not skill_class:
+            raise ValueError(f"Skill '{name}' not found")
+        return skill_class()
+    
+    @classmethod
+    def list_all(cls) -> List[Dict]:
+        """列出所有已注册的 Skill"""
+        return [
+            {
+                "name": s.name,
+                "version": s.version,
+                "description": s.description
+            }
+            for s in cls._skills.values()
+        ]
+
+
+# 导出
+from .base_skill import BaseSkill, SkillContext, SkillResult
+3.2.4 统一状态机
+python
+# backend/app/core/state_machine.py
+
+from enum import Enum
+
+
+class ContentStatus(str, Enum):
+    """内容状态流转"""
+    COLLECTED = "collected"           # 已采集
+    CLEANED = "cleaned"               # 已清洗
+    CLASSIFIED = "classified"         # 已分类打标
+    KNOWLEDGE_READY = "knowledge_ready"  # 已入知识库
+    GENERATED = "generated"           # 已生成
+    COMPLIANCE_PASSED = "compliance_passed"  # 合规通过
+    COMPLIANCE_REJECTED = "compliance_rejected"  # 合规拒绝
+    SCHEDULED = "scheduled"           # 已排期
+    PUBLISHED = "published"           # 已发布
+    ARCHIVED = "archived"             # 已归档
+
+
+class LeadStatus(str, Enum):
+    """线索状态流转"""
+    NEW = "new"                       # 新线索
+    ENGAGED = "engaged"               # 已互动（评论/私信）
+    QUALIFIED = "qualified"           # 已验证（符合目标客户画像）
+    HIGH_INTENT = "high_intent"       # 高意向
+    MANUAL_TAKEOVER = "manual_takeover"  # 人工接管中
+    CONVERTED = "converted"           # 已转化为客户
+    LOST = "lost"                     # 已流失
+
+
+class CustomerStatus(str, Enum):
+    """客户状态流转"""
+    NEW = "new"                       # 新客户
+    PENDING_FOLLOW = "pending_follow" # 待跟进
+    CONTACTED = "contacted"           # 已联系
+    NEGOTIATING = "negotiating"       # 洽谈中
+    DEAL_CLOSED = "deal_closed"       # 已成交
+    CHURNED = "churned"               # 已流失
+
+
+class WorkflowTaskStatus(str, Enum):
+    """工作流任务状态"""
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    PAUSED = "paused"
+3.2.5 数据库迁移 - 工作流相关表
+python
+# alembic/versions/xxxx_add_workflow_tables.py
+
+"""add workflow and skill tables"""
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
+
+def upgrade():
+    # 工作流任务表
+    op.create_table(
+        'workflow_tasks',
+        sa.Column('id', sa.Integer(), primary_key=True),
+        sa.Column('workflow_type', sa.String(64), nullable=False),  # content_pipeline/publish_pipeline/lead_pipeline
+        sa.Column('current_skill', sa.String(64), nullable=True),
+        sa.Column('status', sa.String(32), default='pending'),
+        sa.Column('retry_count', sa.Integer(), default=0),
+        sa.Column('max_retries', sa.Integer(), default=3),
+        sa.Column('trace_id', sa.String(64), nullable=False, index=True),
+        sa.Column('input_data', JSONB, nullable=True),
+        sa.Column('output_data', JSONB, nullable=True),
+        sa.Column('error_message', sa.Text(), nullable=True),
+        sa.Column('started_at', sa.DateTime(), nullable=True),
+        sa.Column('completed_at', sa.DateTime(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), default=sa.func.now()),
+        sa.Column('owner_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False),
+    )
+    
+    # Skill 执行记录表
+    op.create_table(
+        'skill_executions',
+        sa.Column('id', sa.Integer(), primary_key=True),
+        sa.Column('workflow_task_id', sa.Integer(), sa.ForeignKey('workflow_tasks.id'), nullable=False),
+        sa.Column('skill_name', sa.String(64), nullable=False),
+        sa.Column('status', sa.String(32), default='pending'),
+        sa.Column('duration_ms', sa.Integer(), nullable=True),
+        sa.Column('input_snapshot', JSONB, nullable=True),
+        sa.Column('output_snapshot', JSONB, nullable=True),
+        sa.Column('error_detail', sa.Text(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), default=sa.func.now()),
+    )
+    
+    # 创建索引
+    op.create_index('ix_workflow_tasks_status', 'workflow_tasks', ['status'])
+    op.create_index('ix_workflow_tasks_owner', 'workflow_tasks', ['owner_id'])
+    op.create_index('ix_skill_executions_workflow', 'skill_executions', ['workflow_task_id'])
+
+def downgrade():
+    op.drop_table('skill_executions')
+    op.drop_table('workflow_tasks')
+3.3 P0-2：跟进提醒企业微信机器人
+3.3.1 数据库迁移
+python
+# alembic/versions/xxxx_add_reminder_tables.py
+
+"""add reminder and wecom notification tables"""
+
+from alembic import op
+import sqlalchemy as sa
+
+def upgrade():
+    # Customer 表新增跟进时间字段
+    op.add_column('customers', sa.Column('next_follow_at', sa.DateTime(), nullable=True))
+    op.add_column('customers', sa.Column('last_follow_at', sa.DateTime(), nullable=True))
+    op.add_column('customers', sa.Column('last_reminder_sent_at', sa.DateTime(), nullable=True))
+    
+    # 提醒配置表
+    op.create_table(
+        'reminder_configs',
+        sa.Column('id', sa.Integer(), primary_key=True),
+        sa.Column('user_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False, unique=True),
+        sa.Column('webhook_url', sa.String(512), nullable=True),
+        sa.Column('enabled', sa.Boolean(), default=True),
+        sa.Column('daily_summary_time', sa.String(8), default='09:00'),
+        sa.Column('urgent_interval_hours', sa.Integer(), default=1),
+        sa.Column('new_customer_hours', sa.Integer(), default=24),
+        sa.Column('high_intent_days', sa.Integer(), default=2),
+        sa.Column('normal_days', sa.Integer(), default=7),
+        sa.Column('created_at', sa.DateTime(), default=sa.func.now()),
+        sa.Column('updated_at', sa.DateTime(), default=sa.func.now(), onupdate=sa.func.now()),
+    )
+    
+    # 提醒日志表
+    op.create_table(
+        'reminder_logs',
+        sa.Column('id', sa.Integer(), primary_key=True),
+        sa.Column('user_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=False),
+        sa.Column('customer_id', sa.Integer(), sa.ForeignKey('customers.id'), nullable=False),
+        sa.Column('reminder_type', sa.String(32), nullable=False),
+        sa.Column('channel', sa.String(32), default='wecom'),
+        sa.Column('status', sa.String(16), default='sent'),
+        sa.Column('message_preview', sa.Text(), nullable=True),
+        sa.Column('error_detail', sa.Text(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), default=sa.func.now()),
+    )
+
+def downgrade():
+    op.drop_table('reminder_logs')
+    op.drop_table('reminder_configs')
+    op.drop_column('customers', 'last_reminder_sent_at')
+    op.drop_column('customers', 'last_follow_at')
+    op.drop_column('customers', 'next_follow_at')
+3.3.2 企业微信推送服务
+python
+# backend/app/integrations/wecom/notifier.py
+
+import httpx
+from typing import List, Optional
+from datetime import datetime
+from dataclasses import dataclass
+
+from app.core.config import settings
+
+
+@dataclass
+class CustomerReminder:
+    """待提醒客户信息"""
+    customer_id: int
+    nickname: str
+    intention_level: str
+    last_follow_at: Optional[datetime]
+    days_since_follow: int
+    reminder_reason: str  # new_customer / high_intent_overdue / normal_overdue / scheduled
+
+
+class WeComNotifier:
+    """企业微信机器人通知服务"""
+    
+    def __init__(self, webhook_url: str = None):
+        self.webhook_url = webhook_url or settings.WECOM_WEBHOOK_URL
+    
+    async def send_markdown(self, content: str) -> dict:
+        """发送 Markdown 消息"""
+        if not self.webhook_url:
+            raise ValueError("WECOM_WEBHOOK_URL 未配置")
+        
+        body = {
+            "msgtype": "markdown",
+            "markdown": {"content": content}
+        }
+        
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(self.webhook_url, json=body)
+            resp.raise_for_status()
+            return resp.json()
+    
+    async def send_daily_summary(
+        self, 
+        user_name: str,
+        customers: List[CustomerReminder],
+        frontend_url: str = None
+    ) -> dict:
+        """发送每日跟进汇总"""
+        if not customers:
+            return {"ok": True, "skipped": True, "reason": "no_customers"}
+        
+        # 按优先级分组
+        high_intent = [c for c in customers if c.intention_level == "high"]
+        new_customers = [c for c in customers if c.reminder_reason == "new_customer"]
+        others = [c for c in customers if c not in high_intent and c not in new_customers]
+        
+        lines = [
+            f"## 🔔 {user_name}，今日跟进提醒",
+            f"> 您有 **{len(customers)}** 位客户需要跟进",
+            ""
+        ]
+        
+        if high_intent:
+            lines.append("### 🔥 高意向客户（优先处理）")
+            for c in high_intent[:5]:
+                days_text = f"{c.days_since_follow}天前" if c.days_since_follow > 0 else "待首次联系"
+                lines.append(f"- **{c.nickname}** - 上次沟通：{days_text}")
+            lines.append("")
+        
+        if new_customers:
+            lines.append("### 🆕 新客户（待首次联系）")
+            for c in new_customers[:5]:
+                lines.append(f"- {c.nickname}")
+            lines.append("")
+        
+        if others:
+            lines.append("### 📋 常规跟进")
+            for c in others[:5]:
+                days_text = f"{c.days_since_follow}天前" if c.days_since_follow > 0 else "待联系"
+                lines.append(f"- {c.nickname} - {days_text}")
+        
+        if len(customers) > 15:
+            lines.append(f"\n*...还有 {len(customers) - 15} 位客户待跟进*")
+        
+        if frontend_url:
+            lines.append(f"\n👉 [点击查看完整列表]({frontend_url}/customers?filter=pending)")
+        
+        content = "\n".join(lines)
+        return await self.send_markdown(content)
+    
+    async def send_urgent_reminder(
+        self,
+        user_name: str,
+        customer: CustomerReminder,
+        frontend_url: str = None
+    ) -> dict:
+        """发送紧急跟进提醒"""
+        lines = [
+            f"## ⚠️ 紧急跟进提醒",
+            f"> {user_name}，您有一位高意向客户需要立即跟进",
+            "",
+            f"**客户：{customer.nickname}**",
+            f"- 意向等级：🔥 {customer.intention_level}",
+            f"- 上次跟进：{customer.days_since_follow}天前",
+        ]
+        
+        if frontend_url:
+            lines.append(f"\n👉 [立即处理]({frontend_url}/customers/{customer.customer_id})")
+        
+        return await self.send_markdown("\n".join(lines))
+    
+    async def send_lead_notification(
+        self,
+        user_name: str,
+        lead_info: dict,
+        frontend_url: str = None
+    ) -> dict:
+        """发送新线索通知"""
+        lines = [
+            f"## 💎 新线索提醒",
+            f"> {user_name}，您有一条新的高意向线索",
+            "",
+            f"**来源：{lead_info.get('platform', '未知')}**",
+            f"- 内容：{lead_info.get('content', '')[:50]}...",
+            f"- 意向：{lead_info.get('intention_level', 'medium')}",
+        ]
+        
+        if frontend_url:
+            lines.append(f"\n👉 [查看详情]({frontend_url}/leads/{lead_info.get('lead_id')})")
+        
+        return await self.send_markdown("\n".join(lines))
+3.3.3 提醒任务实现
+python
+# backend/app/tasks/reminder_tasks.py
+
+from datetime import datetime, timedelta
+from typing import List
+from sqlalchemy.orm import Session
+import asyncio
+import logging
+
+from app.core.database import SessionLocal
+from app.core.config import settings
+from app.models.models import Customer, User, ReminderConfig, ReminderLog
+from app.integrations.wecom.notifier import WeComNotifier, CustomerReminder
+
+logger = logging.getLogger(__name__)
+
+
+def get_pending_follow_customers(
+    db: Session, 
+    user_id: int, 
+    config: ReminderConfig
+) -> List[CustomerReminder]:
+    """查询需要提醒的待跟进客户"""
+    now = datetime.utcnow()
+    results = []
+    
+    customers = db.query(Customer).filter(
+        Customer.owner_id == user_id,
+        Customer.customer_status.in_(["new", "pending_follow", "contacted"])
+    ).all()
+    
+    for c in customers:
+        reminder_reason = None
+        days_since_follow = 0
+        
+        if c.last_follow_at:
+            days_since_follow = (now - c.last_follow_at).days
+        else:
+            days_since_follow = (now - c.created_at).days
+        
+        # 判断提醒条件
+        if c.next_follow_at and c.next_follow_at <= now:
+            reminder_reason = "scheduled"
+        elif c.customer_status == "new" and not c.last_follow_at:
+            hours_since_create = (now - c.created_at).total_seconds() / 3600
+            if hours_since_create >= config.new_customer_hours:
+                reminder_reason = "new_customer"
+        elif c.intention_level == "high" and days_since_follow >= config.high_intent_days:
+            reminder_reason = "high_intent_overdue"
+        elif days_since_follow >= config.normal_days:
+            reminder_reason = "normal_overdue"
+        
+        if reminder_reason:
+            # 检查24小时内是否已发过提醒
+            recent_log = db.query(ReminderLog).filter(
+                ReminderLog.customer_id == c.id,
+                ReminderLog.created_at >= now - timedelta(hours=24)
+            ).first()
+            
+            if not recent_log:
+                results.append(CustomerReminder(
+                    customer_id=c.id,
+                    nickname=c.nickname,
+                    intention_level=c.intention_level or "medium",
+                    last_follow_at=c.last_follow_at,
+                    days_since_follow=days_since_follow,
+                    reminder_reason=reminder_reason
+                ))
+    
+    return results
+
+
+async def send_daily_summary_for_user(user_id: int):
+    """为单个用户发送每日汇总"""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return
+        
+        config = db.query(ReminderConfig).filter(
+            ReminderConfig.user_id == user_id
+        ).first()
+        
+        if not config or not config.enabled:
+            return
+        
+        customers = get_pending_follow_customers(db, user_id, config)
+        if not customers:
+            logger.info(f"User {user_id} has no pending customers")
+            return
+        
+        webhook_url = config.webhook_url or settings.WECOM_WEBHOOK_URL
+        if not webhook_url:
+            logger.warning(f"User {user_id} has no webhook configured")
+            return
+        
+        notifier = WeComNotifier(webhook_url)
+        result = await notifier.send_daily_summary(
+            user_name=user.username,
+            customers=customers,
+            frontend_url=settings.FRONTEND_URL
+        )
+        
+        # 记录日志
+        for c in customers:
+            log = ReminderLog(
+                user_id=user_id,
+                customer_id=c.customer_id,
+                reminder_type="daily_summary",
+                channel="wecom",
+                status="sent" if result.get("errcode", 0) == 0 else "failed",
+                message_preview=f"每日汇总：{c.nickname}"
+            )
+            db.add(log)
+        
+        db.commit()
+        logger.info(f"Sent daily summary to user {user_id}, {len(customers)} customers")
+        
+    except Exception as e:
+        logger.exception(f"Failed to send daily summary for user {user_id}: {e}")
+    finally:
+        db.close()
+
+
+def run_reminder_tasks() -> None:
+    """定时任务入口（每小时检查紧急提醒）"""
+    asyncio.run(_check_urgent_reminders())
+
+
+def run_daily_summary_tasks() -> None:
+    """每日汇总任务入口"""
+    db = SessionLocal()
+    try:
+        configs = db.query(ReminderConfig).filter(ReminderConfig.enabled == True).all()
+        for config in configs:
+            asyncio.run(send_daily_summary_for_user(config.user_id))
+    finally:
+        db.close()
+
+
+async def _check_urgent_reminders():
+    """检查并发送紧急提醒"""
+    db = SessionLocal()
+    try:
+        configs = db.query(ReminderConfig).filter(ReminderConfig.enabled == True).all()
+        
+        for config in configs:
+            user = db.query(User).filter(User.id == config.user_id).first()
+            if not user:
+                continue
+            
+            customers = get_pending_follow_customers(db, config.user_id, config)
+            urgent = [c for c in customers if c.reminder_reason == "high_intent_overdue"]
+            
+            if not urgent:
+                continue
+            
+            webhook_url = config.webhook_url or settings.WECOM_WEBHOOK_URL
+            if not webhook_url:
+                continue
+            
+            notifier = WeComNotifier(webhook_url)
+            
+            for customer in urgent[:3]:
+                try:
+                    await notifier.send_urgent_reminder(
+                        user_name=user.username,
+                        customer=customer,
+                        frontend_url=settings.FRONTEND_URL
+                    )
+                    
+                    db.add(ReminderLog(
+                        user_id=config.user_id,
+                        customer_id=customer.customer_id,
+                        reminder_type="urgent",
+                        channel="wecom",
+                        status="sent"
+                    ))
+                except Exception as e:
+                    logger.error(f"Failed to send urgent reminder: {e}")
+            
+            db.commit()
+    finally:
+        db.close()
+3.3.4 API 接口
+python
+# backend/app/api/endpoints/reminder.py
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from datetime import datetime
+
+from app.core.database import get_db
+from app.core.security import verify_token
+from app.core.config import settings
+from app.models.models import ReminderConfig, ReminderLog
+from app.integrations.wecom.notifier import WeComNotifier
+from app.tasks.reminder_tasks import get_pending_follow_customers, send_daily_summary_for_user
+
+router = APIRouter(prefix="/api/reminder", tags=["reminder"])
+
+
+class ReminderConfigUpdate(BaseModel):
+    webhook_url: Optional[str] = None
+    enabled: bool = True
+    daily_summary_time: str = Field(default="09:00", pattern=r"^\d{2}:\d{2}$")
+    new_customer_hours: int = Field(default=24, ge=1, le=168)
+    high_intent_days: int = Field(default=2, ge=1, le=30)
+    normal_days: int = Field(default=7, ge=1, le=90)
+
+
+class ReminderConfigResponse(BaseModel):
+    id: int
+    user_id: int
+    webhook_url: Optional[str]
+    enabled: bool
+    daily_summary_time: str
+    new_customer_hours: int
+    high_intent_days: int
+    normal_days: int
+    
+    class Config:
+        from_attributes = True
+
+
+class PendingCustomerResponse(BaseModel):
+    customer_id: int
+    nickname: str
+    intention_level: str
+    days_since_follow: int
+    reminder_reason: str
+
+
+@router.get("/config", response_model=ReminderConfigResponse)
+def get_reminder_config(
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db)
+):
+    """获取当前用户的提醒配置"""
+    config = db.query(ReminderConfig).filter(
+        ReminderConfig.user_id == current_user["user_id"]
+    ).first()
+    
+    if not config:
+        config = ReminderConfig(user_id=current_user["user_id"])
+        db.add(config)
+        db.commit()
+        db.refresh(config)
+    
+    return config
+
+
+@router.put("/config", response_model=ReminderConfigResponse)
+def update_reminder_config(
+    payload: ReminderConfigUpdate,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db)
+):
+    """更新提醒配置"""
+    config = db.query(ReminderConfig).filter(
+        ReminderConfig.user_id == current_user["user_id"]
+    ).first()
+    
+    if not config:
+        config = ReminderConfig(user_id=current_user["user_id"])
+        db.add(config)
+    
+    for key, value in payload.dict(exclude_unset=True).items():
+        setattr(config, key, value)
+    
+    db.commit()
+    db.refresh(config)
+    return config
+
+
+@router.get("/pending", response_model=List[PendingCustomerResponse])
+def get_pending_list(
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db)
+):
+    """获取当前待跟进客户列表"""
+    config = db.query(ReminderConfig).filter(
+        ReminderConfig.user_id == current_user["user_id"]
+    ).first()
+    
+    if not config:
+        config = ReminderConfig(user_id=current_user["user_id"])
+    
+    customers = get_pending_follow_customers(db, current_user["user_id"], config)
+    
+    return [
+        PendingCustomerResponse(
+            customer_id=c.customer_id,
+            nickname=c.nickname,
+            intention_level=c.intention_level,
+            days_since_follow=c.days_since_follow,
+            reminder_reason=c.reminder_reason
+        )
+        for c in customers
+    ]
+
+
+@router.post("/test-webhook")
+async def test_webhook(
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db)
+):
+    """测试 Webhook 连通性"""
+    config = db.query(ReminderConfig).filter(
+        ReminderConfig.user_id == current_user["user_id"]
+    ).first()
+    
+    webhook_url = (config.webhook_url if config else None) or settings.WECOM_WEBHOOK_URL
+    
+    if not webhook_url:
+        raise HTTPException(status_code=400, detail="未配置 Webhook 地址")
+    
+    notifier = WeComNotifier(webhook_url)
+    
+    try:
+        result = await notifier.send_markdown(
+            f"## ✅ 智获客测试消息\n"
+            f"> 用户ID：{current_user['user_id']}\n"
+            f"> 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            f"Webhook 配置正确，可以接收跟进提醒！"
+        )
+        return {"ok": True, "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Webhook 测试失败：{str(e)}")
+
+
+@router.post("/send-now")
+async def send_reminder_now(
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db)
+):
+    """立即发送一次提醒（手动触发）"""
+    await send_daily_summary_for_user(current_user["user_id"])
+    return {"ok": True, "message": "提醒已发送"}
+3.4 P1：线索会话引擎
+3.4.1 数据模型
+python
+# backend/app/models/models.py 新增
+
+class Conversation(Base):
+    """会话记录"""
+    __tablename__ = "conversations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    platform = Column(String(32), nullable=False)
+    conversation_type = Column(String(32), nullable=False)  # comment / private_message
+    external_id = Column(String(128), nullable=True)  # 平台侧会话ID
+    status = Column(String(32), default="active")  # active / closed / takeover
+    ai_handled = Column(Boolean, default=True)
+    takeover_at = Column(DateTime, nullable=True)
+    takeover_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Message(Base):
+    """消息记录"""
+    __tablename__ = "messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=False)
+    role = Column(String(16), nullable=False)  # user / assistant / system
+    content = Column(Text, nullable=False)
+    intent = Column(String(64), nullable=True)  # AI 识别的意图
+    confidence = Column(Float, nullable=True)
+    reply_suggestion = Column(JSON, nullable=True)  # AI 推荐的回复
+    is_sent = Column(Boolean, default=False)  # 是否已发送
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class LeadProfile(Base):
+    """线索画像（自动抽取）"""
+    __tablename__ = "lead_profiles"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False, unique=True)
+    loan_amount_need = Column(String(32), nullable=True)  # 贷款需求金额
+    has_house = Column(Boolean, nullable=True)
+    has_car = Column(Boolean, nullable=True)
+    has_provident_fund = Column(Boolean, nullable=True)
+    credit_status = Column(String(32), nullable=True)  # good / fair / poor / unknown
+    urgency_level = Column(String(16), nullable=True)  # high / medium / low
+    extracted_phone = Column(String(20), nullable=True)
+    extracted_wechat = Column(String(64), nullable=True)
+    confidence_score = Column(Float, nullable=True)
+    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+3.4.2 回复建议 Skill
+python
+# backend/app/skills/reply_skill.py
+
+from app.skills import SkillRegistry, BaseSkill, SkillContext, SkillResult
+from app.services.mvp_knowledge_service import MvpKnowledgeService
+from app.services.ai_service import AIService
+
+
+@SkillRegistry.register
+class ReplySkill(BaseSkill):
+    """评论/私信回复建议技能"""
+    
+    name = "reply_suggestion"
+    version = "1.0.0"
+    description = "基于知识库生成评论/私信回复建议"
+    
+    async def execute(self, context: SkillContext) -> SkillResult:
+        input_data = context.input_data
+        user_message = input_data.get("message", "")
+        platform = input_data.get("platform", "xiaohongshu")
+        conversation_history = input_data.get("history", [])
+        
+        # 1. 意图识别
+        intent = await self._identify_intent(user_message)
+        
+        # 2. 知识库检索
+        from app.core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            knowledge_service = MvpKnowledgeService(db)
+            knowledge_results = knowledge_service.search(
+                query=user_message,
+                top_k=3,
+                filters={"platform": platform}
+            )
+        finally:
+            db.close()
+        
+        # 3. 生成回复建议
+        suggestions = await self._generate_suggestions(
+            user_message=user_message,
+            intent=intent,
+            knowledge_context=knowledge_results,
+            conversation_history=conversation_history
+        )
+        
+        # 4. 判断是否需要人工接管
+        should_takeover = self._check_takeover_conditions(intent, user_message)
+        
+        return SkillResult(
+            success=True,
+            data={
+                "intent": intent["type"],
+                "confidence": intent["confidence"],
+                "suggestions": suggestions,
+                "should_takeover": should_takeover,
+                "takeover_reason": intent.get("takeover_reason")
+            }
+        )
+    
+    async def _identify_intent(self, message: str) -> dict:
+        """意图识别"""
+        # 高意向关键词
+        high_intent_keywords = ["利率", "额度", "征信", "放款", "申请", "多久", "条件"]
+        # 风险关键词
+        risk_keywords = ["投诉", "骗子", "举报", "曝光", "黑心"]
+        
+        message_lower = message.lower()
+        
+        if any(kw in message for kw in risk_keywords):
+            return {"type": "complaint", "confidence": 0.9, "takeover_reason": "检测到投诉/负面内容"}
+        
+        if any(kw in message for kw in high_intent_keywords):
+            return {"type": "high_intent_inquiry", "confidence": 0.85}
+        
+        if "?" in message or "？" in message or "吗" in message:
+            return {"type": "general_inquiry", "confidence": 0.7}
+        
+        return {"type": "casual", "confidence": 0.6}
+    
+    async def _generate_suggestions(
+        self, 
+        user_message: str, 
+        intent: dict,
+        knowledge_context: list,
+        conversation_history: list
+    ) -> list:
+        """生成回复建议"""
+        # 组装上下文
+        context_text = "\n".join([
+            f"- {item.get('content', '')[:200]}" 
+            for item in knowledge_context[:3]
+        ]) if knowledge_context else "无相关知识库内容"
+        
+        prompt = f"""用户消息：{user_message}
+用户意图：{intent['type']}
+相关知识：
+{context_text}
+
+请生成3个回复建议，要求：
+1. 专业友好，不要过度承诺
+2. 引导用户提供更多信息或私信咨询
+3. 符合平台调性
+
+输出格式：
+回复1：...
+回复2：...
+回复3：...
+"""
+        
+        from app.integrations.ark import get_ark_client
+        client = get_ark_client()
+        response = await client.chat(prompt)
+        
+        # 解析回复
+        suggestions = []
+        for line in response.split("\n"):
+            if line.startswith("回复"):
+                suggestions.append(line.split("：", 1)[-1].strip())
+        
+        return suggestions[:3] if suggestions else ["感谢您的关注，详情可以私信我了解~"]
+    
+    def _check_takeover_conditions(self, intent: dict, message: str) -> bool:
+        """判断是否需要人工接管"""
+        if intent["type"] == "complaint":
+            return True
+        if intent["type"] == "high_intent_inquiry" and intent["confidence"] > 0.8:
+            return True
+        if len(message) > 200:  # 长消息可能是复杂问题
+            return True
+        return False
+3.5 P2：老板驾驶舱升级
+3.5.1 新增业务指标
+python
+# backend/app/services/dashboard_service.py 扩展
+
+class DashboardService:
+    
+    def get_business_metrics(self, db: Session, user_id: int) -> dict:
+        """获取业务核心指标"""
+        today = datetime.utcnow().date()
+        week_ago = today - timedelta(days=7)
+        
+        # 线索指标
+        leads_today = db.query(Lead).filter(
+            Lead.owner_id == user_id,
+            func.date(Lead.created_at) == today
+        ).count()
+        
+        high_intent_leads = db.query(Lead).filter(
+            Lead.owner_id == user_id,
+            Lead.intention_level == "high",
+            Lead.status.notin_(["converted", "lost"])
+        ).count()
+        
+        # AI 处理率
+        total_conversations = db.query(Conversation).filter(
+            Conversation.takeover_by.is_(None) | (Conversation.takeover_by == user_id)
+        ).count()
+        
+        ai_handled = db.query(Conversation).filter(
+            Conversation.ai_handled == True
+        ).count()
+        
+        ai_handle_rate = (ai_handled / total_conversations * 100) if total_conversations > 0 else 0
+        
+        # 人工接管率
+        manual_takeover = db.query(Conversation).filter(
+            Conversation.takeover_by.isnot(None)
+        ).count()
+        
+        takeover_rate = (manual_takeover / total_conversations * 100) if total_conversations > 0 else 0
+        
+        # 内容效果
+        published_count = db.query(PublishTask).filter(
+            PublishTask.owner_id == user_id,
+            PublishTask.status == "closed",
+            func.date(PublishTask.created_at) >= week_ago
+        ).count()
+        
+        leads_from_content = db.query(Lead).filter(
+            Lead.owner_id == user_id,
+            Lead.source == "content",
+            func.date(Lead.created_at) >= week_ago
+        ).count()
+        
+        content_to_lead_rate = (leads_from_content / published_count * 100) if published_count > 0 else 0
+        
+        return {
+            "leads_today": leads_today,
+            "high_intent_leads": high_intent_leads,
+            "ai_handle_rate": round(ai_handle_rate, 1),
+            "takeover_rate": round(takeover_rate, 1),
+            "content_to_lead_rate": round(content_to_lead_rate, 1),
+            "published_this_week": published_count,
+            "leads_this_week": leads_from_content
+        }
+    
+    def get_conversion_funnel(self, db: Session, user_id: int) -> dict:
+        """获取转化漏斗数据"""
+        week_ago = datetime.utcnow() - timedelta(days=7)
+        
+        # 各阶段数量
+        content_count = db.query(ContentAsset).filter(
+            ContentAsset.owner_id == user_id,
+            ContentAsset.created_at >= week_ago
+        ).count()
+        
+        published_count = db.query(PublishTask).filter(
+            PublishTask.owner_id == user_id,
+            PublishTask.status == "closed",
+            PublishTask.created_at >= week_ago
+        ).count()
+        
+        lead_count = db.query(Lead).filter(
+            Lead.owner_id == user_id,
+            Lead.created_at >= week_ago
+        ).count()
+        
+        customer_count = db.query(Customer).filter(
+            Customer.owner_id == user_id,
+            Customer.created_at >= week_ago
+        ).count()
+        
+        deal_count = db.query(Customer).filter(
+            Customer.owner_id == user_id,
+            Customer.customer_status == "deal_closed",
+            Customer.created_at >= week_ago
+        ).count()
+        
+        return {
+            "funnel": [
+                {"stage": "内容生成", "count": content_count},
+                {"stage": "已发布", "count": published_count},
+                {"stage": "获得线索", "count": lead_count},
+                {"stage": "转化客户", "count": customer_count},
+                {"stage": "成交", "count": deal_count}
+            ],
+            "conversion_rates": {
+                "content_to_publish": round(published_count / content_count * 100, 1) if content_count > 0 else 0,
+                "publish_to_lead": round(lead_count / published_count * 100, 1) if published_count > 0 else 0,
+                "lead_to_customer": round(customer_count / lead_count * 100, 1) if lead_count > 0 else 0,
+                "customer_to_deal": round(deal_count / customer_count * 100, 1) if customer_count > 0 else 0
+            }
+        }
+📅 四、实施路线图
+plaintext
+┌─────────────────────────────────────────────────────────────────────┐
+│                        实施路线图（8周）                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  Phase 1：基础设施（Week 1-2）                                       │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ □ 数据库迁移（workflow/reminder 表）                          │   │
+│  │ □ Skill 基类与注册机制                                        │   │
+│  │ □ 统一状态机定义                                              │   │
+│  │ □ 现有 service 改造为 Skill                                   │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  Phase 2：企微提醒（Week 3）                                         │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ □ WeComNotifier 服务实现                                      │   │
+│  │ □ reminder_tasks 完整实现                                     │   │
+│  │ □ 提醒配置 API                                                │   │
+│  │ □ 前端设置页面                                                │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  Phase 3：主链路串联（Week 4）                                       │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ □ content_pipeline 工作流                                     │   │
+│  │ □ publish_pipeline 工作流                                     │   │
+│  │ □ 工作流 API 与前端状态展示                                    │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  Phase 4：会话引擎（Week 5-6）                                       │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ □ Conversation/Message 数据模型                               │   │
+│  │ □ ReplySkill 回复建议                                         │   │
+│  │ □ 意图识别 + 画像抽取                                         │   │
+│  │ □ 人工接管流程                                                │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  Phase 5：驾驶舱升级（Week 7）                                       │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ □ 业务指标 API                                                │   │
+│  │ □ 转化漏斗                                                    │   │
+│  │ □ 实时监控（可选 WebSocket）                                  │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  Phase 6：集成测试与优化（Week 8）                                   │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ □ 端到端测试                                                  │   │
+│  │ □ 性能优化                                                    │   │
+│  │ □ 文档更新                                                    │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+⚠️ 五、开发规范提醒
+根据项目既有规范，开发时必须遵守：
+规范	要求
+生成接口	必须执行5步链路：知识库检索→上下文编排→3版本生成→合规审核→最终推荐
+数据库变更	必须通过 Alembic 迁移，禁止 create_all 隐式改表
+知识库	必须结构化存储，禁止当问答库用
+UI 开发	禁止 UI-only 开发，必须配套后端 API
+异步任务	使用 asyncio + 队列，避免阻塞主线程
+🔑 六、关键成功指标
+指标	当前值	目标值	达成条件
+主链路自动化率	0%	80%	采集→发布自动编排
+AI 会话处理率	0%	60%	评论/私信首轮自动回复
+企微提醒覆盖率	0%	100%	所有待跟进客户自动提醒

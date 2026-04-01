@@ -1,10 +1,17 @@
+import hashlib
+import time
 from datetime import datetime, timedelta
 from typing import Optional
+
+from app.core.config import settings
+from app.core.redis import get_redis_client
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.core.config import settings
+
+# Token blacklist key prefix for Redis
+TOKEN_BLACKLIST_PREFIX = "token_blacklist:"
 
 # Password hashing
 # Use pbkdf2_sha256 as default to avoid bcrypt backend issues in some Windows environments.
@@ -33,10 +40,46 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     else:
         expire = datetime.utcnow() + timedelta(minutes=15)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(
-        to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM
-    )
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
+
+
+def _hash_token(token: str) -> str:
+    """Generate SHA256 hash of token for blacklist key."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def blacklist_token(token: str, expires_delta: int) -> bool:
+    """
+    Add token to blacklist with TTL equal to token's remaining lifetime.
+    Returns True if successful, False if Redis is unavailable.
+    """
+    try:
+        redis = get_redis_client()
+        if redis:
+            token_hash = _hash_token(token)
+            redis.setex(f"{TOKEN_BLACKLIST_PREFIX}{token_hash}", expires_delta, "1")
+            return True
+    except Exception:
+        # Graceful degradation: if Redis is unavailable, skip blacklisting
+        pass
+    return False
+
+
+def is_token_blacklisted(token: str) -> bool:
+    """
+    Check if token is in blacklist.
+    Returns False if Redis is unavailable (graceful degradation).
+    """
+    try:
+        redis = get_redis_client()
+        if redis:
+            token_hash = _hash_token(token)
+            return redis.exists(f"{TOKEN_BLACKLIST_PREFIX}{token_hash}") > 0
+    except Exception:
+        # Graceful degradation: if Redis is unavailable, assume not blacklisted
+        pass
+    return False
 
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
@@ -51,6 +94,11 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
             user_id = int(subject)
         except (TypeError, ValueError):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+        # Check if token is blacklisted
+        if is_token_blacklisted(token):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token已失效，请重新登录")
+
         return {"user_id": user_id}
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)

@@ -301,10 +301,18 @@ export type Customer = {
   id: number;
   nickname: string;
   wechat_id?: string;
+  phone?: string;
   source_platform: string;
   tags: string[];
   intention_level: string;
   customer_status: string;
+  // 扩展字段
+  company?: string;
+  position?: string;
+  industry?: string;
+  deal_value?: number;
+  email?: string;
+  address?: string;
   created_at: string;
 };
 
@@ -325,6 +333,50 @@ export type LeadItem = {
   intention_level: string;
   note?: string;
   created_at: string;
+};
+
+// 线索归因分析类型
+export type LeadAttributionPlatform = {
+  platform: string;
+  lead_count: number;
+  valid_count: number;
+  conversion_count: number;
+  conversion_rate: number;
+};
+
+export type LeadAttributionSource = {
+  source: string;
+  lead_count: number;
+  valid_count: number;
+  conversion_count: number;
+  conversion_rate: number;
+};
+
+export type LeadAttributionTopContent = {
+  title: string;
+  platform: string;
+  lead_count: number;
+  conversions: number;
+};
+
+export type LeadAttribution = {
+  by_platform: LeadAttributionPlatform[];
+  by_source: LeadAttributionSource[];
+  top_content: LeadAttributionTopContent[];
+  period_days: number;
+};
+
+// 转化漏斗类型
+export type LeadFunnelStage = {
+  stage: string;
+  stage_label: string;
+  count: number;
+  rate: number;
+};
+
+export type LeadFunnel = {
+  stages: LeadFunnelStage[];
+  period_days: number;
 };
 
 // ═══════════ MVP 核心类型 ═══════════
@@ -711,4 +763,159 @@ export interface WeightAdjustmentResult {
     old_value: number;
     new_value: number;
   }>;
+}
+
+// ========== 提醒系统 ==========
+export interface ReminderConfig {
+  id: number;
+  user_id: number;
+  webhook_url: string | null;
+  enabled: boolean;
+  daily_summary_time: string;
+  new_customer_hours: number;
+  high_intent_days: number;
+  normal_days: number;
+}
+
+export interface ReminderConfigUpdate {
+  webhook_url?: string | null;
+  enabled?: boolean;
+  daily_summary_time?: string;
+  new_customer_hours?: number;
+  high_intent_days?: number;
+  normal_days?: number;
+}
+
+export interface PendingCustomer {
+  customer_id: number;
+  nickname: string;
+  intention_level: string;
+  days_since_follow: number;
+  reminder_reason: string;
+}
+
+// ========== 会话引擎 ==========
+export interface ConversationItem {
+  id: number;
+  lead_id: number | null;
+  customer_id: number | null;
+  platform: string;
+  conversation_type: string;
+  status: string;
+  ai_handled: boolean;
+  takeover_at: string | null;
+  takeover_by: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface MessageItem {
+  id: number;
+  conversation_id: number;
+  role: string;
+  content: string;
+  intent: string | null;
+  confidence: number | null;
+  reply_suggestion: Record<string, unknown> | null;
+  is_sent: boolean;
+  created_at: string | null;
+}
+
+export interface ReplyRequest {
+  content: string;
+  is_sent?: boolean;
+}
+
+export interface SuggestRequest {
+  message: string;
+  platform?: string;
+}
+
+export interface SuggestResponse {
+  intent: string;
+  confidence: number;
+  suggestions: string[];
+  should_takeover: boolean;
+  takeover_reason: string | null;
+}
+
+// ========== 驾驶舱指标 ==========
+export interface BusinessMetrics {
+  leads_today: number;
+  high_intent_leads: number;
+  ai_handle_rate: number;
+  takeover_rate: number;
+  content_to_lead_rate: number;
+  published_this_week: number;
+  leads_this_week: number;
+}
+
+export interface FunnelStage {
+  stage: string;
+  count: number;
+}
+
+export interface ConversionRates {
+  content_to_publish: number;
+  publish_to_lead: number;
+  lead_to_customer: number;
+  customer_to_deal: number;
+}
+
+export interface ConversionFunnel {
+  funnel: FunnelStage[];
+  conversion_rates: ConversionRates;
+}
+
+// ========== 引流策略 ==========
+export interface TrafficStrategy {
+  id: number;
+  owner_id: number;
+  name: string;
+  platform: string;  // xiaohongshu/douyin/zhihu
+  strategy_type: string;  // cta/comment_guide/profile_link/live_stream/group
+  target_audience?: string;
+  cta_template?: string;
+  budget?: number;
+  performance_metrics?: {
+    views?: number;
+    clicks?: number;
+    leads?: number;
+    conversions?: number;
+    cost_per_lead?: number;
+  };
+  status: string;  // active/paused/archived
+  description?: string;
+  start_date?: string;
+  end_date?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TrafficStrategyPlatformStat {
+  platform: string;
+  strategy_count: number;
+  total_budget: number;
+}
+
+export interface TrafficStrategyStatusStat {
+  status: string;
+  count: number;
+}
+
+export interface TrafficStrategyPerformance {
+  total_views: number;
+  total_clicks: number;
+  total_leads: number;
+  total_conversions: number;
+  cost_per_lead: number;
+  conversion_rate: number;
+}
+
+export interface TrafficStrategySummary {
+  total_strategies: number;
+  total_budget: number;
+  by_platform: TrafficStrategyPlatformStat[];
+  by_status: TrafficStrategyStatusStat[];
+  performance: TrafficStrategyPerformance;
 }

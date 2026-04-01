@@ -1,6 +1,6 @@
 # ============================================================
 # 智获客 - 生产部署 (服务器: 116.62.86.160)
-# 使用方法: docker compose -f docker-compose.prod.yml up -d --build
+# 使用方法: docker compose --env-file .env.server -f docker-compose.prod.yml up -d --build
 # ============================================================
 
 services:
@@ -35,7 +35,16 @@ services:
     container_name: zhihuokeke-backend
     restart: unless-stopped
     env_file:
-      - .env
+      - .env.server
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_URL: postgresql://postgres:${DATABASE_PASSWORD}@postgres:5432/zhihuokeke
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      OLLAMA_BASE_URL: http://ollama:11434
+      DEBUG: "False"
     ports:
       - "8000:8000"
     depends_on:
@@ -99,6 +108,87 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  # ── Celery Worker ───────────────────────────────────────
+  celery-worker:
+    build: .
+    container_name: zhihuokeke-celery-worker
+    restart: unless-stopped
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
+    env_file:
+      - .env.server
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_URL: postgresql://postgres:${DATABASE_PASSWORD}@postgres:5432/zhihuokeke
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      OLLAMA_BASE_URL: http://ollama:11434
+      DEBUG: "False"
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Celery Beat ─────────────────────────────────────────
+  celery-beat:
+    build: .
+    container_name: zhihuokeke-celery-beat
+    restart: unless-stopped
+    command: celery -A app.celery_app beat --loglevel=info
+    env_file:
+      - .env.server
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_URL: postgresql://postgres:${DATABASE_PASSWORD}@postgres:5432/zhihuokeke
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      OLLAMA_BASE_URL: http://ollama:11434
+      DEBUG: "False"
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Nginx 前端代理 ─────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: zhihuokeke-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /opt/zhihuokeke/desktop/dist:/usr/share/nginx/html:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:

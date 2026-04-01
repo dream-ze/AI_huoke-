@@ -4,6 +4,31 @@ set -e
 
 echo "===== 智获客 Backend Startup ====="
 
+# ── 检查必要环境变量 ─────────────────────────────────────────────
+echo "检查必要环境变量..."
+
+# 必填配置检查
+required_vars=("DATABASE_URL" "SECRET_KEY")
+for var in "${required_vars[@]}"; do
+    if [ -z "${!var}" ]; then
+        echo "错误: 环境变量 $var 未设置"
+        exit 1
+    fi
+done
+
+# SECRET_KEY安全检查
+if [ ${#SECRET_KEY} -lt 32 ]; then
+    echo "错误: SECRET_KEY长度不足32字符"
+    exit 1
+fi
+
+if [ "$SECRET_KEY" = "change-me-to-a-real-secret-key-at-least-32-chars" ] || [ "$SECRET_KEY" = "your-secret-key-here" ]; then
+    echo "错误: SECRET_KEY使用了默认占位值，请设置安全的密钥"
+    exit 1
+fi
+
+echo "环境变量检查通过"
+
 # ── 等待 PostgreSQL 就绪 ──────────────────────────────────────────
 echo "Waiting for PostgreSQL..."
 until python3 - <<'PY' 2>/dev/null
@@ -21,17 +46,27 @@ done
 echo "PostgreSQL is ready!"
 
 # ── 初始化数据库表（幂等）────────────────────────────────────────
-echo "Running Alembic migrations..."
-if python3 -c "import alembic" 2>/dev/null; then
-  if alembic upgrade head; then
-    echo "Alembic migrations applied!"
-  else
-    echo "[WARN] Alembic migrations failed, falling back to create_all..."
-    python3 init_db.py
-  fi
-else
-  echo "[WARN] Alembic not installed, falling back to create_all..."
-  python3 init_db.py
+echo "执行数据库迁移..."
+alembic upgrade head
+if [ $? -ne 0 ]; then
+    echo "错误: 数据库迁移失败！请检查迁移文件和数据库连接。"
+    exit 1
+fi
+echo "数据库迁移成功！"
+
+# ── Redis连接检查（非强制，降级模式可运行）────────────────────────
+if [ -n "$REDIS_URL" ]; then
+    echo "检查Redis连接..."
+    python3 -c "
+import redis
+import os
+try:
+    r = redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'))
+    r.ping()
+    print('Redis连接正常')
+except Exception as e:
+    print(f'警告: Redis连接失败({e})，限流和缓存功能将降级')
+" 2>/dev/null || echo "警告: Redis检查脚本执行失败，继续启动..."
 fi
 
 # ── 可选：创建测试用户（生产默认关闭）─────────────────────────────
@@ -44,4 +79,4 @@ fi
 
 # ── 启动 uvicorn ────────────────────────────────────────────────
 echo "Starting uvicorn server..."
-exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level ${LOG_LEVEL:-info}
