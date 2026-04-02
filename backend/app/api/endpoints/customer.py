@@ -25,13 +25,17 @@ def create_customer(
 @router.get("/list")
 def list_customers(
     status: str = Query(None),
+    intention_level: str = Query(None),
+    search: str = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, le=1000),
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    """List user's customers"""
-    customers = CustomerService.get_user_customers(db, current_user["user_id"], status, skip, limit)
+    """List user's customers with filters"""
+    customers = CustomerService.get_user_customers(
+        db, current_user["user_id"], status, intention_level, search, skip, limit
+    )
     return customers
 
 
@@ -89,7 +93,7 @@ def export_customers_csv(
     db: Session = Depends(get_db),
 ):
     """Export current user's customers as CSV."""
-    customers = CustomerService.get_user_customers(db, current_user["user_id"], status, 0, 5000)
+    customers = CustomerService.get_user_customers(db, current_user["user_id"], status, None, None, 0, 5000)
 
     output = io.StringIO()
     writer = csv.writer(output)

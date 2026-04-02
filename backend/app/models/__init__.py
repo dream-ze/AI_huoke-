@@ -11,8 +11,17 @@
     from app.models.content import ContentAsset
 """
 
+# 归因模型
+from app.models.attribution import LeadSourceAttribution
+
+# 审计日志模型
+from app.models.audit import AuditLog
+
 # 基础
 from app.models.base import Base, TimestampMixin
+
+# 活动模型
+from app.models.campaign import Campaign
 
 # 采集模型
 from app.models.collect import (
@@ -42,6 +51,9 @@ from app.models.crm import Customer, Lead, LeadProfile
 # 枚举类型
 from app.models.enums import ContentType, CustomerStatus, IntentionLevel, PlatformType, RiskLevel
 
+# 跟进记录模型
+from app.models.follow_up import FollowUpRecord
+
 # 生成任务模型
 from app.models.generation import GenerationTask
 
@@ -53,6 +65,7 @@ from app.models.knowledge import KnowledgeChunk, KnowledgeDocument, PromptTempla
 
 # MVP模型
 from app.models.mvp import (
+    AutoRewriteTemplate,
     MvpComplianceRule,
     MvpGenerationFeedback,
     MvpGenerationResult,
@@ -65,10 +78,17 @@ from app.models.mvp import (
     MvpMaterialTagRel,
     MvpPromptTemplate,
     MvpTag,
+    PlatformComplianceRule,
 )
 
 # 发布模型
 from app.models.publish import PublishRecord, PublishTask, PublishTaskFeedback
+
+# 发布账号模型
+from app.models.publish_account import PublishAccount
+
+# 发布内容模型
+from app.models.published_content import PublishedContent
 
 # 社交账号模型
 from app.models.social import Conversation, Message, SocialAccount
@@ -86,6 +106,8 @@ __all__ = [
     # 基础
     "Base",
     "TimestampMixin",
+    # 审计日志
+    "AuditLog",
     # 枚举
     "PlatformType",
     "ContentType",
@@ -101,10 +123,20 @@ __all__ = [
     "ContentSnapshot",
     "ContentInsight",
     "RewrittenContent",
+    # 归因
+    "LeadSourceAttribution",
+    # 活动
+    "Campaign",
     # CRM
     "Lead",
     "Customer",
     "LeadProfile",
+    # 跟进记录
+    "FollowUpRecord",
+    # 发布账号
+    "PublishAccount",
+    # 发布内容
+    "PublishedContent",
     # 发布
     "PublishRecord",
     "PublishTask",
@@ -138,6 +170,8 @@ __all__ = [
     "MvpGenerationFeedback",
     "MvpKnowledgeQualityScore",
     "MvpKnowledgeRelation",
+    "PlatformComplianceRule",
+    "AutoRewriteTemplate",
     # Insight
     "InsightTopic",
     "InsightAuthorProfile",

@@ -747,6 +747,42 @@ export async function generateFullPipeline(payload: {
   return data;
 }
 
+// 强约束内容生成
+export async function constrainedGenerate(payload: {
+  platform: string;
+  audience: string;
+  product_type: string;
+  business_scenario?: string;
+  target_action?: string;
+  risk_level?: string;
+  reference_material_ids?: number[];
+  forbidden_expressions?: string[];
+  compliance_notes?: string;
+  guidance_method?: string;
+  version_count?: number;
+  style?: string;
+  content_intent?: string;
+  model?: string;
+  extra_requirements?: string;
+}) {
+  const { data } = await api.post("/api/mvp/generate/constrained", payload, {
+    timeout: 180000,  // 强约束生成需要较长时间
+  });
+  return data as {
+    versions: Array<{
+      title: string;
+      hook: string;
+      body: string;
+      call_to_action: string;
+      risk_notes?: string;
+      compliance_level: string;
+    }>;
+    recommended_version: number;
+    input_constraints_applied: Record<string, any>;
+    generation_metadata: Record<string, any>;
+  };
+}
+
 // ── 采集中心 V1 ──────────────────────────────────────────
 
 // 采集搜索

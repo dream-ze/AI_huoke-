@@ -48,7 +48,10 @@ class ExternalAPIError(BusinessError):
 
 
 class RateLimitError(BusinessError):
-    """请求频率限制错误"""
+    """
+    请求频率限制错误
+
+    """
 
     def __init__(self, message: str = "请求过于频繁"):
         super().__init__(message=message, code="RATE_LIMIT_EXCEEDED", status_code=429)

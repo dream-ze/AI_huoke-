@@ -239,6 +239,36 @@ class LeadCreate(BaseModel):
     note: Optional[str] = None
 
 
+class LeadFromPublishRequest(BaseModel):
+    """从发布内容创建线索的请求"""
+
+    published_content_id: int = Field(..., description="发布内容ID")
+    platform: str = Field(..., description="触点平台")
+    contact_info: Dict[str, Optional[str]] = Field(
+        default_factory=dict, description="联系信息，包含 phone(手机)/wechat(微信)"
+    )
+    channel: str = Field(..., description="渠道: 私信/表单/加微")
+    audience_tags: List[str] = Field(default_factory=list, description="受众标签")
+    notes: Optional[str] = Field(None, description="备注")
+
+
+class LeadBatchImportRequest(BaseModel):
+    """批量导入线索请求"""
+
+    leads: List[LeadCreate] = Field(..., min_length=1, max_length=500, description="线索数据列表")
+
+
+class LeadBatchImportResponse(BaseModel):
+    """批量导入线索响应"""
+
+    total: int = Field(..., description="总数")
+    success: int = Field(..., description="成功数")
+    failed: int = Field(..., description="失败数")
+    duplicates: int = Field(default=0, description="重复数")
+    created_ids: List[int] = Field(default_factory=list, description="创建的线索ID列表")
+    failed_details: List[Dict[str, Any]] = Field(default_factory=list, description="失败详情")
+
+
 class LeadStatusUpdate(BaseModel):
     status: str
 
@@ -1066,3 +1096,200 @@ class SocialAccountResponse(BaseModel):
 class SocialAccountPlatform(BaseModel):
     value: str
     label: str
+
+
+# ===== Platform Rule Management Schemas =====
+class PlatformRuleCreate(BaseModel):
+    """创建平台合规规则请求"""
+
+    platform: str = Field(..., description="平台名称 (xiaohongshu/douyin/zhihu)")
+    keyword_or_pattern: str = Field(..., min_length=1, max_length=500, description="关键词或正则表达式")
+    risk_level: str = Field(..., description="风险等级 (high/medium/low)")
+    suggestion: str = Field(..., description="修改建议")
+    rule_category: str = Field(..., description="规则分类")
+    description: Optional[str] = Field(None, description="规则描述")
+
+
+class PlatformRuleUpdate(BaseModel):
+    """更新平台合规规则请求"""
+
+    keyword_or_pattern: Optional[str] = Field(None, min_length=1, max_length=500)
+    risk_level: Optional[str] = Field(None, description="风险等级 (high/medium/low)")
+    suggestion: Optional[str] = Field(None)
+    rule_category: Optional[str] = Field(None)
+    description: Optional[str] = Field(None)
+    is_active: Optional[bool] = Field(None, description="是否激活")
+
+
+class PlatformRuleResponse(BaseModel):
+    """平台合规规则响应"""
+
+    id: int
+    platform: str
+    keyword_or_pattern: str
+    risk_level: str
+    suggestion: str
+    rule_category: str
+    description: Optional[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class PlatformRuleListResponse(BaseModel):
+    """平台规则列表响应"""
+
+    items: List[PlatformRuleResponse]
+    total: int
+    page: int
+    size: int
+
+
+class PlatformRuleImportResponse(BaseModel):
+    """YAML导入规则响应"""
+
+    platform: str
+    imported_count: int
+    skipped_count: int
+    total_count: int
+    message: str
+
+
+class PlatformRuleReloadCacheResponse(BaseModel):
+    """刷新规则缓存响应"""
+
+    success: bool
+    platforms: List[str]
+    message: str
+
+
+# ===== Attribution Schemas =====
+class AttributionCreate(BaseModel):
+    """归因创建请求"""
+
+    platform: str = Field(..., description="触点平台")
+    account_id: Optional[int] = Field(None, description="发布账号ID")
+    content_id: Optional[int] = Field(None, description="发布内容ID")
+    campaign_id: Optional[int] = Field(None, description="活动ID")
+    audience_tags: List[str] = Field(default_factory=list, description="受众标签")
+    topic_tags: List[str] = Field(default_factory=list, description="主题标签")
+    channel: Optional[str] = Field(None, description="渠道")
+    first_contact_time: Optional[datetime] = Field(None, description="首次接触时间")
+    touchpoint_url: Optional[str] = Field(None, description="触点URL")
+    attribution_type: str = Field(default="last_touch", description="归因类型")
+
+
+class AttributionChainResponse(BaseModel):
+    """完整归因链响应"""
+
+    lead_id: int
+    platform: Optional[str] = None
+    account_name: Optional[str] = None
+    content_title: Optional[str] = None
+    campaign_name: Optional[str] = None
+    audience_tags: List[str] = Field(default_factory=list)
+    topic_tags: List[str] = Field(default_factory=list)
+    channel: Optional[str] = None
+    first_contact_time: Optional[datetime] = None
+    current_stage: str = "new"
+    conversion_result: Optional[str] = None
+    touchpoint_url: Optional[str] = None
+
+
+class ContentROIResponse(BaseModel):
+    """内容ROI响应"""
+
+    content_id: int
+    content_title: Optional[str] = None
+    platform: Optional[str] = None
+    lead_count: int = 0
+    conversion_count: int = 0
+    stage_distribution: Dict[str, int] = Field(default_factory=dict)
+    conversion_rate: float = 0.0
+
+
+class CampaignAttributionReport(BaseModel):
+    """活动归因报告响应"""
+
+    campaign_id: int
+    campaign_name: Optional[str] = None
+    total_leads: int = 0
+    total_conversions: int = 0
+    by_platform: List[Dict[str, Any]] = Field(default_factory=list)
+    by_account: List[Dict[str, Any]] = Field(default_factory=list)
+    by_content: List[Dict[str, Any]] = Field(default_factory=list)
+    date_range: Dict[str, Optional[str]] = Field(default_factory=dict)
+
+
+class PlatformAttributionSummary(BaseModel):
+    """平台归因汇总"""
+
+    platform: str
+    lead_count: int = 0
+    conversion_count: int = 0
+    conversion_rate: float = 0.0
+    valid_lead_count: int = 0
+
+
+class AccountAttributionSummary(BaseModel):
+    """账号归因汇总"""
+
+    account_id: Optional[int] = None
+    account_name: str
+    platform: Optional[str] = None
+    lead_count: int = 0
+    conversion_count: int = 0
+    conversion_rate: float = 0.0
+    valid_lead_count: int = 0
+
+
+# ===== Three Layer Dashboard Schemas =====
+class ContentLayerMetrics(BaseModel):
+    """内容层指标"""
+
+    today_generation_count: int = Field(default=0, description="今日生成数")
+    compliance_pass_rate: float = Field(default=0.0, description="合规通过率(%)")
+    adoption_rate: float = Field(default=0.0, description="人工采纳率(%)")
+    publish_rate: float = Field(default=0.0, description="发布率(%)")
+    total_materials: int = Field(default=0, description="素材总数")
+    knowledge_items: int = Field(default=0, description="知识库条目数")
+
+
+class AcquisitionLayerMetrics(BaseModel):
+    """获客层指标"""
+
+    total_leads: int = Field(default=0, description="总线索数")
+    leads_by_platform: List[Dict[str, Any]] = Field(
+        default_factory=list, description="各平台线索数 [{platform, count}]"
+    )
+    leads_by_account: List[Dict[str, Any]] = Field(
+        default_factory=list, description="各账号线索数 [{account_name, count}]"
+    )
+    leads_by_topic: List[Dict[str, Any]] = Field(default_factory=list, description="各主题线索数 [{topic, count}]")
+    wechat_add_rate: float = Field(default=0.0, description="加微率(%)")
+    contact_rate: float = Field(default=0.0, description="留资率(%)")
+
+
+class ConversionLayerMetrics(BaseModel):
+    """转化层指标"""
+
+    grade_distribution: Dict[str, float] = Field(
+        default_factory=dict, description="ABCD线索占比 {A: %, B: %, C: %, D: %}"
+    )
+    avg_first_response_hours: float = Field(default=0.0, description="平均首次响应时长(小时)")
+    followup_completion_rate: float = Field(default=0.0, description="跟进完成率(%)")
+    conversion_rate: float = Field(default=0.0, description="成交/放款转化率(%)")
+    total_converted: int = Field(default=0, description="总转化数")
+    total_revenue: float = Field(default=0.0, description="预估收入")
+
+
+class ThreeLayerDashboard(BaseModel):
+    """三层看板总览"""
+
+    content: ContentLayerMetrics
+    acquisition: AcquisitionLayerMetrics
+    conversion: ConversionLayerMetrics
+    period: str = Field(default="today", description="统计周期: today/week/month/all")

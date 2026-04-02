@@ -51,6 +51,10 @@ export const apiRoutes = {
     statsByPlatform: `${API_PREFIX}/publish/stats/by-platform`,
     roiTrend: `${API_PREFIX}/publish/stats/roi-trend`,
     contentAnalysis: `${API_PREFIX}/publish/stats/content-analysis`,
+    // 追踪码与线索关联
+    track: (trackingCode: string) => `${API_PREFIX}/publish/track/${trackingCode}`,
+    accountLeads: (accountId: number) => `${API_PREFIX}/publish/accounts/${accountId}/leads`,
+    contentLeads: (contentId: number) => `${API_PREFIX}/publish/contents/${contentId}/leads`,
   },
   insight: {
     topics: `${API_PREFIX}/insight/topics`,

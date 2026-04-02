@@ -1,3 +1,109 @@
 version: 1
 platform: xiaohongshu
-rules: []
+rules:
+  # ===== 通用规则：绝对承诺类 =====
+  - keyword_or_pattern: "必过|包过|秒批|秒下"
+    risk_level: high
+    suggestion: "建议改为'审核通过率较高'或'快速审核'"
+    rule_category: absolute_promise
+    description: "禁止使用绝对承诺通过的表述"
+
+  - keyword_or_pattern: "100%通过|百分之百|一定通过"
+    risk_level: high
+    suggestion: "建议删除具体百分比，改为'通过率较高'"
+    rule_category: absolute_promise
+    description: "禁止使用百分比形式承诺通过"
+
+  - keyword_or_pattern: "不下款赔你|不成功不收费|包你下款"
+    risk_level: high
+    suggestion: "建议删除此类承诺，客观描述产品特点"
+    rule_category: absolute_promise
+    description: "禁止使用赔付承诺诱导用户"
+
+  # ===== 通用规则：虚假宣传类 =====
+  - keyword_or_pattern: "零利息|免息|0利息|零利率"
+    risk_level: high
+    suggestion: "建议明确说明实际利率区间，如'低利率'"
+    rule_category: false_advertising
+    description: "禁止使用零利息等虚假利率宣传"
+
+  - keyword_or_pattern: "无门槛|零门槛|无条件|免审核"
+    risk_level: high
+    suggestion: "建议改为'申请条件简单'或'审核流程便捷'"
+    rule_category: false_advertising
+    description: "禁止宣传无需任何条件即可贷款"
+
+  - keyword_or_pattern: "无视征信|不看征信|征信黑也能"
+    risk_level: high
+    suggestion: "建议改为'对征信要求较低'或'征信瑕疵可沟通'"
+    rule_category: false_advertising
+    description: "禁止宣称可以无视征信状况"
+
+  - keyword_or_pattern: "黑户可贷|黑名单可贷|征信花户"
+    risk_level: high
+    suggestion: "建议避免使用'黑户'等敏感词，客观说明准入条件"
+    rule_category: inducement
+    description: "禁止诱导征信不良用户违规申请"
+
+  # ===== 通用规则：利率表述规范 =====
+  - keyword_or_pattern: "年化\\d+%|年利率\\d+"
+    risk_level: medium
+    suggestion: "建议标注'年化利率（单利）'并注明利率区间范围"
+    rule_category: rate_expression
+    description: "利率表述需符合监管规范，注明计算方式"
+
+  # ===== 通用规则：风险提示缺失 =====
+  - keyword_or_pattern: "贷款|借款|借钱|贷"
+    risk_level: low
+    suggestion: "建议在内容末尾添加'借贷有风险，请理性消费'"
+    rule_category: risk_warning
+    description: "贷款相关内容需包含风险提示"
+
+  # ===== 小红书平台特有规则 =====
+  - keyword_or_pattern: "微信|加我V|加V|私聊加V|V信"
+    risk_level: high
+    suggestion: "建议删除联系方式，引导用户通过平台官方渠道咨询"
+    rule_category: platform_specific
+    description: "小红书禁止在内容中留微信号等联系方式"
+
+  - keyword_or_pattern: "电话|手机号|联系我|咨询热线"
+    risk_level: high
+    suggestion: "建议删除电话号码，使用平台私信功能"
+    rule_category: platform_specific
+    description: "小红书禁止在内容中留电话号码"
+
+  - keyword_or_pattern: "私我|私信我|评论区见|评论区留言"
+    risk_level: high
+    suggestion: "建议直接在内容中提供有效信息，避免引流话术"
+    rule_category: platform_specific
+    description: "小红书禁止使用引流到私域的话术"
+
+  - keyword_or_pattern: "日赚|月赚|轻松赚|躺赚|日入"
+    risk_level: high
+    suggestion: "建议删除夸大收益表述，客观描述产品功能"
+    rule_category: false_advertising
+    description: "小红书禁止使用夸大收益类表述"
+
+  - keyword_or_pattern: "点击主页|看主页|主页有|进主页"
+    risk_level: medium
+    suggestion: "建议在内容中直接说明关键信息"
+    rule_category: platform_specific
+    description: "小红书不建议引导用户跳转主页引流"
+
+  - keyword_or_pattern: "限时|仅限今天|最后.*天|错过不再"
+    risk_level: medium
+    suggestion: "建议删除紧迫感话术，客观说明产品优势"
+    rule_category: inducement
+    description: "小红书不建议使用制造紧迫感的营销话术"
+
+  - keyword_or_pattern: "分享赚钱|推荐奖励|邀请返现|拉人赚钱"
+    risk_level: high
+    suggestion: "建议删除涉及拉新奖励的表述"
+    rule_category: inducement
+    description: "小红书禁止传销性质的拉新推广"
+
+  - keyword_or_pattern: "评论区+微信|评论区+联系方式|留资"
+    risk_level: high
+    suggestion: "建议完全避免在评论区引导留联系方式"
+    rule_category: platform_specific
+    description: "小红书禁止评论区引导留资行为"

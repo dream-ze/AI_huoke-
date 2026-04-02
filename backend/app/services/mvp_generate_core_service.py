@@ -8,10 +8,19 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List
+import time
+from typing import Any, Dict, List, Optional
 
 from app.models.models import MvpGenerationResult, MvpInboxItem, MvpMaterialItem
-from app.schemas.generate_schema import ComplianceResult, FullPipelineRequest, RiskPoint, VersionItem
+from app.schemas.generate_schema import (
+    ComplianceResult,
+    ConstrainedGenerateRequest,
+    ConstrainedGenerateResponse,
+    FullPipelineRequest,
+    RiskPoint,
+    StructuredGenerateOutput,
+    VersionItem,
+)
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -78,8 +87,17 @@ class MvpGenerateCoreService:
         enable_rewrite=False,
         version_count=3,
         extra_requirements="",
+        product_type=None,
     ):
         """多版本生成"""
+        # 输入验证
+        if not target_platform:
+            raise ValueError("platform 参数必填")
+        if not audience:
+            raise ValueError("audience 参数必填")
+        if not product_type:
+            logger.warning("product_type 未提供，建议补充以提升生成质量")
+
         try:
             # 获取原文
             input_text = self._get_input_text(source_type, source_id, manual_text)
@@ -105,6 +123,8 @@ class MvpGenerateCoreService:
             # 保存生成结果
             material_id = source_id if source_type == "material" else None
             for v in versions:
+                # 解析结构化输出
+                parsed = self._parse_structured_output(v["text"])
                 result = MvpGenerationResult(
                     source_material_id=material_id,
                     input_text=input_text[:500],
@@ -114,6 +134,13 @@ class MvpGenerateCoreService:
                     platform=target_platform,
                     audience=audience,
                     style=style,
+                    # 结构化输出字段
+                    opening_hook=parsed.get("opening_hook") or None,
+                    cta_section=parsed.get("cta") or None,
+                    risk_disclaimer=parsed.get("risk_points") or None,
+                    alternative_v1=parsed.get("alternative_safe") or None,
+                    alternative_v2=parsed.get("alternative_aggressive") or None,
+                    output_structure=parsed if parsed.get("success") else None,
                 )
                 self.db.add(result)
             self.db.commit()
@@ -186,10 +213,24 @@ class MvpGenerateCoreService:
     def _build_prompt(self, text, platform, audience, style, knowledge, extra):
         """构建生成提示词"""
         prompt_file = os.path.join(self._prompts_dir, "mvp_general_v1.txt")
+        structured_output_requirement = """
+
+【结构化输出要求】
+请按以下JSON格式输出每个版本的内容：
+{
+  "title": "标题",
+  "opening_hook": "开头钩子（吸引注意力的第一句话）",
+  "body": "正文主体",
+  "cta": "行动引导（引导读者下一步操作）",
+  "risk_points": "可能的合规风险点说明",
+  "alternative_safe": "低风险安全版本的完整文案",
+  "alternative_aggressive": "高转化版本的完整文案"
+}
+"""
         try:
             with open(prompt_file, "r", encoding="utf-8") as f:
                 template = f.read()
-            return (
+            base_prompt = (
                 template.replace("{original_text}", text[:1000])
                 .replace("{platform}", platform)
                 .replace("{audience}", audience or "通用")
@@ -197,8 +238,12 @@ class MvpGenerateCoreService:
                 .replace("{knowledge_context}", knowledge or "无")
                 .replace("{extra_requirements}", extra or "无")
             )
+            return base_prompt + structured_output_requirement
         except Exception:
-            return f"请将以下内容改写为3个版本（专业型、口语型、种草型），目标平台：{platform}\n\n原文：{text[:1000]}"
+            return (
+                f"请将以下内容改写为3个版本（专业型、口语型、种草型），目标平台：{platform}\n\n原文：{text[:1000]}"
+                + structured_output_requirement
+            )
 
     def _call_llm_sync(self, prompt: str) -> list:
         """同步调用LLM，失败时使用Mock"""
@@ -281,6 +326,81 @@ class MvpGenerateCoreService:
                 "style_label": "种草型",
             },
         ]
+
+    @staticmethod
+    def _parse_structured_output(raw_text: str) -> dict:
+        """尝试将LLM输出解析为结构化字段。
+
+        解析失败时回退到将整个文本放入body字段。
+        """
+        result = {
+            "success": False,
+            "title": "",
+            "opening_hook": "",
+            "body": raw_text,
+            "cta": "",
+            "risk_points": "",
+            "alternative_safe": "",
+            "alternative_aggressive": "",
+        }
+        try:
+            # 尝试提取JSON块
+            json_match = re.search(r"\{[\s\S]*\}", raw_text)
+            if json_match:
+                data = json.loads(json_match.group())
+                if "title" in data or "body" in data:
+                    result["success"] = True
+                    result["title"] = data.get("title", "")
+                    result["opening_hook"] = data.get("opening_hook", "")
+                    result["body"] = data.get("body", raw_text)
+                    result["cta"] = data.get("cta", "")
+                    result["risk_points"] = data.get("risk_points", "")
+                    result["alternative_safe"] = data.get("alternative_safe", "")
+                    result["alternative_aggressive"] = data.get("alternative_aggressive", "")
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        return result
+
+    @staticmethod
+    def _ensure_structured_output(version: dict) -> dict:
+        """确保输出结构完整性，为空字段补充默认值。
+
+        Args:
+            version: 版本字典，包含 text, opening_hook, cta_section, risk_disclaimer, alternative_v1, alternative_v2 等字段
+
+        Returns:
+            补充完整字段后的版本字典
+        """
+        # 默认风险提示
+        default_risk_disclaimer = "请注意：贷款需谨慎，具体利率以实际审批为准。"
+
+        # 确保 risk_disclaimer 非空
+        if not version.get("risk_disclaimer"):
+            version["risk_disclaimer"] = default_risk_disclaimer
+
+        # 确保 alternative_v1 有默认提示（如果为空）
+        if not version.get("alternative_v1"):
+            version["alternative_v1"] = ""
+
+        # 确保 alternative_v2 有默认提示（如果为空）
+        if not version.get("alternative_v2"):
+            version["alternative_v2"] = ""
+
+        # 确保 opening_hook 非空（尝试从text提取第一句）
+        if not version.get("opening_hook") and version.get("text"):
+            text = version["text"]
+            # 尝试提取第一句作为钩子
+            first_sentence = text.split("\n")[0] if "\n" in text else text.split("。")[0]
+            version["opening_hook"] = first_sentence[:50] if first_sentence else ""
+
+        # 确保 cta_section 非空（尝试从text提取最后一句）
+        if not version.get("cta_section") and version.get("text"):
+            text = version["text"]
+            # 尝试提取最后一句作为CTA
+            last_sentence = text.split("。")[-1].strip() if "。" in text else text.split("\n")[-1].strip()
+            version["cta_section"] = last_sentence[:100] if last_sentence else ""
+
+        return version
 
     async def generate_full_pipeline(self, request: FullPipelineRequest) -> dict:
         """
@@ -421,6 +541,10 @@ class MvpGenerateCoreService:
                 "compliance": rewrite_base_compliance,
             }
             versions_with_compliance.insert(0, rewrite_base_version)
+
+            # Step 6.5: 确保每个版本输出结构完整
+            for v in versions_with_compliance:
+                self._ensure_structured_output(v)
 
             logger.info("[Pipeline] 全链路生成成功完成")
 
@@ -738,3 +862,515 @@ class MvpGenerateCoreService:
         except Exception as e:
             self.db.rollback()
             raise ValueError(f"标记失败: {str(e)}")
+
+    # =========================================================================
+    # 强约束生成方法
+    # =========================================================================
+
+    async def constrained_generate(self, request: ConstrainedGenerateRequest) -> ConstrainedGenerateResponse:
+        """
+        强约束生成 - 基于细粒度约束条件生成结构化内容
+
+        主要步骤：
+        1. 约束校验 - 验证所有必填字段
+        2. 知识库检索 - 基于 platform + audience + product_type 组合检索相关知识
+        3. Prompt 组装 - 将所有约束字段注入 prompt
+        4. 多版本生成 - 按 version_count 生成多个版本
+        5. 结构化解析 - 将 AI 输出解析为 title/hook/body/call_to_action 结构
+        6. 合规预检 - 每个版本调用合规检查，标记 compliance_level
+
+        Args:
+            request: ConstrainedGenerateRequest 强约束生成请求
+
+        Returns:
+            ConstrainedGenerateResponse 结构化生成响应
+        """
+        start_time = time.time()
+        generation_metadata = {
+            "start_time": start_time,
+            "model": request.model,
+            "version_count_requested": request.version_count,
+        }
+
+        try:
+            # Step 1: 约束校验
+            logger.info("[ConstrainedGenerate] Step 1: 约束校验")
+            self._validate_constraints(request)
+
+            # Step 2: 知识库检索
+            logger.info("[ConstrainedGenerate] Step 2: 知识库检索")
+            knowledge_context = await self._retrieve_knowledge_for_constrained(request)
+
+            # Step 3: 构建约束增强的 Prompt
+            logger.info("[ConstrainedGenerate] Step 3: Prompt 组装")
+            prompt = self._build_constrained_prompt(request, knowledge_context)
+
+            # Step 4: 多版本生成
+            logger.info("[ConstrainedGenerate] Step 4: 多版本生成")
+            versions_raw = await self._generate_constrained_versions(request, prompt)
+
+            # Step 5: 结构化解析
+            logger.info("[ConstrainedGenerate] Step 5: 结构化解析")
+            structured_versions = self._parse_structured_versions(versions_raw)
+
+            # Step 6: 合规预检
+            logger.info("[ConstrainedGenerate] Step 6: 合规预检")
+            versions_with_compliance = await self._check_versions_compliance(structured_versions, request.model)
+
+            # 选择推荐版本（优先选择合规等级最高的）
+            recommended_idx = self._select_recommended_version(versions_with_compliance)
+
+            # 构建响应
+            generation_metadata.update(
+                {
+                    "duration_seconds": round(time.time() - start_time, 2),
+                    "knowledge_used": bool(knowledge_context),
+                    "versions_generated": len(versions_with_compliance),
+                }
+            )
+
+            input_constraints_applied = {
+                "platform": request.platform,
+                "audience": request.audience,
+                "product_type": request.product_type,
+                "business_scenario": request.business_scenario,
+                "target_action": request.target_action,
+                "risk_level": request.risk_level,
+                "style": request.style,
+                "content_intent": request.content_intent,
+                "guidance_method": request.guidance_method,
+                "forbidden_count": len(request.forbidden_expressions) if request.forbidden_expressions else 0,
+            }
+
+            logger.info(
+                "[ConstrainedGenerate] 生成完成: %d个版本, 推荐版本=%d, 耗时=%.2fs",
+                len(versions_with_compliance),
+                recommended_idx,
+                generation_metadata["duration_seconds"],
+            )
+
+            return ConstrainedGenerateResponse(
+                versions=versions_with_compliance,
+                recommended_version=recommended_idx,
+                input_constraints_applied=input_constraints_applied,
+                generation_metadata=generation_metadata,
+            )
+
+        except Exception as e:
+            logger.exception("[ConstrainedGenerate] 强约束生成失败: %s", str(e))
+            # Fallback: 返回默认内容
+            fallback_versions = self._fallback_structured_versions(request)
+            generation_metadata.update(
+                {
+                    "duration_seconds": round(time.time() - start_time, 2),
+                    "error": str(e),
+                }
+            )
+            return ConstrainedGenerateResponse(
+                versions=fallback_versions,
+                recommended_version=0,
+                input_constraints_applied={"error": "使用fallback内容"},
+                generation_metadata=generation_metadata,
+            )
+
+    def _validate_constraints(self, request: ConstrainedGenerateRequest) -> None:
+        """验证约束条件"""
+        # platform 已在 Pydantic 中验证
+        # product_type 已在 Pydantic 中验证
+        # risk_level 已在 Pydantic 中验证
+
+        if not request.audience or not request.audience.strip():
+            raise ValueError("audience 参数必填")
+
+        # 验证 style 如果提供
+        if request.style:
+            allowed_styles = ["口播", "图文", "问答", "经验帖"]
+            if request.style not in allowed_styles:
+                raise ValueError(f"style 必须是以下之一: {allowed_styles}")
+
+        # 验证 content_intent 如果提供
+        if request.content_intent:
+            allowed_intents = ["科普", "避坑", "案例", "引流", "转化"]
+            if request.content_intent not in allowed_intents:
+                raise ValueError(f"content_intent 必须是以下之一: {allowed_intents}")
+
+    async def _retrieve_knowledge_for_constrained(self, request: ConstrainedGenerateRequest) -> str:
+        """基于约束条件检索知识库"""
+        try:
+            from app.services.mvp_knowledge_service import MvpKnowledgeService
+
+            knowledge_svc = MvpKnowledgeService(self.db)
+
+            # 构建检索查询
+            query_parts = [request.product_type, request.audience]
+            if request.business_scenario:
+                query_parts.append(request.business_scenario)
+            query = " ".join(query_parts)
+
+            # 使用混合检索v2
+            knowledge_data = await knowledge_svc.search_for_generation_v2(
+                platform=request.platform,
+                audience=request.audience,
+                topic=request.product_type,
+                content_type=request.style or "",
+                account_type="loan_advisor",  # 默认助贷顾问
+                goal=request.target_action or "",
+                embedding_model=request.model,
+            )
+
+            return self._build_knowledge_context(knowledge_data)
+        except Exception as e:
+            logger.warning("[ConstrainedGenerate] 知识库检索失败: %s", str(e))
+            return ""
+
+    def _build_constrained_prompt(self, request: ConstrainedGenerateRequest, knowledge_context: str) -> str:
+        """构建强约束生成 Prompt"""
+
+        # 平台风格映射
+        platform_style_map = {
+            "xiaohongshu": "小红书风格：口语化、emoji丰富、种草感、真实分享调调",
+            "douyin": "抖音风格：短句为主、节奏感强、开头3秒必须抓人、口播化",
+            "zhihu": "知乎风格：专业理性、逻辑清晰、有分析过程、数据支撑",
+        }
+        platform_style = platform_style_map.get(request.platform, "通用风格")
+
+        # 内容意图映射
+        intent_guidance = {
+            "科普": "以知识普及为主，客观介绍产品特点和适用人群",
+            "避坑": "重点提醒常见误区和风险，帮助用户避免踩坑",
+            "案例": "通过真实案例说明问题，增强可信度和代入感",
+            "引流": "注重引导用户进行下一步互动，如私信咨询",
+            "转化": "强调产品优势和办理便捷性，促进转化",
+        }
+
+        prompt_parts = [
+            f"【任务】为{request.platform}平台创作获客内容",
+            f"",
+            f"【目标人群】{request.audience}",
+            f"【产品类型】{request.product_type}",
+            f"【平台风格】{platform_style}",
+        ]
+
+        if request.business_scenario:
+            prompt_parts.append(f"【业务场景】{request.business_scenario}")
+
+        if request.target_action:
+            prompt_parts.append(f"【目标动作】{request.target_action}")
+
+        if request.content_intent:
+            prompt_parts.append(f"【内容意图】{intent_guidance.get(request.content_intent, request.content_intent)}")
+
+        if request.style:
+            prompt_parts.append(f"【内容形式】{request.style}")
+
+        if request.guidance_method:
+            prompt_parts.append(f"【引导方式】通过{request.guidance_method}引导用户")
+
+        # 风险等级约束
+        if request.risk_level == "low":
+            prompt_parts.append("【风险约束】必须严格合规，避免任何夸大或承诺性表述")
+        elif request.risk_level == "high":
+            prompt_parts.append("【风险约束】可适当增强转化力度，但仍需合规")
+
+        # 禁用表达
+        if request.forbidden_expressions:
+            forbidden_str = "、".join(request.forbidden_expressions)
+            prompt_parts.append(f"【禁用表达】严禁使用: {forbidden_str}")
+
+        # 合规说明
+        if request.compliance_notes:
+            prompt_parts.append(f"【合规说明】必须包含: {request.compliance_notes}")
+
+        # 知识库上下文
+        if knowledge_context:
+            prompt_parts.extend(
+                [
+                    f"",
+                    f"【参考知识】",
+                    knowledge_context,
+                ]
+            )
+
+        # 结构化输出要求
+        prompt_parts.extend(
+            [
+                f"",
+                f"【输出要求】",
+                f"请生成JSON格式内容，包含以下字段:",
+                f"{{",
+                f'  "title": "吸引人的标题（不超过20字）",',
+                f'  "hook": "开头钩子（吸引注意力的第一句话，50字以内）",',
+                f'  "body": "正文主体（300-800字，符合平台风格）",',
+                f'  "call_to_action": "行动引导（引导用户下一步操作）",',
+                f'  "risk_notes": "风险点说明（必要的合规提示）"',
+                f"}}",
+                f"",
+                f"注意事项:",
+                f"1. 标题要有吸引力，能让目标人群想点击",
+                f"2. 正文要自然流畅，符合平台调性",
+                f"3. 禁止使用'必过''包过''100%通过'等违规词",
+                f"4. 确保内容符合金融广告合规要求",
+            ]
+        )
+
+        if request.extra_requirements:
+            prompt_parts.append(f"\n【额外要求】{request.extra_requirements}")
+
+        return "\n".join(prompt_parts)
+
+    async def _generate_constrained_versions(self, request: ConstrainedGenerateRequest, prompt: str) -> List[Dict]:
+        """生成多版本内容"""
+        from app.services.ai_service import AIService
+
+        ai_svc = AIService(self.db)
+        versions = []
+
+        # 定义版本风格
+        version_styles = [
+            ("professional", "专业型", "专业、权威、逻辑清晰"),
+            ("casual", "口语型", "口语化、亲切、接地气"),
+            ("seeding", "种草型", "种草风、emoji丰富、真实分享感"),
+        ]
+
+        # 根据 version_count 选择风格
+        styles_to_generate = version_styles[: min(request.version_count, len(version_styles))]
+
+        for style_key, style_name, style_desc in styles_to_generate:
+            try:
+                version_prompt = prompt + f"\n\n【本版本风格】{style_desc}"
+
+                system_prompt = f"""你是专业的贷款行业内容创作助手。
+请生成符合以下风格的JSON格式内容：{style_desc}
+确保输出是有效的JSON格式。"""
+
+                raw_response = await ai_svc.call_llm(
+                    prompt=version_prompt,
+                    system_prompt=system_prompt,
+                    use_cloud=(request.model == "volcano"),
+                    scene=f"constrained_generate_{style_key}",
+                )
+
+                versions.append(
+                    {
+                        "style": style_key,
+                        "style_name": style_name,
+                        "raw_text": raw_response,
+                    }
+                )
+
+            except Exception as e:
+                logger.warning("[ConstrainedGenerate] 版本 %s 生成失败: %s", style_key, str(e))
+                # 继续生成其他版本
+
+        # 如果所有版本都失败，返回 mock 数据
+        if not versions:
+            versions = self._mock_constrained_versions(request)
+
+        return versions
+
+    def _mock_constrained_versions(self, request: ConstrainedGenerateRequest) -> List[Dict]:
+        """生成 mock 版本数据"""
+        return [
+            {
+                "style": "professional",
+                "style_name": "专业型",
+                "raw_text": json.dumps(
+                    {
+                        "title": f"【专业解读】{request.product_type}申请指南",
+                        "hook": f"关于{request.product_type}，很多{request.audience}都有疑问。",
+                        "body": f"针对{request.audience}群体，{request.product_type}是一种常见的融资方式。申请时需要注意以下几点：首先，准备好相关资料；其次，了解产品特点；最后，评估自身还款能力。",
+                        "call_to_action": "如有疑问，欢迎私信咨询。",
+                        "risk_notes": "贷款需谨慎，具体利率以实际审批为准。",
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+            {
+                "style": "casual",
+                "style_name": "口语型",
+                "raw_text": json.dumps(
+                    {
+                        "title": f"聊聊{request.product_type}那些事儿",
+                        "hook": f"家人们！今天聊聊{request.product_type}～",
+                        "body": f"很多{request.audience}朋友都问过我这个问题。说真的，{request.product_type}确实能帮上忙，但也要注意方法。记住这几点就够了：别盲目申请、先看清条件、量力而行。",
+                        "call_to_action": "有问题评论区聊！",
+                        "risk_notes": "贷款有风险，申请需谨慎。",
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+            {
+                "style": "seeding",
+                "style_name": "种草型",
+                "raw_text": json.dumps(
+                    {
+                        "title": f"姐妹们！{request.product_type}攻略来了",
+                        "hook": f"姐妹们看过来！关于{request.product_type}的干货～",
+                        "body": f"身边好多{request.audience}的朋友都在问{request.product_type}。今天整理了避坑指南分享给大家～真的不是我夸张，这个方法太实用了！",
+                        "call_to_action": "记得收藏！有用的话给我点个赞呀~",
+                        "risk_notes": "具体产品以实际审批为准。",
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ][: request.version_count]
+
+    def _parse_structured_versions(self, versions_raw: List[Dict]) -> List[StructuredGenerateOutput]:
+        """解析结构化版本输出"""
+        structured_versions = []
+
+        for v in versions_raw:
+            try:
+                raw_text = v.get("raw_text", "")
+                parsed = self._parse_structured_output_v2(raw_text)
+
+                structured_versions.append(
+                    StructuredGenerateOutput(
+                        title=parsed.get("title", ""),
+                        hook=parsed.get("hook", ""),
+                        body=parsed.get("body", ""),
+                        call_to_action=parsed.get("call_to_action", ""),
+                        risk_notes=parsed.get("risk_notes"),
+                        compliance_level="green",  # 默认绿色，后续会更新
+                    )
+                )
+            except Exception as e:
+                logger.warning("[ConstrainedGenerate] 解析版本失败: %s", str(e))
+                # Fallback: 使用原始文本作为 body
+                structured_versions.append(
+                    StructuredGenerateOutput(
+                        title="生成中...",
+                        hook="",
+                        body=v.get("raw_text", "")[:500],
+                        call_to_action="",
+                        compliance_level="yellow",
+                    )
+                )
+
+        return structured_versions
+
+    def _parse_structured_output_v2(self, raw_text: str) -> Dict[str, str]:
+        """解析结构化输出（增强版）"""
+        result = {
+            "title": "",
+            "hook": "",
+            "body": "",
+            "call_to_action": "",
+            "risk_notes": "",
+        }
+
+        try:
+            # 尝试提取 JSON 块
+            json_match = re.search(r"\{[\s\S]*?\}", raw_text)
+            if json_match:
+                data = json.loads(json_match.group())
+                result["title"] = data.get("title", "")
+                result["hook"] = data.get("hook", data.get("opening_hook", ""))
+                result["body"] = data.get("body", data.get("text", raw_text))
+                result["call_to_action"] = data.get("call_to_action", data.get("cta", ""))
+                result["risk_notes"] = data.get("risk_notes", data.get("risk_points", ""))
+                return result
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+        # Fallback: 尝试正则提取
+        try:
+            title_match = re.search(r"[【\[]?标题[】\]]?[：:]?\s*(.+?)(?=\n|【|［|$)", raw_text)
+            if title_match:
+                result["title"] = title_match.group(1).strip()
+
+            hook_match = re.search(r"[【\[]?开头钩子[】\]]?[：:]?\s*(.+?)(?=\n|【|［|$)", raw_text)
+            if hook_match:
+                result["hook"] = hook_match.group(1).strip()
+
+            body_match = re.search(r"[【\[]?正文[】\]]?[：:]?\s*(.+?)(?=\n|【|［|$)", raw_text, re.DOTALL)
+            if body_match:
+                result["body"] = body_match.group(1).strip()
+
+            cta_match = re.search(r"[【\[]?行动引导[】\]]?[：:]?\s*(.+?)(?=\n|【|［|$)", raw_text)
+            if cta_match:
+                result["call_to_action"] = cta_match.group(1).strip()
+        except Exception:
+            pass
+
+        # 如果 body 仍为空，使用原始文本
+        if not result["body"]:
+            result["body"] = raw_text
+
+        return result
+
+    async def _check_versions_compliance(
+        self, versions: List[StructuredGenerateOutput], model: str
+    ) -> List[StructuredGenerateOutput]:
+        """检查版本合规性"""
+        try:
+            from app.services.mvp_compliance_service import MvpComplianceService
+
+            compliance_svc = MvpComplianceService(self.db)
+
+            for v in versions:
+                try:
+                    # 合并文本进行检查
+                    full_text = f"{v.title}\n{v.hook}\n{v.body}\n{v.call_to_action}"
+                    result = await compliance_svc.check_async(text=full_text, enable_llm=False, model=model)
+
+                    risk_level = result.get("risk_level", "low")
+                    # 映射 risk_level 到 compliance_level
+                    compliance_map = {
+                        "low": "green",
+                        "medium": "yellow",
+                        "high": "red",
+                    }
+                    v.compliance_level = compliance_map.get(risk_level, "yellow")
+
+                    # 如果有风险说明，添加到 risk_notes
+                    risk_points = result.get("risk_points", [])
+                    if risk_points:
+                        risk_summary = "; ".join([rp.get("reason", "") for rp in risk_points[:3]])
+                        if v.risk_notes:
+                            v.risk_notes = f"{v.risk_notes}; {risk_summary}"
+                        else:
+                            v.risk_notes = risk_summary
+
+                except Exception as e:
+                    logger.warning("[ConstrainedGenerate] 版本合规检查失败: %s", str(e))
+                    v.compliance_level = "yellow"
+
+        except Exception as e:
+            logger.warning("[ConstrainedGenerate] 合规服务调用失败: %s", str(e))
+            # 所有版本标记为黄色（未知）
+            for v in versions:
+                v.compliance_level = "yellow"
+
+        return versions
+
+    def _select_recommended_version(self, versions: List[StructuredGenerateOutput]) -> int:
+        """选择推荐版本（优先选择合规等级最高的）"""
+        if not versions:
+            return 0
+
+        compliance_priority = {"green": 0, "yellow": 1, "red": 2}
+
+        best_idx = 0
+        best_priority = compliance_priority.get(versions[0].compliance_level, 1)
+
+        for i, v in enumerate(versions[1:], 1):
+            priority = compliance_priority.get(v.compliance_level, 1)
+            if priority < best_priority:
+                best_priority = priority
+                best_idx = i
+
+        return best_idx
+
+    def _fallback_structured_versions(self, request: ConstrainedGenerateRequest) -> List[StructuredGenerateOutput]:
+        """生成 fallback 结构化版本"""
+        return [
+            StructuredGenerateOutput(
+                title=f"【{request.product_type}】{request.audience}专属方案",
+                hook=f"针对{request.audience}的{request.product_type}解决方案",
+                body=f"我们为{request.audience}群体提供专业的{request.product_type}服务。申请流程简单，审批快速。请根据自身情况合理申请，注意评估还款能力。",
+                call_to_action="如需了解详情，请私信咨询。",
+                risk_notes="贷款需谨慎，具体利率以实际审批为准。",
+                compliance_level="green",
+            )
+        ]

@@ -1,16 +1,12 @@
 import { useEffect, useState } from "react";
 import { getSystemHealth, getSystemVersion, getAICallStats } from "../lib/api";
 import { AICallStatsResponse } from "../types";
+import type { SystemHealthInfo } from "../api/systemApi";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
-type HealthStatus = {
-  status: string;
-  database: string;
-  redis: string;
-  timestamp: string;
-  version?: string;
-};
+// 使用 API 模块导出的类型
+type HealthStatus = SystemHealthInfo;
 
 type VersionInfo = {
   api_version: string;
@@ -108,28 +104,28 @@ export function OpsPage() {
               </div>
               <div className="metric-status">
                 <span className={`status-dot ${getStatusColor(health.status)}`}></span>
-                最后检查: {formatTimestamp(health.timestamp)}
+                最后检查: {formatTimestamp(health.timestamp_utc)}
               </div>
             </div>
 
             <div className="ops-metric">
               <div className="metric-label">数据库连接</div>
-              <div className="metric-value" style={{ color: getStatusColor(health.database) === "ok" ? "var(--ok)" : "var(--danger)" }}>
-                {health.database === "connected" ? "✅ 已连接" : health.database}
+              <div className="metric-value" style={{ color: getStatusColor(String(health.checks?.database)) === "ok" ? "var(--ok)" : "var(--danger)" }}>
+                {String(health.checks?.database) === "connected" ? "✅ 已连接" : String(health.checks?.database || "-")}
               </div>
               <div className="metric-status">
-                <span className={`status-dot ${getStatusColor(health.database)}`}></span>
+                <span className={`status-dot ${getStatusColor(String(health.checks?.database))}`}></span>
                 PostgreSQL
               </div>
             </div>
 
             <div className="ops-metric">
               <div className="metric-label">缓存服务</div>
-              <div className="metric-value" style={{ color: getStatusColor(health.redis) === "ok" ? "var(--ok)" : "var(--warn)" }}>
-                {health.redis === "connected" ? "✅ 已连接" : health.redis === "not_configured" ? "⚠️ 未配置" : health.redis}
+              <div className="metric-value" style={{ color: getStatusColor(String(health.checks?.redis)) === "ok" ? "var(--ok)" : "var(--warn)" }}>
+                {String(health.checks?.redis) === "connected" ? "✅ 已连接" : String(health.checks?.redis) === "not_configured" ? "⚠️ 未配置" : String(health.checks?.redis || "-")}
               </div>
               <div className="metric-status">
-                <span className={`status-dot ${getStatusColor(health.redis)}`}></span>
+                <span className={`status-dot ${getStatusColor(String(health.checks?.redis))}`}></span>
                 Redis
               </div>
             </div>

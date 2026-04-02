@@ -1,6 +1,14 @@
 from app.core.database import get_db
 from app.core.security import verify_token
-from app.schemas import AICallStatsResponse, DashboardSummary, TrendResponse
+from app.schemas import (
+    AcquisitionLayerMetrics,
+    AICallStatsResponse,
+    ContentLayerMetrics,
+    ConversionLayerMetrics,
+    DashboardSummary,
+    ThreeLayerDashboard,
+    TrendResponse,
+)
 from app.services import DashboardService
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -99,3 +107,84 @@ def get_conversion_funnel(current_user: dict = Depends(verify_token), db: Sessio
     """获取转化漏斗数据"""
     funnel_data = DashboardService.get_conversion_funnel(db, current_user["user_id"])
     return funnel_data
+
+
+@router.get("/acquisition")
+def get_acquisition_metrics(current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
+    """获客层指标"""
+    metrics = DashboardService.get_acquisition_metrics(db, current_user["user_id"])
+    return metrics
+
+
+@router.get("/conversion")
+def get_conversion_metrics(current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
+    """转化层指标"""
+    metrics = DashboardService.get_conversion_metrics(db, current_user["user_id"])
+    return metrics
+
+
+@router.get("/full")
+def get_full_dashboard(current_user: dict = Depends(verify_token), db: Session = Depends(get_db)):
+    """综合三层看板（内容层+获客层+转化层）"""
+    dashboard_data = DashboardService.get_full_dashboard(db, current_user["user_id"])
+    return dashboard_data
+
+
+@router.get("/content-metrics", response_model=ContentLayerMetrics)
+def get_content_metrics(
+    period: str = Query("today", pattern="^(today|week|month|all)$"),
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """内容层指标
+
+    Args:
+        period: 统计周期 (today/week/month/all)
+    """
+    metrics = DashboardService.get_content_layer_metrics(db, current_user["user_id"], period)
+    return metrics
+
+
+@router.get("/acquisition-metrics", response_model=AcquisitionLayerMetrics)
+def get_acquisition_metrics_enhanced(
+    period: str = Query("week", pattern="^(today|week|month|all)$"),
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """获客层指标
+
+    Args:
+        period: 统计周期 (today/week/month/all)
+    """
+    metrics = DashboardService.get_acquisition_layer_metrics_enhanced(db, current_user["user_id"], period)
+    return metrics
+
+
+@router.get("/conversion-metrics", response_model=ConversionLayerMetrics)
+def get_conversion_metrics_enhanced(
+    period: str = Query("month", pattern="^(today|week|month|all)$"),
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """转化层指标
+
+    Args:
+        period: 统计周期 (today/week/month/all)
+    """
+    metrics = DashboardService.get_conversion_layer_metrics_enhanced(db, current_user["user_id"], period)
+    return metrics
+
+
+@router.get("/three-layer", response_model=ThreeLayerDashboard)
+def get_three_layer_dashboard(
+    period: str = Query("week", pattern="^(today|week|month|all)$"),
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """三层看板汇总
+
+    Args:
+        period: 统计周期 (today/week/month/all)
+    """
+    dashboard = DashboardService.get_three_layer_dashboard(db, current_user["user_id"], period)
+    return dashboard

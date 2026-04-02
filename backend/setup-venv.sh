@@ -71,8 +71,8 @@ fi
 # ── 初始化数据库 ────────────────────────────────────────
 echo ""
 echo "[5/6] 初始化数据库表..."
-"$VENV_DIR/bin/python" init_db.py
-"$VENV_DIR/bin/python" create_test_user.py 2>/dev/null || true
+"$VENV_DIR/bin/python" scripts/migrations/init_db.py
+"$VENV_DIR/bin/python" scripts/migrations/create_test_user.py 2>/dev/null || true
 echo "[OK] 数据库初始化完成"
 
 # ── 安装 systemd 服务（可选）或直接后台启动 ─────────────

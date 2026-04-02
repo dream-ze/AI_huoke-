@@ -72,7 +72,7 @@ fi
 # ── 可选：创建测试用户（生产默认关闭）─────────────────────────────
 if [ "${ENABLE_BOOTSTRAP_TEST_USER:-False}" = "True" ]; then
   echo "ENABLE_BOOTSTRAP_TEST_USER=True，开始创建测试用户..."
-  python3 create_test_user.py 2>/dev/null || true
+  python3 scripts/migrations/create_test_user.py 2>/dev/null || true
 else
   echo "跳过测试用户初始化（ENABLE_BOOTSTRAP_TEST_USER=False）"
 fi

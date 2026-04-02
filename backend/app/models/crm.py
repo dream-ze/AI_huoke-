@@ -10,7 +10,7 @@ CRM客户关系管理模块
 from datetime import datetime
 
 from app.core.database import Base
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import relationship
 
 
@@ -36,6 +36,14 @@ class Lead(Base):
     status = Column(String(32), default="new")  # new, contacted, qualified, converted, lost
     intention_level = Column(String(16), default="medium")
     note = Column(Text, nullable=True)
+
+    # 归因相关字段
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=True)
+    publish_account_id = Column(Integer, ForeignKey("publish_accounts.id"), nullable=True)
+    published_content_id = Column(Integer, ForeignKey("published_contents.id"), nullable=True)
+    generation_task_id = Column(Integer, nullable=True)
+    first_touch_time = Column(DateTime, nullable=True)
+    attribution_chain = Column(JSON, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -68,6 +76,12 @@ class Customer(Base):
     inquiry_content = Column(Text, nullable=True)
     follow_records = Column(JSON, default=list)  # [{date, content, owner}, ...]
 
+    # 归因相关字段
+    lead_source_attribution_id = Column(Integer, ForeignKey("lead_source_attributions.id"), nullable=True)
+    acquisition_channel = Column(String(100), nullable=True)
+    qualification_score = Column(String(1), nullable=True)
+    auto_score_reason = Column(Text, nullable=True)
+
     # 扩展字段
     company = Column(String(200), nullable=True)  # 公司名称
     position = Column(String(100), nullable=True)  # 职位
@@ -75,6 +89,15 @@ class Customer(Base):
     deal_value = Column(Float, nullable=True, default=0)  # 成交金额
     email = Column(String(200), nullable=True)  # 邮箱
     address = Column(String(500), nullable=True)  # 地址
+
+    # 助贷业务字段
+    loan_demand_type = Column(String(50), nullable=True, comment="贷款需求类型：房贷/车贷/消费贷/经营贷/信用贷")
+    expected_amount = Column(Float, nullable=True, comment="期望贷款金额（万元）")
+    occupation = Column(String(100), nullable=True, comment="职业身份")
+    social_security = Column(String(50), nullable=True, comment="社保/公积金状态：有社保/有公积金/都有/都无")
+    debt_range = Column(String(50), nullable=True, comment="负债区间：无负债/5万以下/5-20万/20-50万/50万以上")
+    matchable_products = Column(JSON, nullable=True, comment="可匹配产品类型列表")
+    has_business_license = Column(Boolean, default=False, comment="是否有营业执照")
 
     # 跟进时间字段
     next_follow_at = Column(DateTime, nullable=True)

@@ -2,14 +2,11 @@ import os
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-
-from fastapi import HTTPException
-
 from app.core.database import Base
 from app.services.user_service import UserService
-
+from fastapi import HTTPException
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
 pytestmark = [pytest.mark.regression, pytest.mark.postgres_regression]
 

@@ -2,10 +2,6 @@ import asyncio
 import os
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from app.core.database import Base, get_db
 from app.core.security import create_access_token
 from app.domains.acquisition import MaterialPipelineOrchestrator
@@ -22,8 +18,10 @@ from app.models import (
 )
 from app.services.ai_service import AIService
 from app.services.user_service import UserService
+from fastapi.testclient import TestClient
 from main import app
-
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 pytestmark = [pytest.mark.regression, pytest.mark.postgres_regression]
 
@@ -141,9 +139,7 @@ def test_material_pipeline_ingest_retrieve_generate_on_postgres(monkeypatch):
         assert seed_doc.id in (generation.reference_document_ids or [])
 
         knowledge_document = (
-            db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.id == result["knowledge_document_id"])
-            .first()
+            db.query(KnowledgeDocument).filter(KnowledgeDocument.id == result["knowledge_document_id"]).first()
         )
         assert knowledge_document is not None
         assert knowledge_document.title == "征信处理测试标题"
@@ -259,7 +255,9 @@ def test_generation_adopt_backfills_material_content_on_postgres(monkeypatch):
 
         with SessionLocal() as db:
             material = db.query(MaterialItem).filter(MaterialItem.id == ingest_payload["material_id"]).first()
-            generation = db.query(GenerationTask).filter(GenerationTask.id == ingest_payload["generation_task_id"]).first()
+            generation = (
+                db.query(GenerationTask).filter(GenerationTask.id == ingest_payload["generation_task_id"]).first()
+            )
             assert material is not None
             assert generation is not None
             assert material.content_text == generation.output_text
@@ -514,7 +512,9 @@ def test_publish_task_submit_creates_lead_and_trace_on_postgres():
     try:
         with SessionLocal() as db:
             owner, owner_headers = _make_auth_headers(db, "pg_publish_owner", "pg_publish_owner@example.com")
-            assignee, assignee_headers = _make_auth_headers(db, "pg_publish_assignee", "pg_publish_assignee@example.com")
+            assignee, assignee_headers = _make_auth_headers(
+                db, "pg_publish_assignee", "pg_publish_assignee@example.com"
+            )
 
         create_resp = client.post(
             "/api/publish/tasks/create",
@@ -688,7 +688,9 @@ def test_publish_task_reject_and_close_lifecycle_on_postgres():
     try:
         with SessionLocal() as db:
             owner, owner_headers = _make_auth_headers(db, "pg_publish_flow_owner", "pg_publish_flow_owner@example.com")
-            assignee, assignee_headers = _make_auth_headers(db, "pg_publish_flow_assignee", "pg_publish_flow_assignee@example.com")
+            assignee, assignee_headers = _make_auth_headers(
+                db, "pg_publish_flow_assignee", "pg_publish_flow_assignee@example.com"
+            )
 
         create_resp = client.post(
             "/api/publish/tasks/create",
@@ -880,7 +882,9 @@ def test_publish_task_repeat_submit_overwrites_metrics_without_duplicate_lead_on
 
     try:
         with SessionLocal() as db:
-            owner, owner_headers = _make_auth_headers(db, "pg_repeat_submit_owner", "pg_repeat_submit_owner@example.com")
+            owner, owner_headers = _make_auth_headers(
+                db, "pg_repeat_submit_owner", "pg_repeat_submit_owner@example.com"
+            )
 
         create_resp = client.post(
             "/api/publish/tasks/create",

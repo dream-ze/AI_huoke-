@@ -2,14 +2,15 @@
 Create a test user for development
 """
 
-import sys
 import os
 import secrets
-sys.path.insert(0, os.path.dirname(__file__))
+import sys
 
-from sqlalchemy.orm import Session
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
 from app.core.database import SessionLocal
 from app.services import UserService
+from sqlalchemy.orm import Session
 
 
 def create_test_user():
@@ -22,14 +23,9 @@ def create_test_user():
 
     if not password:
         password = secrets.token_urlsafe(18)
-    
+
     try:
-        user = UserService.create_user(
-            db,
-            username=username,
-            email=email,
-            password=password
-        )
+        user = UserService.create_user(db, username=username, email=email, password=password)
         print(f"✓ Test user created successfully!")
         print(f"  Username: {user.username}")
         print(f"  Email: {user.email}")

@@ -274,16 +274,16 @@ export type PublishTask = {
   post_url?: string;
   reject_reason?: string;
   close_reason?: string;
-  views: number;
-  likes: number;
-  comments: number;
-  favorites: number;
-  shares: number;
-  private_messages: number;
-  wechat_adds: number;
-  leads: number;
-  valid_leads: number;
-  conversions: number;
+  views?: number;
+  likes?: number;
+  comments?: number;
+  favorites?: number;
+  shares?: number;
+  private_messages?: number;
+  wechat_adds?: number;
+  leads?: number;
+  valid_leads?: number;
+  conversions?: number;
   created_at: string;
   updated_at: string;
 };
@@ -299,13 +299,20 @@ export type PublishTaskStats = {
 
 export type Customer = {
   id: number;
+  owner_id?: number;
   nickname: string;
   wechat_id?: string;
   phone?: string;
   source_platform: string;
+  source_content_id?: number;
+  lead_id?: number;
   tags: string[];
-  intention_level: string;
-  customer_status: string;
+  intention_level: 'low' | 'medium' | 'high';
+  customer_status: 'new' | 'following' | 'negotiating' | 'converted' | 'lost';
+  inquiry_content?: string;
+  last_follow_at?: string;
+  follow_count?: number;
+  follow_records?: CustomerFollowRecord[];
   // 扩展字段
   company?: string;
   position?: string;
@@ -313,6 +320,17 @@ export type Customer = {
   deal_value?: number;
   email?: string;
   address?: string;
+  created_at: string;
+  updated_at?: string;
+};
+
+export type CustomerFollowRecord = {
+  id: number;
+  customer_id: number;
+  content: string;
+  follow_method?: string;
+  next_follow_date?: string;
+  created_by?: number;
   created_at: string;
 };
 
@@ -323,7 +341,7 @@ export type LeadItem = {
   customer_id?: number;
   platform: string;
   source: string;
-  title: string;
+  title?: string;
   post_url?: string;
   wechat_adds: number;
   leads: number;
@@ -332,7 +350,71 @@ export type LeadItem = {
   status: string;
   intention_level: string;
   note?: string;
+  // ABCD 分级
+  grade?: 'A' | 'B' | 'C' | 'D';
+  grade_score?: number;
+  // 归因字段
+  campaign_id?: number;
+  publish_account_id?: number;
+  published_content_id?: number;
+  generation_task_id?: number;
+  attribution_chain?: LeadAttributionChainData;
   created_at: string;
+};
+
+// 线索归因链数据
+export type LeadAttributionChainData = {
+  platform?: string;
+  account_id?: number;
+  content_id?: number;
+  campaign_id?: number;
+  channel?: string;
+  audience_tags?: string[];
+};
+
+// 线索归因链响应（来自 API）
+export type LeadAttributionChainResponse = {
+  lead_id: number;
+  platform?: string;
+  account_name?: string;
+  content_title?: string;
+  campaign_name?: string;
+  audience_tags: string[];
+  topic_tags: string[];
+  channel?: string;
+  first_contact_time?: string;
+  current_stage: string;
+  conversion_result?: string;
+  touchpoint_url?: string;
+};
+
+// 批量导入线索项
+export type BatchImportLeadItem = {
+  platform: string;
+  title: string;
+  source?: string;
+  post_url?: string;
+  wechat_adds?: number;
+  leads?: number;
+  valid_leads?: number;
+  conversions?: number;
+  status?: string;
+  intention_level?: string;
+  note?: string;
+};
+
+// 批量导入线索响应
+export type BatchImportLeadsResponse = {
+  total: number;
+  success: number;
+  failed: number;
+  duplicates: number;
+  created_ids: number[];
+  failed_details: Array<{
+    index: number;
+    error: string;
+    data: BatchImportLeadItem;
+  }>;
 };
 
 // 线索归因分析类型
@@ -378,6 +460,45 @@ export type LeadFunnel = {
   stages: LeadFunnelStage[];
   period_days: number;
 };
+
+// ═══════════ 强约束生成类型 ═══════════
+
+/** 强约束生成请求 */
+export interface ConstrainedGenerateRequest {
+  platform: string;  // xiaohongshu / douyin / zhihu
+  audience: string;  // 目标人群（如：公积金用户/个体户/企业主/征信花用户）
+  product_type: string;  // 产品类型（信贷/抵押贷/企业贷/经营贷/消费贷）
+  business_scenario?: string;  // 业务场景（如：征信花如何贷款）
+  target_action?: string;  // 目标动作（如：加微信/留电话/点击链接）
+  risk_level?: string;  // 风险等级: low / medium / high
+  reference_material_ids?: number[];  // 参考素材ID列表
+  forbidden_expressions?: string[];  // 禁用表达列表
+  compliance_notes?: string;  // 必须保留的合规说明
+  guidance_method?: string;  // 引导方式（私信/评论/表单）
+  version_count?: number;  // 生成版本数(1-5)
+  style?: string;  // 内容形式: 口播/图文/问答/经验帖
+  content_intent?: string;  // 内容意图: 科普/避坑/案例/引流/转化
+  model?: string;  // 模型选择: volcano(火山方舟) / local(本地Ollama)
+  extra_requirements?: string;  // 额外要求
+}
+
+/** 结构化生成输出（单版本） */
+export interface StructuredGenerateOutput {
+  title: string;  // 标题
+  hook: string;  // 开头钩子
+  body: string;  // 正文
+  call_to_action: string;  // 行动引导
+  risk_notes?: string;  // 风险点说明
+  compliance_level: string;  // 合规等级: green / yellow / red
+}
+
+/** 强约束生成响应 */
+export interface ConstrainedGenerateResponse {
+  versions: StructuredGenerateOutput[];  // 多版本输出
+  recommended_version: number;  // 推荐版本索引
+  input_constraints_applied: Record<string, any>;  // 实际应用的约束摘要
+  generation_metadata: Record<string, any>;  // 生成元数据（耗时、模型等）
+}
 
 // ═══════════ MVP 核心类型 ═══════════
 
@@ -918,4 +1039,157 @@ export interface TrafficStrategySummary {
   by_platform: TrafficStrategyPlatformStat[];
   by_status: TrafficStrategyStatusStat[];
   performance: TrafficStrategyPerformance;
+}
+
+// ========== 发布线索追踪类型 ==========
+
+/** 发布内容线索统计 */
+export interface ContentLeadStats {
+  content_id: number;
+  tracking_code: string;
+  title: string;
+  platform: string;
+  publish_time: string | null;
+  post_url: string | null;
+  total_leads: number;
+  total_lead_count: number;
+  total_valid_leads: number;
+  total_conversions: number;
+  total_wechat_adds: number;
+  conversion_rate: number;
+  status_distribution: Record<string, number>;
+  account: {
+    id: number;
+    account_name: string;
+    platform: string;
+  } | null;
+  leads: ContentLeadItem[];
+}
+
+/** 内容关联线索条目 */
+export interface ContentLeadItem {
+  id: number;
+  title: string;
+  status: string;
+  wechat_adds: number;
+  leads: number;
+  valid_leads: number;
+  conversions: number;
+  created_at: string | null;
+}
+
+/** 账号线索统计 */
+export interface AccountLeadStats {
+  account_id: number;
+  account_name: string;
+  platform: string;
+  date_range: {
+    start: string | null;
+    end: string | null;
+  };
+  total_leads: number;
+  total_lead_count: number;
+  total_valid_leads: number;
+  total_conversions: number;
+  total_wechat_adds: number;
+  conversion_rate: number;
+  status_distribution: Record<string, number>;
+  contents: AccountContentItem[];
+}
+
+/** 账号关联内容条目 */
+export interface AccountContentItem {
+  content_id: number;
+  title: string;
+  tracking_code: string;
+  publish_time: string | null;
+  leads_count: number;
+  conversions: number;
+}
+
+/** 追踪码查询结果 */
+export interface TrackingCodeResult {
+  content: {
+    id: number;
+    tracking_code: string;
+    title: string;
+    platform: string;
+    content_text: string;
+    publish_time: string | null;
+    post_url: string | null;
+    views: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    wechat_adds: number;
+    leads_count: number;
+  };
+  account: {
+    id: number;
+    account_name: string;
+    platform: string;
+  } | null;
+  leads: ContentLeadItem[];
+}
+
+/** 内容 ROI 数据 */
+export interface ContentRoiData {
+  views: number;
+  leads: number;
+  conversions: number;
+  lead_rate: number;
+  conversion_rate: number;
+}
+
+/** 账号效果对比数据 */
+export interface AccountEffectStats {
+  account_id: number;
+  account_name: string;
+  platform: string;
+  total_tasks: number;
+  total_views: number;
+  total_likes: number;
+  total_leads: number;
+  total_conversions: number;
+  lead_conversion_rate: number;
+}
+
+// ===== 三层看板类型定义 =====
+
+/** 内容层指标 */
+export interface ContentLayerMetrics {
+  today_generation_count: number;
+  compliance_pass_rate: number;
+  adoption_rate: number;
+  publish_rate: number;
+  total_materials: number;
+  knowledge_items: number;
+}
+
+/** 获客层指标 */
+export interface AcquisitionLayerMetrics {
+  total_leads: number;
+  leads_by_platform: Array<{ platform: string; count: number }>;
+  leads_by_account: Array<{ account_name: string; count: number }>;
+  leads_by_topic: Array<{ topic: string; count: number }>;
+  wechat_add_rate: number;
+  contact_rate: number;
+}
+
+/** 转化层指标 */
+export interface ConversionLayerMetrics {
+  grade_distribution: Record<string, number>;
+  avg_first_response_hours: number;
+  followup_completion_rate: number;
+  conversion_rate: number;
+  total_converted: number;
+  total_revenue: number;
+}
+
+/** 三层看板总览 */
+export interface ThreeLayerDashboard {
+  content: ContentLayerMetrics;
+  acquisition: AcquisitionLayerMetrics;
+  conversion: ConversionLayerMetrics;
+  period: string;
 }

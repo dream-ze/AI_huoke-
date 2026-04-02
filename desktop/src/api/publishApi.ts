@@ -2,6 +2,7 @@
 // 对接 /api/publish/* 所有端点
 import { apiFetch, requireApiResult, getAuthHeaders, getApiBase } from '../lib/httpClient';
 import { apiRoutes } from './routes';
+import type { ContentLeadStats, AccountLeadStats, TrackingCodeResult } from '../types';
 
 // 类型定义
 export interface PublishRecord {
@@ -343,6 +344,39 @@ export const publishApi = {
     const query = days !== undefined ? `?days=${days}` : '';
     const data = await apiFetch<ContentAnalysisItem[]>(`${apiRoutes.publish.contentAnalysis}${query}`);
     return requireApiResult(data, '获取内容分析失败');
+  },
+
+  /**
+   * 通过追踪码查询发布内容和关联线索
+   */
+  async getContentByTrackingCode(trackingCode: string): Promise<TrackingCodeResult> {
+    const data = await apiFetch<TrackingCodeResult>(apiRoutes.publish.track(trackingCode));
+    return requireApiResult(data, '追踪码查询失败');
+  },
+
+  /**
+   * 获取账号维度的线索统计
+   */
+  async getAccountLeadStats(
+    accountId: number,
+    dateRange?: { start_date: string; end_date: string }
+  ): Promise<AccountLeadStats> {
+    const query = new URLSearchParams();
+    if (dateRange?.start_date) query.set('start_date', dateRange.start_date);
+    if (dateRange?.end_date) query.set('end_date', dateRange.end_date);
+    const queryString = query.toString();
+    const data = await apiFetch<AccountLeadStats>(
+      `${apiRoutes.publish.accountLeads(accountId)}${queryString ? `?${queryString}` : ''}`
+    );
+    return requireApiResult(data, '获取账号线索统计失败');
+  },
+
+  /**
+   * 获取内容维度的线索统计
+   */
+  async getContentLeadStats(contentId: number): Promise<ContentLeadStats> {
+    const data = await apiFetch<ContentLeadStats>(apiRoutes.publish.contentLeads(contentId));
+    return requireApiResult(data, '获取内容线索统计失败');
   },
 };
 

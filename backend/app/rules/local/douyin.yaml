@@ -1,3 +1,115 @@
 version: 1
 platform: douyin
-rules: []
+rules:
+  # ===== 通用规则：绝对承诺类 =====
+  - keyword_or_pattern: "必过|包过|秒批|秒下"
+    risk_level: high
+    suggestion: "建议改为'审核通过率较高'或'快速审核'"
+    rule_category: absolute_promise
+    description: "禁止使用绝对承诺通过的表述"
+
+  - keyword_or_pattern: "100%通过|百分之百|一定通过"
+    risk_level: high
+    suggestion: "建议删除具体百分比，改为'通过率较高'"
+    rule_category: absolute_promise
+    description: "禁止使用百分比形式承诺通过"
+
+  - keyword_or_pattern: "不下款赔你|不成功不收费|包你下款"
+    risk_level: high
+    suggestion: "建议删除此类承诺，客观描述产品特点"
+    rule_category: absolute_promise
+    description: "禁止使用赔付承诺诱导用户"
+
+  # ===== 通用规则：虚假宣传类 =====
+  - keyword_or_pattern: "零利息|免息|0利息|零利率"
+    risk_level: high
+    suggestion: "建议明确说明实际利率区间，如'低利率'"
+    rule_category: false_advertising
+    description: "禁止使用零利息等虚假利率宣传"
+
+  - keyword_or_pattern: "无门槛|零门槛|无条件|免审核"
+    risk_level: high
+    suggestion: "建议改为'申请条件简单'或'审核流程便捷'"
+    rule_category: false_advertising
+    description: "禁止宣传无需任何条件即可贷款"
+
+  - keyword_or_pattern: "无视征信|不看征信|征信黑也能"
+    risk_level: high
+    suggestion: "建议改为'对征信要求较低'或'征信瑕疵可沟通'"
+    rule_category: false_advertising
+    description: "禁止宣称可以无视征信状况"
+
+  - keyword_or_pattern: "黑户可贷|黑名单可贷|征信花户"
+    risk_level: high
+    suggestion: "建议避免使用'黑户'等敏感词，客观说明准入条件"
+    rule_category: inducement
+    description: "禁止诱导征信不良用户违规申请"
+
+  # ===== 通用规则：利率表述规范 =====
+  - keyword_or_pattern: "年化\\d+%|年利率\\d+"
+    risk_level: medium
+    suggestion: "建议标注'年化利率（单利）'并注明利率区间范围"
+    rule_category: rate_expression
+    description: "利率表述需符合监管规范，注明计算方式"
+
+  # ===== 通用规则：风险提示缺失 =====
+  - keyword_or_pattern: "贷款|借款|借钱|贷"
+    risk_level: low
+    suggestion: "建议在内容末尾添加'借贷有风险，请理性消费'"
+    rule_category: risk_warning
+    description: "贷款相关内容需包含风险提示"
+
+  # ===== 抖音平台特有规则 =====
+  - keyword_or_pattern: "点击链接|点链接|链接在|下方链接"
+    risk_level: high
+    suggestion: "建议使用抖音官方组件或引导至官方账号主页"
+    rule_category: platform_specific
+    description: "抖音禁止在视频/文案中引导点击外链"
+
+  - keyword_or_pattern: "限时|仅限今天|最后.*天|错过不再|抢购"
+    risk_level: high
+    suggestion: "建议删除紧迫感话术，客观说明产品优势"
+    rule_category: platform_specific
+    description: "抖音禁止使用制造紧迫感的营销话术"
+
+  - keyword_or_pattern: "\\d+\\.\\d+%" 
+    risk_level: medium
+    suggestion: "建议用利率区间代替具体数值，如'年化利率低至X%起'"
+    rule_category: platform_specific
+    description: "抖音不建议出现具体贷款利率绝对数值"
+
+  - keyword_or_pattern: "加微信|加V|私信微信|微信咨询"
+    risk_level: high
+    suggestion: "建议引导用户通过抖音官方私信或客服渠道"
+    rule_category: platform_specific
+    description: "抖音禁止引流至微信等外部平台"
+
+  - keyword_or_pattern: "下载APP|下载.*贷|点击下载"
+    risk_level: high
+    suggestion: "建议引导用户通过官方认证账号了解详情"
+    rule_category: platform_specific
+    description: "抖音限制引导下载APP的行为"
+
+  - keyword_or_pattern: "截图发我|截图私信|私信领"
+    risk_level: medium
+    suggestion: "建议使用平台官方功能进行用户互动"
+    rule_category: platform_specific
+    description: "抖音不建议引导用户截图私信等行为"
+
+  - keyword_or_pattern: "置顶评论|看评论|评论区链接"
+    risk_level: medium
+    suggestion: "建议直接在内容中说明关键信息"
+    rule_category: platform_specific
+    description: "抖音不建议引导用户查看评论区链接"
+
+  - keyword_or_pattern: "扫描二维码|扫码|扫一扫"
+    risk_level: high
+    suggestion: "建议引导用户通过抖音平台内功能操作"
+    rule_category: platform_specific
+    description: "抖音禁止展示二维码引导跳转"
+
+  - keyword_or_pattern: "套现|刷卡|养卡|代还"
+    risk_level: high
+    suggestion: "建议完全删除此类违规金融行为描述"
+    rule_category: inducement
+    description: "抖音禁止贷款套现等违规金融行为引导"

@@ -9,66 +9,33 @@ import {
   analyzeInsightItem,
   retrieveInsightContext,
 } from "../lib/api";
+import type { InsightTopic, InsightContentItem, InsightStats } from "../api/insightApi";
 
 // ─── 类型 ────────────────────────────────────────────────
-type InsightTopic = {
-  id: number;
-  name: string;
-  description?: string;
-  platform_focus: string[];
-  audience_tags: string[];
-  common_titles: string[];
-  common_pain_points: string[];
-  common_structures: string[];
-  common_ctas: string[];
-  risk_notes?: string;
-  content_count: number;
-};
-
-type InsightItem = {
-  id: number;
-  platform: string;
-  content_type: string;
-  title: string;
-  body_text: string;
-  content_summary?: string;
-  author_name?: string;
-  publish_time?: string;
-  like_count: number;
-  comment_count: number;
-  share_count: number;
-  collect_count: number;
-  view_count: number;
-  engagement_score: number;
-  is_hot: boolean;
-  heat_tier: string;
-  topic_id?: number;
-  audience_tags: string[];
+// 扩展 API 类型，添加页面渲染所需的计算字段
+type InsightItem = InsightContentItem & {
+  engagement_score?: number;
+  emotion_level?: number;
+  info_density?: number;
+  pain_points?: string[];
+  highlights?: string[];
+  risk_level?: string;
+  risk_flags?: string[];
   structure_type?: string;
   hook_type?: string;
   tone_style?: string;
   cta_type?: string;
-  emotion_level: number;
-  info_density: number;
+  content_summary?: string;
   title_formula?: string;
-  pain_points: string[];
-  highlights: string[];
-  ai_analyzed: boolean;
-  risk_level: string;
-  risk_flags: string[];
-  manual_note?: string;
-  source_type: string;
-  source_url?: string;
-  created_at: string;
 };
 
-type Stats = {
-  total: number;
-  hot_count: number;
-  analyzed_count: number;
-  by_platform: Record<string, number>;
-  by_heat_tier: Record<string, number>;
-  topic_count: number;
+// 扩展 InsightTopic 类型，添加页面渲染所需的字段
+type ExtendedInsightTopic = InsightTopic & {
+  content_count?: number;
+  common_titles?: string[];
+  common_pain_points?: string[];
+  common_structures?: string[];
+  common_ctas?: string[];
 };
 
 // ─── 常量 ────────────────────────────────────────────────
@@ -332,7 +299,7 @@ function ItemCard({
     <div
       className="card"
       style={{
-        borderLeft: `4px solid ${HEAT_TIER_COLOR[item.heat_tier] || "var(--line)"}`,
+        borderLeft: `4px solid ${HEAT_TIER_COLOR[item.heat_tier || ''] || "var(--line)"}`,
         padding: "14px 16px",
       }}
     >
@@ -341,15 +308,15 @@ function ItemCard({
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
             <Tag text={PLATFORMS.find((p) => p.value === item.platform)?.label || item.platform} color="var(--brand-2)" />
-            <Tag text={HEAT_TIER_LABEL[item.heat_tier] || item.heat_tier} color={HEAT_TIER_COLOR[item.heat_tier]} />
+            {item.heat_tier && <Tag text={HEAT_TIER_LABEL[item.heat_tier] || item.heat_tier} color={HEAT_TIER_COLOR[item.heat_tier]} />}
             {topic && <Tag text={topic.name} color="var(--brand)" />}
             {item.ai_analyzed && <Tag text="AI已分析" color="var(--ok)" />}
-            {item.risk_level !== "low" && (
+            {item.risk_level && item.risk_level !== "low" && (
               <Tag text={`风险:${item.risk_level}`} color={RISK_COLOR[item.risk_level]} />
             )}
           </div>
           <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.4, cursor: "pointer" }} onClick={() => setExpanded(!expanded)}>
-            {item.title}
+            {item.title || '(无标题)'}
           </div>
           {item.author_name && (
             <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>@{item.author_name}</div>
@@ -382,9 +349,11 @@ function ItemCard({
         <MetricBadge label="⭐" value={item.collect_count} />
         <MetricBadge label="↗" value={item.share_count} />
         <MetricBadge label="👁" value={item.view_count} />
-        <span style={{ fontSize: 12, color: HEAT_TIER_COLOR[item.heat_tier], fontWeight: 700 }}>
-          互动分 {item.engagement_score.toFixed(0)}
-        </span>
+        {item.heat_tier && (
+          <span style={{ fontSize: 12, color: HEAT_TIER_COLOR[item.heat_tier], fontWeight: 700 }}>
+            互动分 {item.engagement_score?.toFixed(0) ?? '-'}
+          </span>
+        )}
       </div>
 
       {/* 展开详情 */}
@@ -416,28 +385,28 @@ function ItemCard({
               )}
             </div>
           )}
-          {item.pain_points?.length > 0 && (
+          {(item.pain_points?.length ?? 0) > 0 && (
             <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>痛点：</div>
-              <div>{item.pain_points.map((p) => <Tag key={p} text={p} color="var(--warn)" />)}</div>
+              <div>{item.pain_points!.map((p) => <Tag key={p} text={p} color="var(--warn)" />)}</div>
             </div>
           )}
-          {item.highlights?.length > 0 && (
+          {(item.highlights?.length ?? 0) > 0 && (
             <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>爆点：</div>
-              <div>{item.highlights.map((h) => <Tag key={h} text={h} color="var(--ok)" />)}</div>
+              <div>{item.highlights!.map((h) => <Tag key={h} text={h} color="var(--ok)" />)}</div>
             </div>
           )}
-          {item.audience_tags?.length > 0 && (
+          {(item.audience_tags?.length ?? 0) > 0 && (
             <div>
               <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>人群：</div>
-              <div>{item.audience_tags.map((t) => <Tag key={t} text={t} />)}</div>
+              <div>{item.audience_tags!.map((t) => <Tag key={t} text={t} />)}</div>
             </div>
           )}
-          {item.risk_flags?.length > 0 && (
+          {(item.risk_flags?.length ?? 0) > 0 && (
             <div style={{ marginTop: 8 }}>
               <div style={{ fontSize: 12, color: "var(--danger)", marginBottom: 4 }}>⚠️ 风险标记：</div>
-              <div>{item.risk_flags.map((f) => <Tag key={f} text={f} color="var(--danger)" />)}</div>
+              <div>{item.risk_flags!.map((f) => <Tag key={f} text={f} color="var(--danger)" />)}</div>
             </div>
           )}
           <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
@@ -454,7 +423,7 @@ function ItemCard({
           style={{ fontSize: 13, color: "var(--muted)", cursor: "pointer", marginTop: 4 }}
           onClick={() => setExpanded(true)}
         >
-          {item.body_text.slice(0, 80)}... <span style={{ color: "var(--brand)" }}>展开</span>
+          {item.body_text?.slice(0, 80)}... <span style={{ color: "var(--brand)" }}>展开</span>
         </div>
       )}
     </div>
@@ -462,39 +431,39 @@ function ItemCard({
 }
 
 // ─── 主题知识库面板 ──────────────────────────────────────
-function TopicPanel({ topic }: { topic: InsightTopic }) {
+function TopicPanel({ topic }: { topic: ExtendedInsightTopic }) {
   return (
     <div className="card" style={{ padding: "14px 16px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <div>
           <strong style={{ fontSize: 15 }}>{topic.name}</strong>
-          <span style={{ marginLeft: 8, fontSize: 12, color: "var(--muted)" }}>{topic.content_count} 条内容</span>
+          <span style={{ marginLeft: 8, fontSize: 12, color: "var(--muted)" }}>{topic.content_count ?? topic.item_count ?? 0} 条内容</span>
         </div>
-        <div>{topic.platform_focus.map((p) => <Tag key={p} text={p} color="var(--brand-2)" />)}</div>
+        <div>{(topic.platform_focus ?? []).map((p) => <Tag key={p} text={p} color="var(--brand-2)" />)}</div>
       </div>
       {topic.description && <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 8 }}>{topic.description}</div>}
-      {topic.audience_tags.length > 0 && (
+      {(topic.audience_tags?.length ?? 0) > 0 && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>目标人群</div>
-          {topic.audience_tags.map((t) => <Tag key={t} text={t} />)}
+          {topic.audience_tags!.map((t) => <Tag key={t} text={t} />)}
         </div>
       )}
-      {topic.common_pain_points.length > 0 && (
+      {(topic.common_pain_points?.length ?? 0) > 0 && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>常见痛点</div>
-          {topic.common_pain_points.map((p) => <Tag key={p} text={p} color="var(--warn)" />)}
+          {topic.common_pain_points!.map((p: string) => <Tag key={p} text={p} color="var(--warn)" />)}
         </div>
       )}
-      {topic.common_structures.length > 0 && (
+      {(topic.common_structures?.length ?? 0) > 0 && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>常见结构</div>
-          {topic.common_structures.map((s) => <Tag key={s} text={s} color="var(--brand)" />)}
+          {topic.common_structures!.map((s: string) => <Tag key={s} text={s} color="var(--brand)" />)}
         </div>
       )}
-      {topic.common_titles.length > 0 && (
+      {(topic.common_titles?.length ?? 0) > 0 && (
         <div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>高互动标题示例</div>
-          {topic.common_titles.slice(0, 3).map((t, i) => (
+          {topic.common_titles!.slice(0, 3).map((t: string, i: number) => (
             <div key={i} style={{ fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--line)" }}>{t}</div>
           ))}
         </div>
@@ -656,8 +625,8 @@ type Tab = "library" | "topics" | "retrieve" | "import";
 export function InsightPage() {
   const [tab, setTab] = useState<Tab>("library");
   const [items, setItems] = useState<InsightItem[]>([]);
-  const [topics, setTopics] = useState<InsightTopic[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [topics, setTopics] = useState<ExtendedInsightTopic[]>([]);
+  const [stats, setStats] = useState<InsightStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [analyzingIds, setAnalyzingIds] = useState<Set<number>>(new Set());
 
@@ -739,9 +708,9 @@ export function InsightPage() {
         {stats && (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             {[
-              { label: "内容总量", value: stats.total },
-              { label: "爆款内容", value: stats.hot_count },
-              { label: "AI已分析", value: stats.analyzed_count },
+              { label: "内容总量", value: stats.total_items },
+              { label: "爆款内容", value: stats.hot_items },
+              { label: "AI已分析", value: stats.analyzed_items },
               { label: "主题数", value: stats.topic_count },
             ].map(({ label, value }) => (
               <div key={label} className="card" style={{ padding: "10px 16px", textAlign: "center", minWidth: 80 }}>
@@ -776,7 +745,7 @@ export function InsightPage() {
               style={selectStyle}
             >
               <option value="">全部主题</option>
-              {topics.map((t) => <option key={t.id} value={t.id}>{t.name}（{t.content_count}）</option>)}
+              {topics.map((t) => <option key={t.id} value={t.id}>{t.name}（{t.content_count ?? t.item_count ?? 0}）</option>)}
             </select>
             <select
               value={filterHot === undefined ? "" : String(filterHot)}

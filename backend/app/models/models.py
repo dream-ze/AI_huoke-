@@ -65,6 +65,7 @@ from app.models.knowledge import KnowledgeChunk, KnowledgeDocument, PromptTempla
 
 # MVP模型
 from app.models.mvp import (
+    AutoRewriteTemplate,
     MvpComplianceRule,
     MvpGenerationFeedback,
     MvpGenerationResult,
@@ -77,6 +78,7 @@ from app.models.mvp import (
     MvpMaterialTagRel,
     MvpPromptTemplate,
     MvpTag,
+    PlatformComplianceRule,
 )
 
 # 发布模型
@@ -150,6 +152,8 @@ __all__ = [
     "MvpGenerationFeedback",
     "MvpKnowledgeQualityScore",
     "MvpKnowledgeRelation",
+    "PlatformComplianceRule",
+    "AutoRewriteTemplate",
     # Insight
     "InsightTopic",
     "InsightAuthorProfile",

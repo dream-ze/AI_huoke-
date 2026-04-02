@@ -3,23 +3,19 @@ Pytest test suite
 """
 
 import pytest
-from fastapi.testclient import TestClient
+from app.core.database import Base, get_db
+from app.models import GenerationTask, MaterialItem, User
+from app.services.user_service import UserService
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from main import app
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
-from main import app
-from app.core.database import Base, get_db
-from app.models import GenerationTask, MaterialItem, User
-from app.services.user_service import UserService
-
-
-# Test database
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
+# Test database - path relative to backend root
+SQLALCHEMY_DATABASE_URL = "sqlite:///../test.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -91,12 +87,7 @@ def test_db():
 class TestAuth:
     def test_register(self, test_db):
         response = client.post(
-            "/api/auth/register",
-            json={
-                "username": "testuser",
-                "email": "test@example.com",
-                "password": TEST_PASSWORD
-            }
+            "/api/auth/register", json={"username": "testuser", "email": "test@example.com", "password": TEST_PASSWORD}
         )
         # 如果用户已存在（测试 db 残留）或注册成功均认为通过
         assert response.status_code in (200, 400)
@@ -107,21 +98,10 @@ class TestAuth:
 
     def test_login(self, test_db):
         client.post(
-            "/api/auth/register",
-            json={
-                "username": "testuser",
-                "email": "test@example.com",
-                "password": TEST_PASSWORD
-            }
+            "/api/auth/register", json={"username": "testuser", "email": "test@example.com", "password": TEST_PASSWORD}
         )
-        
-        response = client.post(
-            "/api/auth/login",
-            json={
-                "username": "testuser",
-                "password": TEST_PASSWORD
-            }
-        )
+
+        response = client.post("/api/auth/login", json={"username": "testuser", "password": TEST_PASSWORD})
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
@@ -247,8 +227,8 @@ class TestContent:
                 "platform": "xiaohongshu",
                 "content_type": "post",
                 "title": "Test Content",
-                "content_text": "This is test content"
-            }
+                "content_text": "This is test content",
+            },
         )
         assert response.status_code == 410, "ingest-page 应返回 410 Gone"
 
@@ -256,12 +236,7 @@ class TestContent:
         inbox_resp = client.post(
             "/api/v1/material/inbox/manual",
             headers=auth_headers,
-            json={
-                "platform": "xiaohongshu",
-                "title": "Test Content",
-                "content": "This is test content",
-                "tags": []
-            }
+            json={"platform": "xiaohongshu", "title": "Test Content", "content": "This is test content", "tags": []},
         )
         assert inbox_resp.status_code == 200
         assert inbox_resp.json()["status"] == "pending"
@@ -270,11 +245,7 @@ class TestContent:
 class TestCompliance:
     def test_compliance_check(self, auth_headers):
         response = client.post(
-            "/api/compliance/check",
-            headers=auth_headers,
-            json={
-                "content": "这个产品100%通过！包过秒批！"
-            }
+            "/api/compliance/check", headers=auth_headers, json={"content": "这个产品100%通过！包过秒批！"}
         )
         assert response.status_code == 200
         data = response.json()
@@ -437,11 +408,21 @@ class TestV1Routing:
         from app.collector.services.browser_client import BrowserCollectorClient
 
         def fake_kw(self, platform, keyword, max_items):
-            return {"success": True, "total": 1, "items": [
-                {"platform": platform, "title": "审核测试标题", "content": "审核正文",
-                 "author": "测试作者", "url": "https://example.com/approve-test",
-                 "like_count": 100, "comment_count": 20}
-            ]}
+            return {
+                "success": True,
+                "total": 1,
+                "items": [
+                    {
+                        "platform": platform,
+                        "title": "审核测试标题",
+                        "content": "审核正文",
+                        "author": "测试作者",
+                        "url": "https://example.com/approve-test",
+                        "like_count": 100,
+                        "comment_count": 20,
+                    }
+                ],
+            }
 
         monkeypatch.setattr(BrowserCollectorClient, "collect_keyword", fake_kw)
         task_resp = client.post(
@@ -475,11 +456,21 @@ class TestV1Routing:
         from app.collector.services.browser_client import BrowserCollectorClient
 
         def fake_kw(self, platform, keyword, max_items):
-            return {"success": True, "total": 1, "items": [
-                {"platform": platform, "title": "丢弃测试标题", "content": "丢弃正文",
-                 "author": "丢弃作者", "url": "https://example.com/discard-test",
-                 "like_count": 10, "comment_count": 2}
-            ]}
+            return {
+                "success": True,
+                "total": 1,
+                "items": [
+                    {
+                        "platform": platform,
+                        "title": "丢弃测试标题",
+                        "content": "丢弃正文",
+                        "author": "丢弃作者",
+                        "url": "https://example.com/discard-test",
+                        "like_count": 10,
+                        "comment_count": 2,
+                    }
+                ],
+            }
 
         monkeypatch.setattr(BrowserCollectorClient, "collect_keyword", fake_kw)
         client.post(
@@ -511,11 +502,21 @@ class TestV1Routing:
         from app.collector.services.browser_client import BrowserCollectorClient
 
         def fake_kw(self, platform, keyword, max_items):
-            return {"success": True, "total": 1, "items": [
-                {"platform": platform, "title": "反案例测试标题", "content": "反案例正文",
-                 "author": "反案例作者", "url": "https://example.com/neg-test",
-                 "like_count": 5, "comment_count": 1}
-            ]}
+            return {
+                "success": True,
+                "total": 1,
+                "items": [
+                    {
+                        "platform": platform,
+                        "title": "反案例测试标题",
+                        "content": "反案例正文",
+                        "author": "反案例作者",
+                        "url": "https://example.com/neg-test",
+                        "like_count": 5,
+                        "comment_count": 1,
+                    }
+                ],
+            }
 
         monkeypatch.setattr(BrowserCollectorClient, "collect_keyword", fake_kw)
         client.post(
@@ -607,10 +608,7 @@ class TestMaterialsQueryOptimization:
             assert user is not None
 
             materials = (
-                db.query(MaterialItem)
-                .filter(MaterialItem.owner_id == user.id)
-                .order_by(MaterialItem.id.asc())
-                .all()
+                db.query(MaterialItem).filter(MaterialItem.owner_id == user.id).order_by(MaterialItem.id.asc()).all()
             )
             assert len(materials) >= 3
 

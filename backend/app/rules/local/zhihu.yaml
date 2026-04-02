@@ -1,3 +1,121 @@
 version: 1
 platform: zhihu
-rules: []
+rules:
+  # ===== 通用规则：绝对承诺类 =====
+  - keyword_or_pattern: "必过|包过|秒批|秒下"
+    risk_level: high
+    suggestion: "建议改为'审核通过率较高'或'快速审核'"
+    rule_category: absolute_promise
+    description: "禁止使用绝对承诺通过的表述"
+
+  - keyword_or_pattern: "100%通过|百分之百|一定通过"
+    risk_level: high
+    suggestion: "建议删除具体百分比，改为'通过率较高'"
+    rule_category: absolute_promise
+    description: "禁止使用百分比形式承诺通过"
+
+  - keyword_or_pattern: "不下款赔你|不成功不收费|包你下款"
+    risk_level: high
+    suggestion: "建议删除此类承诺，客观描述产品特点"
+    rule_category: absolute_promise
+    description: "禁止使用赔付承诺诱导用户"
+
+  # ===== 通用规则：虚假宣传类 =====
+  - keyword_or_pattern: "零利息|免息|0利息|零利率"
+    risk_level: high
+    suggestion: "建议明确说明实际利率区间，如'低利率'"
+    rule_category: false_advertising
+    description: "禁止使用零利息等虚假利率宣传"
+
+  - keyword_or_pattern: "无门槛|零门槛|无条件|免审核"
+    risk_level: high
+    suggestion: "建议改为'申请条件简单'或'审核流程便捷'"
+    rule_category: false_advertising
+    description: "禁止宣传无需任何条件即可贷款"
+
+  - keyword_or_pattern: "无视征信|不看征信|征信黑也能"
+    risk_level: high
+    suggestion: "建议改为'对征信要求较低'或'征信瑕疵可沟通'"
+    rule_category: false_advertising
+    description: "禁止宣称可以无视征信状况"
+
+  - keyword_or_pattern: "黑户可贷|黑名单可贷|征信花户"
+    risk_level: high
+    suggestion: "建议避免使用'黑户'等敏感词，客观说明准入条件"
+    rule_category: inducement
+    description: "禁止诱导征信不良用户违规申请"
+
+  # ===== 通用规则：利率表述规范 =====
+  - keyword_or_pattern: "年化\\d+%|年利率\\d+"
+    risk_level: medium
+    suggestion: "建议标注'年化利率（单利）'并注明利率区间范围"
+    rule_category: rate_expression
+    description: "利率表述需符合监管规范，注明计算方式"
+
+  # ===== 通用规则：风险提示缺失 =====
+  - keyword_or_pattern: "贷款|借款|借钱|贷"
+    risk_level: low
+    suggestion: "建议在内容末尾添加'借贷有风险，请理性消费'"
+    rule_category: risk_warning
+    description: "贷款相关内容需包含风险提示"
+
+  # ===== 知乎平台特有规则 =====
+  - keyword_or_pattern: "我是.*经理|我在银行工作|从业\\d+年|资深顾问"
+    risk_level: high
+    suggestion: "建议避免虚构专业身份，若需说明资质请提供可验证证明"
+    rule_category: platform_specific
+    description: "知乎禁止虚构专业身份或资质"
+
+  - keyword_or_pattern: "加微信|私信我微信|加V咨询|微信.*咨询"
+    risk_level: high
+    suggestion: "建议在回答中直接提供有价值信息，避免引流到私域"
+    rule_category: platform_specific
+    description: "知乎回答中不建议引导用户添加微信"
+
+  - keyword_or_pattern: "推荐.*贷款|我用的是|亲测有效|我自己在用"
+    risk_level: high
+    suggestion: "建议客观分析产品特点，避免软文式推荐"
+    rule_category: platform_specific
+    description: "知乎禁止在回答中做直接的产品软文推广"
+
+  - keyword_or_pattern: "点击链接|下方链接|链接地址|访问.*链接"
+    risk_level: high
+    suggestion: "建议在回答中完整陈述信息，避免外链引流"
+    rule_category: platform_specific
+    description: "知乎不建议在回答中引导点击外部链接"
+
+  - keyword_or_pattern: "私信领取|私信获取|评论领取|关注后.*领取"
+    risk_level: medium
+    suggestion: "建议直接在回答中提供相关信息"
+    rule_category: platform_specific
+    description: "知乎不建议通过私信/关注设门槛引导互动"
+
+  - keyword_or_pattern: "利益相关|利益申明|合作推广|广告"
+    risk_level: medium
+    suggestion: "建议按知乎规范在回答开头明确声明利益相关"
+    rule_category: platform_specific
+    description: "知乎要求推广内容需声明利益相关"
+
+  - keyword_or_pattern: "联系我|加我好友|添加好友|好友位"
+    risk_level: medium
+    suggestion: "建议通过知乎平台功能与用户互动"
+    rule_category: platform_specific
+    description: "知乎不建议引导用户添加外部联系方式"
+
+  - keyword_or_pattern: "赚钱方法|如何赚钱|副业推荐|搞钱"
+    risk_level: medium
+    suggestion: "建议避免过于功利的标题党式表述"
+    rule_category: platform_specific
+    description: "知乎不建议贷款内容关联过度营销话术"
+
+  - keyword_or_pattern: "独家渠道|内部渠道|特殊通道|专属名额"
+    risk_level: high
+    suggestion: "建议删除虚构特殊渠道的表述"
+    rule_category: false_advertising
+    description: "知乎禁止宣称有独家/内部渠道等虚假信息"
+
+  - keyword_or_pattern: "免费咨询|免费评估|免费方案"
+    risk_level: medium
+    suggestion: "建议明确说明后续是否有收费项目，避免误导"
+    rule_category: inducement
+    description: "知乎需注意免费咨询后的收费诱导风险"

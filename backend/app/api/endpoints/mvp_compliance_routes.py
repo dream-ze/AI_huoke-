@@ -1,8 +1,15 @@
 """MVP合规审核路由模块"""
 
+from typing import Optional
+
 from app.core.database import get_db
 from app.core.permissions import require_roles
-from app.schemas.mvp_schemas import ComplianceCheckRequest, ComplianceRuleRequest, ComplianceTestRequest
+from app.schemas.mvp_schemas import (
+    ComplianceCheckRequest,
+    ComplianceRuleRequest,
+    ComplianceTestRequest,
+    FourLayerCheckRequest,
+)
 from app.services.mvp_compliance_service import MvpComplianceService
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -119,3 +126,48 @@ def test_compliance_rule(req: ComplianceTestRequest, db: Session = Depends(get_d
     svc = MvpComplianceService(db)
     result = svc.check(req.text)
     return result
+
+
+@router.post("/compliance/four-layer-check")
+def four_layer_compliance_check(req: FourLayerCheckRequest, db: Session = Depends(get_db)):
+    """
+    四层合规检测 - 返回详细的分层检测结果
+
+    四层检测体系：
+    - 第一层：硬规则拦截（助贷专用敏感词）
+    - 第二层：语义风险识别（暗示性违规表达）
+    - 第三层：平台规则映射（平台特定规则）
+    - 第四层：自动降风险改写建议
+
+    红黄绿灯分级：
+    - 红灯 (red): 命中硬规则或高风险语义 → 禁止发
+    - 黄灯 (yellow): 中等风险表达或平台规则 → 建议改
+    - 绿灯 (green): 无风险或低风险 → 可发
+    """
+    svc = MvpComplianceService(db)
+    result = svc.four_layer_check(req.text, platform=req.platform)
+    return result
+
+
+@router.get("/compliance/traffic-light")
+def get_traffic_light_analysis(
+    text: str = Query(..., min_length=1, max_length=10000, description="待检测文本"),
+    platform: Optional[str] = Query(None, description="平台名称"),
+    db: Session = Depends(get_db),
+):
+    """
+    快速获取红黄绿灯分级 - 适用于前端实时检测
+    """
+    svc = MvpComplianceService(db)
+    result = svc.four_layer_check(text, platform=platform)
+    return {
+        "traffic_light": result["traffic_light"],
+        "overall_risk_score": result["overall_risk_score"],
+        "is_compliant": result["is_compliant"],
+        "hit_count": {
+            "layer1": result["layer_results"]["layer1_hard_rules"]["hit_count"],
+            "layer2": result["layer_results"]["layer2_semantic_risks"]["hit_count"],
+            "layer3": result["layer_results"]["layer3_platform_rules"]["hit_count"],
+        },
+        "rewrite_suggestions": result["rewrite_suggestions"][:5],  # 最多返回5条建议
+    }

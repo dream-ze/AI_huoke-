@@ -23,6 +23,48 @@ LIBRARY_TYPES = {
     "compliance_rules": "合规规则",
 }
 
+# 业务标签关键词映射 - 助贷业务场景多维度标签体系
+BUSINESS_TAG_KEYWORDS = {
+    "product_type": {
+        "信贷": ["信用贷", "信贷", "纯信用", "无抵押", "信用借款"],
+        "抵押": ["抵押", "房贷", "车贷", "抵押物", "房产贷"],
+        "企业贷": ["企业贷", "企业融资", "对公贷款", "企业信贷"],
+        "经营贷": ["经营贷", "经营周转", "生意贷", "经营性贷款"],
+        "消费贷": ["消费贷", "消费分期", "花呗", "借呗", "消费信贷"],
+    },
+    "user_qualification": {
+        "公积金": ["公积金", "住房公积金", "公积金贷"],
+        "社保": ["社保", "社会保险", "五险一金"],
+        "个体户": ["个体户", "个体工商", "个体经营"],
+        "企业主": ["企业主", "法人", "老板", "公司法人"],
+        "征信花": ["征信花", "征信不好", "逾期", "征信差"],
+        "负债高": ["负债高", "负债率", "以贷养贷", "多头借贷"],
+    },
+    "content_intent": {
+        "科普": ["知道吗", "科普", "什么是", "了解", "解读", "你知道"],
+        "避坑": ["避坑", "注意", "别被骗", "套路", "陷阱", "小心"],
+        "案例": ["案例", "真实经历", "分享", "我的经验", "亲身经历"],
+        "引流": ["私信", "咨询", "联系", "加微", "点击"],
+        "转化": ["办理", "申请", "立即", "马上", "现在就"],
+    },
+    "platform_format": {
+        "口播": ["口播", "视频讲解", "真人出镜"],
+        "图文": ["图文", "配图", "长图"],
+        "问答": ["问答", "提问", "回答", "知乎"],
+        "经验帖": ["经验帖", "经验分享", "干货分享"],
+    },
+    "risk_level": {
+        "低风险": ["安全", "正规", "合法", "银行"],
+        "中风险": ["快速", "便捷", "简单"],
+        "高风险": ["包过", "必过", "秒批", "黑户"],
+    },
+    "conversion_tendency": {
+        "强转化": ["立即申请", "马上办理", "限时", "名额有限"],
+        "弱转化": ["了解一下", "可以看看", "参考"],
+        "品牌向": ["专业", "值得信赖", "品牌", "实力"],
+    },
+}
+
 
 class MvpKnowledgeCrudService:
     """知识库CRUD服务 - 负责创建、读取、更新、删除操作"""
@@ -516,3 +558,26 @@ class MvpKnowledgeCrudService:
         """计算内容hash用于去重"""
         text = f"{title or ''}{content or ''}".strip()
         return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+    def auto_assign_business_tags(self, content: str, platform: str = None) -> list:
+        """对内容进行多维度业务标签匹配。
+
+        Args:
+            content: 内容文本
+            platform: 平台名称（可选）
+
+        Returns:
+            匹配到的标签列表，格式: [{"type": "product_type", "name": "信贷"}, ...]
+        """
+        matched_tags = []
+        if not content:
+            return matched_tags
+
+        for tag_type, keywords_map in BUSINESS_TAG_KEYWORDS.items():
+            for tag_name, keywords in keywords_map.items():
+                for keyword in keywords:
+                    if keyword in content:
+                        matched_tags.append({"type": tag_type, "name": tag_name})
+                        break  # 一个标签匹配到一个关键词即可
+
+        return matched_tags

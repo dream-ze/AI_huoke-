@@ -2,15 +2,13 @@
 Database initialization and migration helper
 """
 
-import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__))
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from app.core.database import Base, engine
-from app.models import (
-    User, ContentAsset, RewrittenContent, Customer,
-    PublishRecord, BrowserPluginCollection
-)
+from app.models import BrowserPluginCollection, ContentAsset, Customer, PublishRecord, RewrittenContent, User
 
 
 def init_db():

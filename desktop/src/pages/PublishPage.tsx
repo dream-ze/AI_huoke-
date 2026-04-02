@@ -18,7 +18,8 @@ import {
   getPublishRoiTrend,
   getPublishContentAnalysis,
 } from "../lib/api";
-import { PublishTask, PublishTaskStats, UserSummary } from "../types";
+import { publishApi } from "../api/publishApi";
+import { PublishTask, PublishTaskStats, UserSummary, ContentLeadStats, ContentLeadItem } from "../types";
 
 interface SocialAccount {
   id: number;
@@ -127,6 +128,14 @@ export function PublishPage() {
   const [useCustomAccount, setUseCustomAccount] = useState(false);
 
   const [message, setMessage] = useState("");
+
+  // 线索追踪面板状态
+  const [leadPanelTaskId, setLeadPanelTaskId] = useState<number | null>(null);
+  const [leadPanelData, setLeadPanelData] = useState<ContentLeadStats | null>(null);
+  const [leadPanelLoading, setLeadPanelLoading] = useState(false);
+
+  // Tab 切换状态
+  const [activeTab, setActiveTab] = useState<"tasks" | "accounts">("tasks");
 
   async function refreshData() {
     const [statsData, listData] = await Promise.all([
@@ -388,6 +397,40 @@ export function PublishPage() {
     } catch (err: any) {
       setMessage(err?.response?.data?.detail || "导出失败");
     }
+  }
+
+  // 查看线索面板
+  async function handleViewLeads(taskId: number) {
+    setLeadPanelTaskId(taskId);
+    setLeadPanelLoading(true);
+    setLeadPanelData(null);
+    try {
+      const data = await publishApi.getContentLeadStats(taskId);
+      setLeadPanelData(data);
+    } catch (err: any) {
+      setMessage(err?.response?.data?.detail || "获取线索数据失败");
+    } finally {
+      setLeadPanelLoading(false);
+    }
+  }
+
+  function closeLeadPanel() {
+    setLeadPanelTaskId(null);
+    setLeadPanelData(null);
+  }
+
+  // 计算单个任务的 ROI 数据
+  function calculateTaskRoi(task: PublishTask) {
+    const views = task.views || 0;
+    const leads = task.leads || 0;
+    const conversions = task.conversions || 0;
+    return {
+      views,
+      leads,
+      conversions,
+      lead_rate: views > 0 ? leads / views : 0,
+      conversion_rate: leads > 0 ? conversions / leads : 0,
+    };
   }
 
   return (
@@ -792,6 +835,16 @@ export function PublishPage() {
                         >
                           查看链路
                         </button>
+                        {task.status === "submitted" && (task.leads || 0) > 0 && (
+                          <button
+                            className="ghost"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleViewLeads(task.id)}
+                          >
+                            查看线索
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -989,6 +1042,169 @@ export function PublishPage() {
           </form>
         </section>
       )}
+
+      {/* 线索追踪面板 */}
+      {leadPanelTaskId !== null && (
+        <section className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3>线索追踪（任务 #{leadPanelTaskId}）</h3>
+            <button className="ghost" type="button" onClick={closeLeadPanel}>
+              关闭
+            </button>
+          </div>
+          {leadPanelLoading ? (
+            <div className="muted">加载线索数据...</div>
+          ) : leadPanelData ? (
+            <>
+              {/* ROI 漏斗 */}
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24, padding: 16, background: "#f8fafc", borderRadius: 8 }}>
+                <div style={{ textAlign: "center", flex: 1 }}>
+                  <div style={{ fontSize: 24, fontWeight: 600, color: "#3b82f6" }}>{leadPanelData.total_lead_count}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>线索数</div>
+                </div>
+                <div style={{ fontSize: 20, color: "#94a3b8" }}>→</div>
+                <div style={{ textAlign: "center", flex: 1 }}>
+                  <div style={{ fontSize: 24, fontWeight: 600, color: "#10b981" }}>{leadPanelData.total_valid_leads}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>有效线索</div>
+                </div>
+                <div style={{ fontSize: 20, color: "#94a3b8" }}>→</div>
+                <div style={{ textAlign: "center", flex: 1 }}>
+                  <div style={{ fontSize: 24, fontWeight: 600, color: "#f59e0b" }}>{leadPanelData.total_conversions}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>转化数</div>
+                </div>
+              </div>
+
+              {/* 转化率 */}
+              <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
+                <div className="card" style={{ flex: 1, background: "#eff6ff" }}>
+                  <div style={{ fontSize: 14, color: "#1e40af" }}>线索转化率</div>
+                  <div style={{ fontSize: 20, fontWeight: 600 }}>{(leadPanelData.conversion_rate * 100).toFixed(1)}%</div>
+                </div>
+                <div className="card" style={{ flex: 1, background: "#ecfdf5" }}>
+                  <div style={{ fontSize: 14, color: "#047857" }}>加微数</div>
+                  <div style={{ fontSize: 20, fontWeight: 600 }}>{leadPanelData.total_wechat_adds}</div>
+                </div>
+              </div>
+
+              {/* 分级占比 */}
+              {Object.keys(leadPanelData.status_distribution).length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <h4 style={{ marginBottom: 8, fontSize: 14 }}>线索状态分布</h4>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {Object.entries(leadPanelData.status_distribution).map(([status, count]) => (
+                      <div key={status} style={{ padding: "4px 12px", background: "#f1f5f9", borderRadius: 4, fontSize: 13 }}>
+                        {status}: {count}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 线索列表 */}
+              <div>
+                <h4 style={{ marginBottom: 12, fontSize: 14 }}>线索列表</h4>
+                {leadPanelData.leads.length === 0 ? (
+                  <div className="muted">暂无线索数据</div>
+                ) : (
+                  <table className="table" style={{ fontSize: 13 }}>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>标题</th>
+                        <th>状态</th>
+                        <th>加微</th>
+                        <th>线索</th>
+                        <th>有效</th>
+                        <th>转化</th>
+                        <th>时间</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {leadPanelData.leads.map((lead) => (
+                        <tr key={lead.id}>
+                          <td>{lead.id}</td>
+                          <td>{lead.title}</td>
+                          <td>{lead.status}</td>
+                          <td>{lead.wechat_adds}</td>
+                          <td>{lead.leads}</td>
+                          <td>{lead.valid_leads}</td>
+                          <td>{lead.conversions}</td>
+                          <td>{lead.created_at ? new Date(lead.created_at).toLocaleDateString() : "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="muted">无法获取线索数据</div>
+          )}
+        </section>
+      )}
+
+      {/* 账号效果对比面板 */}
+      <section className="card">
+        <h3>账号效果对比</h3>
+        <table className="table" style={{ fontSize: 14 }}>
+          <thead>
+            <tr>
+              <th>账号</th>
+              <th>平台</th>
+              <th>发布数</th>
+              <th>总浏览</th>
+              <th>总点赞</th>
+              <th>线索数</th>
+              <th>转化数</th>
+              <th>线索转化率</th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* 从 tasks 数据聚合账号统计 */}
+            {(() => {
+              const accountMap = new Map<string, { name: string; platform: string; tasks: PublishTask[] }>();
+              tasks.forEach((task) => {
+                const key = `${task.platform}_${task.account_name}`;
+                if (!accountMap.has(key)) {
+                  accountMap.set(key, { name: task.account_name, platform: task.platform, tasks: [] });
+                }
+                accountMap.get(key)!.tasks.push(task);
+              });
+              const accountStats = Array.from(accountMap.values()).map((acc) => ({
+                account_name: acc.name,
+                platform: acc.platform,
+                total_tasks: acc.tasks.length,
+                total_views: acc.tasks.reduce((sum, t) => sum + (t.views || 0), 0),
+                total_likes: acc.tasks.reduce((sum, t) => sum + (t.likes || 0), 0),
+                total_leads: acc.tasks.reduce((sum, t) => sum + (t.leads || 0), 0),
+                total_conversions: acc.tasks.reduce((sum, t) => sum + (t.conversions || 0), 0),
+                lead_conversion_rate: acc.tasks.reduce((sum, t) => sum + (t.leads || 0), 0) > 0
+                  ? acc.tasks.reduce((sum, t) => sum + (t.conversions || 0), 0) /
+                    acc.tasks.reduce((sum, t) => sum + (t.leads || 0), 0)
+                  : 0,
+              }));
+              return accountStats.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="muted">暂无账号数据</td>
+                </tr>
+              ) : (
+                accountStats.sort((a, b) => b.total_conversions - a.total_conversions).map((stat, idx) => (
+                  <tr key={idx}>
+                    <td>{stat.account_name}</td>
+                    <td>{stat.platform}</td>
+                    <td>{stat.total_tasks}</td>
+                    <td>{stat.total_views.toLocaleString()}</td>
+                    <td>{stat.total_likes.toLocaleString()}</td>
+                    <td>{stat.total_leads}</td>
+                    <td>{stat.total_conversions}</td>
+                    <td>{(stat.lead_conversion_rate * 100).toFixed(1)}%</td>
+                  </tr>
+                ))
+              );
+            })()}
+          </tbody>
+        </table>
+      </section>
     </div>
   );
 }

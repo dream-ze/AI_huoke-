@@ -2,11 +2,15 @@
 审计日志模块
 
 提供统一的审计日志记录功能，用于追踪用户操作行为。
+同时支持日志文件记录和数据库持久化。
 """
 
+import json
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
+
+from sqlalchemy.orm import Session
 
 # 创建专用的审计日志记录器
 audit_logger = logging.getLogger("audit")
@@ -27,17 +31,25 @@ def log_audit(
     resource_id: Optional[str] = None,
     result: str = "success",
     detail: Optional[str] = None,
+    old_value: Optional[Any] = None,
+    new_value: Optional[Any] = None,
+    ip_address: Optional[str] = None,
+    db: Optional[Session] = None,
 ) -> None:
     """
-    记录审计日志
+    记录审计日志（同时写日志文件和数据库）
 
     Args:
         user_id: 执行操作的用户ID
-        action: 操作类型 (如 "create", "update", "delete", "export")
-        resource: 资源类型 (如 "material", "knowledge", "customer")
+        action: 操作类型 (如 "create", "update", "delete", "export", "approve", "assign")
+        resource: 资源类型 (如 "material", "knowledge", "customer", "content")
         resource_id: 资源ID (可选)
         result: 操作结果 (success/failure)
         detail: 详细信息 (可选)
+        old_value: 变更前的值，支持任意类型，会自动序列化为JSON (可选)
+        new_value: 变更后的值，支持任意类型，会自动序列化为JSON (可选)
+        ip_address: 操作IP地址 (可选)
+        db: 数据库会话，如果提供则同时写入数据库 (可选)
 
     Example:
         log_audit(
@@ -46,19 +58,60 @@ def log_audit(
             resource="material",
             resource_id="123",
             result="success",
-            detail="批量删除素材"
+            detail="批量删除素材",
+            ip_address="192.168.1.1",
+            db=db_session
         )
     """
+    # 序列化old_value和new_value为JSON字符串
+    old_value_str = None
+    new_value_str = None
+    try:
+        if old_value is not None:
+            old_value_str = json.dumps(old_value, ensure_ascii=False, default=str)
+        if new_value is not None:
+            new_value_str = json.dumps(new_value, ensure_ascii=False, default=str)
+    except Exception:
+        pass  # 序列化失败时保持为None
+
+    # 写日志文件
     log_message = (
         f"AUDIT | user={user_id} | action={action} | resource={resource} | "
         f"resource_id={resource_id or 'N/A'} | result={result} | "
-        f"detail={detail or 'N/A'} | timestamp={datetime.utcnow().isoformat()}"
+        f"detail={detail or 'N/A'} | ip={ip_address or 'N/A'} | "
+        f"timestamp={datetime.utcnow().isoformat()}"
     )
 
     if result == "success":
         audit_logger.info(log_message)
     else:
         audit_logger.warning(log_message)
+
+    # 写入数据库（如果提供了db会话）
+    if db is not None:
+        try:
+            from app.models.audit import AuditLog
+
+            audit_record = AuditLog(
+                user_id=user_id,
+                action=action,
+                resource=resource,
+                resource_id=str(resource_id) if resource_id else None,
+                old_value=old_value_str,
+                new_value=new_value_str,
+                detail=detail,
+                result=result,
+                ip_address=ip_address,
+            )
+            db.add(audit_record)
+            db.commit()
+        except Exception as e:
+            # 数据库写入失败不影响主流程，只记录错误日志
+            audit_logger.error(f"Failed to persist audit log to database: {e}")
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
 
 def log_permission_denied(

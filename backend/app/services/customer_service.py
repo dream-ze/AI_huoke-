@@ -1,9 +1,10 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from datetime import datetime
+
 from app.models import Customer, User
 from app.schemas import CustomerCreate, CustomerUpdate
 from fastapi import HTTPException, status
-from datetime import datetime
+from sqlalchemy import desc, or_
+from sqlalchemy.orm import Session
 
 
 class CustomerService:
@@ -12,15 +13,9 @@ class CustomerService:
         """Create new customer"""
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        customer = Customer(
-            owner_id=user_id,
-            **customer_data.model_dump()
-        )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        customer = Customer(owner_id=user_id, **customer_data.model_dump())
         db.add(customer)
         db.commit()
         db.refresh(customer)
@@ -28,71 +23,69 @@ class CustomerService:
 
     @staticmethod
     def get_user_customers(
-        db: Session, 
-        user_id: int, 
+        db: Session,
+        user_id: int,
         status: str = None,
-        skip: int = 0, 
-        limit: int = 100
+        intention_level: str = None,
+        search: str = None,
+        skip: int = 0,
+        limit: int = 100,
     ) -> list:
-        """Get user's customers"""
+        """Get user's customers with filters"""
         query = db.query(Customer).filter(Customer.owner_id == user_id)
-        
+
         if status:
             query = query.filter(Customer.customer_status == status)
-        
+
+        if intention_level:
+            query = query.filter(Customer.intention_level == intention_level)
+
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.filter(
+                or_(
+                    Customer.nickname.ilike(search_pattern),
+                    Customer.phone.ilike(search_pattern),
+                    Customer.wechat_id.ilike(search_pattern),
+                )
+            )
+
         return query.order_by(desc(Customer.created_at)).offset(skip).limit(limit).all()
 
     @staticmethod
     def get_customer(db: Session, user_id: int, customer_id: int) -> Customer:
         """Get specific customer"""
-        customer = db.query(Customer).filter(
-            (Customer.id == customer_id) & (Customer.owner_id == user_id)
-        ).first()
-        
+        customer = db.query(Customer).filter((Customer.id == customer_id) & (Customer.owner_id == user_id)).first()
+
         if not customer:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Customer not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
         return customer
 
     @staticmethod
-    def update_customer(
-        db: Session, 
-        user_id: int, 
-        customer_id: int, 
-        customer_data: CustomerUpdate
-    ) -> Customer:
+    def update_customer(db: Session, user_id: int, customer_id: int, customer_data: CustomerUpdate) -> Customer:
         """Update customer"""
         customer = CustomerService.get_customer(db, user_id, customer_id)
-        
+
         update_data = customer_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(customer, field, value)
-        
+
         db.commit()
         db.refresh(customer)
         return customer
 
     @staticmethod
-    def add_follow_record(
-        db: Session, 
-        user_id: int, 
-        customer_id: int, 
-        content: str
-    ) -> Customer:
+    def add_follow_record(db: Session, user_id: int, customer_id: int, content: str) -> Customer:
         """Add follow-up record"""
         customer = CustomerService.get_customer(db, user_id, customer_id)
-        
+
         if customer.follow_records is None:
             customer.follow_records = []
-        
-        customer.follow_records.append({
-            "date": datetime.utcnow().isoformat(),
-            "content": content,
-            "owner": "default_user"
-        })
-        
+
+        customer.follow_records.append(
+            {"date": datetime.utcnow().isoformat(), "content": content, "owner": "default_user"}
+        )
+
         db.commit()
         db.refresh(customer)
         return customer
@@ -108,7 +101,12 @@ class CustomerService:
     @staticmethod
     def get_pending_follow_customers(db: Session, user_id: int, limit: int = 20) -> list:
         """Get customers pending follow-up"""
-        return db.query(Customer).filter(
-            (Customer.owner_id == user_id) &
-            (Customer.customer_status.in_(["new", "pending_follow", "contacted"]))
-        ).order_by(desc(Customer.created_at)).limit(limit).all()
+        return (
+            db.query(Customer)
+            .filter(
+                (Customer.owner_id == user_id) & (Customer.customer_status.in_(["new", "pending_follow", "contacted"]))
+            )
+            .order_by(desc(Customer.created_at))
+            .limit(limit)
+            .all()
+        )

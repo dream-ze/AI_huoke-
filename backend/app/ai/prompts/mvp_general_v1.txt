@@ -61,7 +61,12 @@
       "text": "专业型正文内容...",
       "style_label": "专业型",
       "suitable_platforms": ["知乎", "公众号", "头条号"],
-      "word_count": 正文字数
+      "word_count": 正文字数,
+      "opening_hook": "开头钩子（吸引注意力的第一句话）",
+      "cta_section": "行动引导段（引导读者下一步操作）",
+      "risk_disclaimer": "风险提示说明（必须包含，如：请注意：贷款需谨慎，具体利率以实际审批为准）",
+      "alternative_v1": "低风险替代版本的完整文案（更保守、更合规的版本）",
+      "alternative_v2": "高转化替代版本的完整文案（更有吸引力、转化导向更强的版本）"
     },
     {
       "version": "casual",
@@ -69,7 +74,12 @@
       "text": "口语型正文内容...",
       "style_label": "口语型",
       "suitable_platforms": ["抖音", "视频号"],
-      "word_count": 正文字数
+      "word_count": 正文字数,
+      "opening_hook": "开头钩子",
+      "cta_section": "行动引导段",
+      "risk_disclaimer": "风险提示说明",
+      "alternative_v1": "低风险替代版本",
+      "alternative_v2": "高转化替代版本"
     },
     {
       "version": "seeding",
@@ -77,7 +87,12 @@
       "text": "种草型正文内容...",
       "style_label": "种草型",
       "suitable_platforms": ["小红书", "微博", "朋友圈"],
-      "word_count": 正文字数
+      "word_count": 正文字数,
+      "opening_hook": "开头钩子",
+      "cta_section": "行动引导段",
+      "risk_disclaimer": "风险提示说明",
+      "alternative_v1": "低风险替代版本",
+      "alternative_v2": "高转化替代版本"
     }
   ],
   "meta": {
@@ -86,6 +101,13 @@
     "core_message": "核心卖点/信息"
   }
 }
+
+【重要】以下字段为必填项：
+- risk_disclaimer: 必须包含风险提示，如"请注意：贷款需谨慎，具体利率以实际审批为准"
+- alternative_v1: 低风险替代版本，适用于风险敏感场景
+- alternative_v2: 高转化替代版本，适用于追求转化效果的场景
+- opening_hook: 开头钩子，用于吸引读者注意力
+- cta_section: 行动引导，用于引导读者进行下一步操作
 
 # 合规红线（必须遵守）
 

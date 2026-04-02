@@ -1,20 +1,39 @@
+"""
+线索管理 API 端点
+
+职责：
+- 请求参数校验
+- 调用 LeadService 方法
+- 返回响应
+"""
+
+import logging
 from datetime import datetime, timedelta
 
 from app.core.database import get_db
 from app.core.security import verify_token
-from app.models import Customer, Lead, PublishTask, User
+from app.models import Customer, Lead, PublishedContent, PublishTask, User
+from app.models.crm import LeadProfile
 from app.schemas import (
+    AttributionChainResponse,
     CustomerResponse,
     LeadAssignRequest,
+    LeadBatchImportRequest,
+    LeadBatchImportResponse,
     LeadConvertCustomerRequest,
     LeadCreate,
+    LeadFromPublishRequest,
     LeadResponse,
     LeadStatusUpdate,
     LeadTraceResponse,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query
+from app.services.attribution_service import AttributionService
+from app.services.lead_service import LeadService
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/lead", tags=["lead"])
 
@@ -32,104 +51,8 @@ def get_lead_attribution(
     线索来源归因分析
     分析哪个平台/哪条内容带来最多线索
     """
-    start_date = datetime.utcnow() - timedelta(days=days)
-
-    # 按平台分组统计
-    platform_stats = (
-        db.query(
-            Lead.platform,
-            func.count(Lead.id).label("lead_count"),
-            func.sum(Lead.valid_leads).label("valid_count"),
-            func.sum(Lead.conversions).label("conversion_count"),
-        )
-        .filter(Lead.owner_id == current_user["user_id"])
-        .filter(Lead.created_at >= start_date)
-        .group_by(Lead.platform)
-        .all()
-    )
-
-    by_platform = []
-    for row in platform_stats:
-        lead_count = row.lead_count or 0
-        valid_count = row.valid_count or 0
-        conversion_count = row.conversion_count or 0
-        conversion_rate = (conversion_count / lead_count) if lead_count > 0 else 0
-        by_platform.append(
-            {
-                "platform": row.platform,
-                "lead_count": lead_count,
-                "valid_count": valid_count,
-                "conversion_count": conversion_count,
-                "conversion_rate": round(conversion_rate, 4),
-            }
-        )
-
-    # 按来源分组统计
-    source_stats = (
-        db.query(
-            Lead.source,
-            func.count(Lead.id).label("lead_count"),
-            func.sum(Lead.valid_leads).label("valid_count"),
-            func.sum(Lead.conversions).label("conversion_count"),
-        )
-        .filter(Lead.owner_id == current_user["user_id"])
-        .filter(Lead.created_at >= start_date)
-        .group_by(Lead.source)
-        .all()
-    )
-
-    by_source = []
-    for row in source_stats:
-        lead_count = row.lead_count or 0
-        valid_count = row.valid_count or 0
-        conversion_count = row.conversion_count or 0
-        conversion_rate = (conversion_count / lead_count) if lead_count > 0 else 0
-        by_source.append(
-            {
-                "source": row.source,
-                "lead_count": lead_count,
-                "valid_count": valid_count,
-                "conversion_count": conversion_count,
-                "conversion_rate": round(conversion_rate, 4),
-            }
-        )
-
-    # 最佳引流内容 - 关联 PublishTask 获取 task_title
-    top_content_query = (
-        db.query(
-            Lead.title,
-            Lead.platform,
-            Lead.publish_task_id,
-            PublishTask.task_title,
-            func.count(Lead.id).label("lead_count"),
-            func.sum(Lead.conversions).label("conversions"),
-        )
-        .outerjoin(PublishTask, Lead.publish_task_id == PublishTask.id)
-        .filter(Lead.owner_id == current_user["user_id"])
-        .filter(Lead.created_at >= start_date)
-        .group_by(Lead.title, Lead.platform, Lead.publish_task_id, PublishTask.task_title)
-        .order_by(func.count(Lead.id).desc())
-        .limit(10)
-        .all()
-    )
-
-    top_content = []
-    for row in top_content_query:
-        top_content.append(
-            {
-                "title": row.task_title or row.title,
-                "platform": row.platform,
-                "lead_count": row.lead_count or 0,
-                "conversions": row.conversions or 0,
-            }
-        )
-
-    return {
-        "by_platform": by_platform,
-        "by_source": by_source,
-        "top_content": top_content,
-        "period_days": days,
-    }
+    service = LeadService(db)
+    return service.get_attribution_stats(db, current_user["user_id"], days)
 
 
 @router.get("/stats/funnel")
@@ -142,108 +65,27 @@ def get_lead_funnel(
     转化漏斗统计
     返回各阶段数量与转化率
     """
-    start_date = datetime.utcnow() - timedelta(days=days)
-
-    # published: PublishTask 表的总数（指定时间范围）
-    published_count = (
-        db.query(func.count(PublishTask.id))
-        .filter(PublishTask.owner_id == current_user["user_id"])
-        .filter(PublishTask.created_at >= start_date)
-        .scalar()
-        or 0
-    )
-
-    # leads_generated: Lead 表总数
-    leads_generated_count = (
-        db.query(func.count(Lead.id))
-        .filter(Lead.owner_id == current_user["user_id"])
-        .filter(Lead.created_at >= start_date)
-        .scalar()
-        or 0
-    )
-
-    # contacted: Lead 表 status 为 contacted 及之后状态的数量
-    contacted_statuses = ["contacted", "qualified", "converted"]
-    contacted_count = (
-        db.query(func.count(Lead.id))
-        .filter(Lead.owner_id == current_user["user_id"])
-        .filter(Lead.created_at >= start_date)
-        .filter(Lead.status.in_(contacted_statuses))
-        .scalar()
-        or 0
-    )
-
-    # qualified: Lead 表 status 为 qualified 及之后状态的数量
-    qualified_statuses = ["qualified", "converted"]
-    qualified_count = (
-        db.query(func.count(Lead.id))
-        .filter(Lead.owner_id == current_user["user_id"])
-        .filter(Lead.created_at >= start_date)
-        .filter(Lead.status.in_(qualified_statuses))
-        .scalar()
-        or 0
-    )
-
-    # converted: Lead 表 status 为 converted 的数量
-    converted_count = (
-        db.query(func.count(Lead.id))
-        .filter(Lead.owner_id == current_user["user_id"])
-        .filter(Lead.created_at >= start_date)
-        .filter(Lead.status == "converted")
-        .scalar()
-        or 0
-    )
-
-    # 计算转化率（基于 published 作为基准）
-    stages = [
-        {
-            "stage": "published",
-            "stage_label": "发布内容",
-            "count": published_count,
-            "rate": 1.0,
-        },
-        {
-            "stage": "leads_generated",
-            "stage_label": "产生线索",
-            "count": leads_generated_count,
-            "rate": round(leads_generated_count / published_count, 4) if published_count > 0 else 0,
-        },
-        {
-            "stage": "contacted",
-            "stage_label": "已联系",
-            "count": contacted_count,
-            "rate": round(contacted_count / published_count, 4) if published_count > 0 else 0,
-        },
-        {
-            "stage": "qualified",
-            "stage_label": "已认定",
-            "count": qualified_count,
-            "rate": round(qualified_count / published_count, 4) if published_count > 0 else 0,
-        },
-        {
-            "stage": "converted",
-            "stage_label": "已转化",
-            "count": converted_count,
-            "rate": round(converted_count / published_count, 4) if published_count > 0 else 0,
-        },
-    ]
-
-    return {
-        "stages": stages,
-        "period_days": days,
-    }
+    service = LeadService(db)
+    return service.get_lead_funnel_stats(db, current_user["user_id"], days)
 
 
-# ═══════════ 工具函数与 CRUD 端点 ═══════════
+@router.get("/stats/by-grade/{grade}")
+def get_leads_by_grade(
+    grade: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """
+    按分级查询线索
+    grade: A/B/C/D
+    """
+    service = LeadService(db)
+    return service.get_leads_by_grade(db, current_user["user_id"], grade, skip, limit)
 
 
-def _lead_to_response(db: Session, lead: Lead, publish_record_id: int | None = None) -> dict:
-    customer = db.query(Customer).filter(Customer.lead_id == lead.id).first()
-    payload = LeadResponse.model_validate(lead).model_dump()
-    payload["customer_id"] = customer.id if customer else None
-    if publish_record_id is not None:
-        payload["publish_record_id"] = publish_record_id
-    return payload
+# ═══════════ CRUD 端点 ═══════════
 
 
 @router.post("/create", response_model=LeadResponse)
@@ -252,11 +94,9 @@ def create_lead(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    lead = Lead(owner_id=current_user["user_id"], **payload.model_dump())
-    db.add(lead)
-    db.commit()
-    db.refresh(lead)
-    return _lead_to_response(db, lead)
+    """创建线索，自动触发评分和分级"""
+    service = LeadService(db)
+    return service.create_lead(db, payload, current_user["user_id"])
 
 
 @router.get("/list", response_model=list[LeadResponse])
@@ -268,27 +108,13 @@ def list_leads(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Lead)
+    """查询线索列表"""
+    # 权限校验
     if owner_id is not None and owner_id != current_user["user_id"]:
         raise HTTPException(status_code=403, detail="No access to this lead scope")
 
-    query = query.filter(Lead.owner_id == current_user["user_id"])
-    if status and status != "all":
-        query = query.filter(Lead.status == status)
-    leads = query.order_by(Lead.created_at.desc()).offset(skip).limit(limit).all()
-    if not leads:
-        return []
-
-    lead_ids = [item.id for item in leads]
-    customer_rows = db.query(Customer.id, Customer.lead_id).filter(Customer.lead_id.in_(lead_ids)).all()
-    customer_map = {lead_id: customer_id for customer_id, lead_id in customer_rows if lead_id is not None}
-
-    result = []
-    for item in leads:
-        payload = LeadResponse.model_validate(item).model_dump()
-        payload["customer_id"] = customer_map.get(item.id)
-        result.append(payload)
-    return result
+    service = LeadService(db)
+    return service.list_leads(db, current_user["user_id"], status, skip, limit)
 
 
 @router.put("/{lead_id}/status", response_model=LeadResponse)
@@ -298,16 +124,9 @@ def update_lead_status(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    if lead.owner_id != current_user["user_id"]:
-        raise HTTPException(status_code=403, detail="No access to this lead")
-
-    setattr(lead, "status", payload.status)
-    db.commit()
-    db.refresh(lead)
-    return _lead_to_response(db, lead)
+    """更新线索状态"""
+    service = LeadService(db)
+    return service.update_status(db, lead_id, payload.status, current_user["user_id"])
 
 
 @router.post("/{lead_id}/assign", response_model=LeadResponse)
@@ -317,21 +136,10 @@ def assign_lead_owner(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    if lead.owner_id != current_user["user_id"]:
-        raise HTTPException(status_code=403, detail="No access to this lead")
-
+    """分派线索给销售"""
+    service = LeadService(db)
     new_owner_id = payload.owner_id or current_user["user_id"]
-    owner = db.query(User).filter(User.id == new_owner_id).first()
-    if not owner:
-        raise HTTPException(status_code=404, detail="Owner user not found")
-
-    setattr(lead, "owner_id", int(new_owner_id))
-    db.commit()
-    db.refresh(lead)
-    return _lead_to_response(db, lead)
+    return service.assign_lead(db, lead_id, new_owner_id, current_user["user_id"])
 
 
 @router.get("/{lead_id}/trace", response_model=LeadTraceResponse)
@@ -340,21 +148,9 @@ def get_lead_trace(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-
-    if lead.owner_id != current_user["user_id"]:
-        raise HTTPException(status_code=403, detail="No access to this lead")
-
-    customer = db.query(Customer).filter(Customer.lead_id == lead.id).first()
-    publish_record_id = None
-    publish_task_id = getattr(lead, "publish_task_id", None)
-    if publish_task_id is not None:
-        task = db.query(PublishTask).filter(PublishTask.id == publish_task_id).first()
-        publish_record_id = task.publish_record_id if task else None
-
-    return _lead_to_response(db, lead, publish_record_id=publish_record_id)
+    """获取线索追溯信息"""
+    service = LeadService(db)
+    return service.get_lead_trace(db, lead_id, current_user["user_id"])
 
 
 @router.post("/{lead_id}/convert-customer", response_model=CustomerResponse)
@@ -364,31 +160,208 @@ def convert_lead_to_customer(
     current_user: dict = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
+    """线索转客户"""
+    service = LeadService(db)
+    return service.convert_to_customer(db, lead_id, payload, current_user["user_id"])
+
+
+@router.post("/{lead_id}/rescore")
+def rescore_lead(
+    lead_id: int,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """手动触发线索重新评分"""
+    service = LeadService(db)
+    # 权限校验
     lead = db.query(Lead).filter(Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-
     if lead.owner_id != current_user["user_id"]:
         raise HTTPException(status_code=403, detail="No access to this lead")
 
-    existing = db.query(Customer).filter(Customer.lead_id == lead.id).first()
-    if existing:
-        return existing
+    return service.auto_score(db, lead_id)
 
-    customer = Customer(
-        owner_id=lead.owner_id,
-        nickname=payload.nickname or f"线索#{lead.id}",
-        wechat_id=payload.wechat_id,
-        phone=payload.phone,
-        source_platform=lead.platform,
-        source_content_id=None,
-        lead_id=lead.id,
-        tags=payload.tags or ["线索转客户"],
-        intention_level=payload.intention_level or lead.intention_level,
-        inquiry_content=payload.inquiry_content or lead.note,
-        customer_status="new",
+
+@router.post("/batch-import")
+def batch_import_leads(
+    leads_data: list[LeadCreate],
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """批量导入线索"""
+    service = LeadService(db)
+    return service.batch_import_leads(db, leads_data, current_user["user_id"])
+
+
+# ═══════════ 线索入口与自动归因端点 ═══════════
+
+
+@router.post("/from-publish")
+def create_lead_from_publish(
+    payload: LeadFromPublishRequest,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """
+    从发布内容创建线索（线索回流入口）
+
+    自动逻辑：
+    - 通过 published_content_id 反查 campaign_id、publish_account_id、generation_result_id
+    - 创建线索
+    - 自动创建归因记录
+    - 自动进行 ABCD 分级
+    """
+    try:
+        # 1. 查询发布内容获取归因信息
+        published_content = (
+            db.query(PublishedContent).filter(PublishedContent.id == payload.published_content_id).first()
+        )
+
+        if not published_content:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Published content {payload.published_content_id} not found",
+            )
+
+        # 2. 创建线索
+        lead_data = LeadCreate(
+            platform=payload.platform,
+            title=f"来自{published_content.title or '发布内容'}的线索",
+            source="published_content",
+            post_url=published_content.post_url,
+            wechat_adds=1 if payload.channel == "加微" else 0,
+            leads=1,
+            valid_leads=1,
+            status="new",
+            intention_level="medium",
+            note=payload.notes,
+        )
+
+        lead_service = LeadService(db)
+        lead_response = lead_service.create_lead(db, lead_data, current_user["user_id"])
+        lead_id = lead_response["id"]
+
+        # 3. 更新线索的归因字段
+        lead = db.query(Lead).filter(Lead.id == lead_id).first()
+        if lead:
+            lead.campaign_id = published_content.campaign_id
+            lead.publish_account_id = published_content.publish_account_id
+            lead.published_content_id = payload.published_content_id
+            lead.generation_task_id = published_content.generation_result_id
+            lead.attribution_chain = {
+                "platform": payload.platform,
+                "account_id": published_content.publish_account_id,
+                "content_id": payload.published_content_id,
+                "campaign_id": published_content.campaign_id,
+                "channel": payload.channel,
+                "audience_tags": payload.audience_tags,
+            }
+            db.flush()
+
+        # 4. 创建线索画像（包含联系信息）
+        profile_data = {
+            "lead_id": lead_id,
+            "extracted_phone": payload.contact_info.get("phone"),
+            "extracted_wechat": payload.contact_info.get("wechat"),
+        }
+        profile = LeadProfile(**profile_data)
+        db.add(profile)
+        db.flush()
+
+        # 5. 自动创建归因记录
+        attribution_data = {
+            "platform": payload.platform,
+            "account_id": published_content.publish_account_id,
+            "content_id": payload.published_content_id,
+            "campaign_id": published_content.campaign_id,
+            "audience_tags": payload.audience_tags,
+            "channel": payload.channel,
+            "first_contact_time": datetime.utcnow(),
+            "touchpoint_url": published_content.post_url,
+            "attribution_type": "last_touch",
+        }
+        attribution = AttributionService.create_attribution(db, lead_id, attribution_data)
+
+        # 6. 自动评分分级（create_lead 已调用，这里获取最新结果）
+        score_result = lead_service.auto_score(db, lead_id)
+
+        db.commit()
+
+        # 7. 获取归因链信息
+        attribution_chain = AttributionService.get_attribution_chain(db, lead_id)
+
+        logger.info(
+            f"从发布内容创建线索成功: lead_id={lead_id}, "
+            f"published_content_id={payload.published_content_id}, "
+            f"grade={score_result['grade']}"
+        )
+
+        return {
+            "lead": lead_response,
+            "attribution": {
+                "attribution_id": attribution.id if attribution else None,
+                "chain": attribution_chain,
+            },
+            "scoring": score_result,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"从发布内容创建线索失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create lead from publish: {str(e)}"
+        )
+
+
+@router.post("/batch-import-v2", response_model=LeadBatchImportResponse)
+def batch_import_leads_v2(
+    payload: LeadBatchImportRequest,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """
+    批量导入线索（增强版）
+
+    返回详细的导入统计信息
+    """
+    service = LeadService(db)
+    result = service.batch_import_leads(db, payload.leads, current_user["user_id"])
+
+    return LeadBatchImportResponse(
+        total=result.get("total", 0),
+        success=result.get("success", 0),
+        failed=result.get("failed", 0),
+        duplicates=result.get("duplicates", 0),
+        created_ids=result.get("created_ids", []),
+        failed_details=result.get("failed_details", []),
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+
+
+@router.get("/{lead_id}/attribution", response_model=AttributionChainResponse)
+def get_lead_attribution_chain(
+    lead_id: int,
+    current_user: dict = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """
+    查看完整归因链
+
+    返回归因链详情：平台→账号→内容→活动→人群→渠道
+    """
+    # 权限校验
+    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    if lead.owner_id != current_user["user_id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this lead")
+
+    # 获取归因链
+    chain = AttributionService.get_attribution_chain(db, lead_id)
+
+    if not chain:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attribution chain not found for this lead")
+
+    return AttributionChainResponse(**chain)

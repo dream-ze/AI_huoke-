@@ -7,6 +7,7 @@ from app.api.endpoints.dashboard import router as dashboard_router
 from app.api.endpoints.insight import router as insight_router
 from app.api.endpoints.lead import router as lead_router
 from app.api.endpoints.mvp_routes import router as mvp_router
+from app.api.endpoints.platform_rule_routes import router as platform_rule_router
 from app.api.endpoints.publish import router as publish_router
 from app.api.endpoints.reminder import router as reminder_router
 from app.api.endpoints.social_account import router as social_account_router
@@ -35,6 +36,7 @@ ALL_ROUTERS = (
     conversation_router,
     traffic_router,
     topic_router,
+    platform_rule_router,
     api_v1_router,
     api_v2_router,
 )

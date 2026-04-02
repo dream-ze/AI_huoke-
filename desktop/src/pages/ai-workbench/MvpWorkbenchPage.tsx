@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import { generateFullPipeline, mvpComplianceCheck, getKnowledgeLibraries, submitFeedback, getFeedbackTags } from "../../lib/api";
-import { FullPipelineResponse, KnowledgeLibraryStat } from "../../types";
+import { generateFullPipeline, constrainedGenerate, mvpComplianceCheck, getKnowledgeLibraries, submitFeedback, getFeedbackTags } from "../../lib/api";
+import { FullPipelineResponse, ConstrainedGenerateResponse, KnowledgeLibraryStat } from "../../types";
 import { copyToClipboard } from "../../utils/clipboard";
 
 // 选项配置
@@ -50,6 +50,66 @@ const MODEL_OPTIONS = [
   { value: "local", label: "💻 本地模型" },
 ];
 
+// 强约束生成选项
+const PRODUCT_TYPE_OPTIONS = [
+  { value: "信贷", label: "信贷" },
+  { value: "抵押贷", label: "抵押贷" },
+  { value: "企业贷", label: "企业贷" },
+  { value: "经营贷", label: "经营贷" },
+  { value: "消费贷", label: "消费贷" },
+];
+
+const AUDIENCE_OPTIONS_NEW = [
+  { value: "公积金用户", label: "公积金用户" },
+  { value: "社保用户", label: "社保用户" },
+  { value: "个体户", label: "个体户" },
+  { value: "企业主", label: "企业主" },
+  { value: "征信花", label: "征信花" },
+  { value: "负债高", label: "负债高" },
+];
+
+const TARGET_ACTION_OPTIONS = [
+  { value: "加微信", label: "加微信" },
+  { value: "留电话", label: "留电话" },
+  { value: "点击链接", label: "点击链接" },
+  { value: "评论咨询", label: "评论咨询" },
+];
+
+const RISK_LEVEL_OPTIONS = [
+  { value: "low", label: "低风险" },
+  { value: "medium", label: "中风险" },
+  { value: "high", label: "高风险" },
+];
+
+const CONTENT_INTENT_OPTIONS = [
+  { value: "科普", label: "科普" },
+  { value: "避坑", label: "避坑" },
+  { value: "案例", label: "案例" },
+  { value: "引流", label: "引流" },
+  { value: "转化", label: "转化" },
+];
+
+const STYLE_OPTIONS_NEW = [
+  { value: "口播", label: "口播" },
+  { value: "图文", label: "图文" },
+  { value: "问答", label: "问答" },
+  { value: "经验帖", label: "经验帖" },
+];
+
+const GUIDANCE_METHOD_OPTIONS = [
+  { value: "私信", label: "私信" },
+  { value: "评论", label: "评论" },
+  { value: "表单", label: "表单" },
+];
+
+const VERSION_COUNT_OPTIONS = [
+  { value: "1", label: "1个版本" },
+  { value: "2", label: "2个版本" },
+  { value: "3", label: "3个版本" },
+  { value: "4", label: "4个版本" },
+  { value: "5", label: "5个版本" },
+];
+
 // 版本名称映射
 const VERSION_LABELS: Record<string, string> = {
   rewrite_base: "基础改写版",
@@ -71,6 +131,13 @@ const RISK_DISPLAY: Record<string, { icon: string; label: string; color: string 
   low: { icon: "🟢", label: "低风险", color: "#4caf50" },
   medium: { icon: "🟡", label: "中风险", color: "#ff9800" },
   high: { icon: "🔴", label: "高风险", color: "#f44336" },
+};
+
+// 合规等级显示
+const COMPLIANCE_DISPLAY: Record<string, { icon: string; label: string; bgColor: string; textColor: string }> = {
+  green: { icon: "🟢", label: "合规通过 - 可发布", bgColor: "#dcfce7", textColor: "#166534" },
+  yellow: { icon: "🟡", label: "建议修改", bgColor: "#fef9c3", textColor: "#854d0e" },
+  red: { icon: "🔴", label: "禁止发布", bgColor: "#fee2e2", textColor: "#991b1b" },
 };
 
 // 选项按钮组组件
@@ -119,7 +186,10 @@ function OptionGroup({
 export default function MvpWorkbenchPage() {
   const location = useLocation();
   
-  // 条件配置状态
+  // 生成模式切换
+  const [generationMode, setGenerationMode] = useState<"standard" | "constrained">("standard");
+  
+  // 条件配置状态 - 标准模式
   const [platform, setPlatform] = useState("xiaohongshu");
   const [accountType, setAccountType] = useState("loan_advisor");
   const [audience, setAudience] = useState("bad_credit");
@@ -129,10 +199,26 @@ export default function MvpWorkbenchPage() {
   const [model, setModel] = useState("volcano");
   const [extraRequirements, setExtraRequirements] = useState("");
 
+  // 条件配置状态 - 强约束模式
+  const [productType, setProductType] = useState("信贷");
+  const [audienceNew, setAudienceNew] = useState("公积金用户");
+  const [businessScenario, setBusinessScenario] = useState("");
+  const [targetAction, setTargetAction] = useState("加微信");
+  const [riskLevel, setRiskLevel] = useState("medium");
+  const [contentIntent, setContentIntent] = useState("科普");
+  const [styleNew, setStyleNew] = useState("图文");
+  const [forbiddenExpressions, setForbiddenExpressions] = useState("");
+  const [complianceNotes, setComplianceNotes] = useState("");
+  const [guidanceMethod, setGuidanceMethod] = useState("私信");
+  const [versionCount, setVersionCount] = useState("3");
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+
   // 生成状态
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<FullPipelineResponse | null>(null);
+  const [constrainedResult, setConstrainedResult] = useState<ConstrainedGenerateResponse | null>(null);
+  const [activeVersionTab, setActiveVersionTab] = useState(0);
 
   // 复制状态
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
@@ -273,7 +359,7 @@ export default function MvpWorkbenchPage() {
     return detail || '生成失败，请稍后重试。';
   };
 
-  // 生成处理函数
+  // 生成处理函数 - 标准模式
   const handleGenerate = async () => {
     // 先刷新知识库状态
     if (!knowledgeStatus.hasData && !knowledgeStatus.loading) {
@@ -283,6 +369,7 @@ export default function MvpWorkbenchPage() {
     setGenerating(true);
     setError(null);
     setResult(null);
+    setConstrainedResult(null);
     try {
       const payload = {
         platform,
@@ -296,6 +383,45 @@ export default function MvpWorkbenchPage() {
       };
       const data = await generateFullPipeline(payload);
       setResult(data);
+    } catch (err: any) {
+      setError(parseErrorMessage(err));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  // 生成处理函数 - 强约束模式
+  const handleConstrainedGenerate = async () => {
+    // 先刷新知识库状态
+    if (!knowledgeStatus.hasData && !knowledgeStatus.loading) {
+      await checkKnowledgeStatus();
+    }
+    
+    setGenerating(true);
+    setError(null);
+    setResult(null);
+    setConstrainedResult(null);
+    setActiveVersionTab(0);
+    
+    try {
+      const payload = {
+        platform,
+        audience: audienceNew,
+        product_type: productType,
+        business_scenario: businessScenario || undefined,
+        target_action: targetAction || undefined,
+        risk_level: riskLevel,
+        forbidden_expressions: forbiddenExpressions ? forbiddenExpressions.split(/[,，]/).map(s => s.trim()).filter(Boolean) : undefined,
+        compliance_notes: complianceNotes || undefined,
+        guidance_method: guidanceMethod || undefined,
+        version_count: parseInt(versionCount, 10),
+        style: styleNew || undefined,
+        content_intent: contentIntent || undefined,
+        model,
+        extra_requirements: extraRequirements || undefined,
+      };
+      const data = await constrainedGenerate(payload);
+      setConstrainedResult(data);
     } catch (err: any) {
       setError(parseErrorMessage(err));
     } finally {
@@ -476,100 +602,332 @@ export default function MvpWorkbenchPage() {
       >
         <h3 style={{ color: "#fff", marginBottom: 20, fontSize: 16 }}>📝 内容生成配置</h3>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 32px" }}>
-          <OptionGroup
-            label="目标平台"
-            options={PLATFORM_OPTIONS}
-            value={platform}
-            onChange={setPlatform}
-          />
-          <OptionGroup
-            label="账号定位"
-            options={ACCOUNT_TYPE_OPTIONS}
-            value={accountType}
-            onChange={setAccountType}
-          />
-          <OptionGroup
-            label="面向人群"
-            options={AUDIENCE_OPTIONS}
-            value={audience}
-            onChange={setAudience}
-          />
-          <OptionGroup
-            label="内容主题"
-            options={TOPIC_OPTIONS}
-            value={topic}
-            onChange={setTopic}
-          />
-          <div style={{ gridColumn: "1 / -1" }}>
-            <OptionGroup
-              label="内容目标"
-              options={GOAL_OPTIONS}
-              value={goal}
-              onChange={setGoal}
-            />
-          </div>
-
-          {/* 口吻选择 */}
-          <div style={{ gridColumn: "1 / -1", marginBottom: "1rem" }}>
-            <label style={{ color: "#BFA98E", fontSize: "0.9rem", marginBottom: "0.5rem", display: "block" }}>
-              说话口吻
-            </label>
-            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-              {TONE_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setTone(opt.value)}
-                  style={{
-                    padding: "0.5rem 1rem",
-                    borderRadius: "20px",
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: "0.85rem",
-                    background: tone === opt.value ? "#A0522D" : "#3A322C",
-                    color: tone === opt.value ? "#FFF" : "#D4C5B2",
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ gridColumn: "1 / -1" }}>
-            <OptionGroup
-              label="AI模型"
-              options={MODEL_OPTIONS}
-              value={model}
-              onChange={setModel}
-            />
-          </div>
-          <div style={{ gridColumn: "1 / -1", marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 13, color: "var(--muted)", marginBottom: 8, fontWeight: 500 }}>
-              自定义补充要求（可选）
-            </label>
-            <textarea
-              value={extraRequirements}
-              onChange={(e) => setExtraRequirements(e.target.value)}
-              placeholder="输入额外的内容要求，如风格偏好、特定关键词、禁忌词等..."
+        {/* 生成模式切换 */}
+        <div style={{ marginBottom: 24, display: "flex", gap: 12, alignItems: "center" }}>
+          <span style={{ fontSize: 14, color: "#BFA98E" }}>生成模式:</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => setGenerationMode("standard")}
               style={{
-                width: "100%",
-                minHeight: 80,
-                padding: 12,
-                borderRadius: 8,
-                border: "1px solid var(--line)",
-                background: "var(--panel)",
-                color: "var(--text)",
+                padding: "8px 16px",
+                borderRadius: 20,
+                border: generationMode === "standard" ? "2px solid #A0522D" : "1px solid #4A3F35",
+                background: generationMode === "standard" ? "#A0522D" : "#3A322C",
+                color: generationMode === "standard" ? "#FFF" : "#D4C5B2",
+                fontWeight: generationMode === "standard" ? 600 : 400,
+                cursor: "pointer",
                 fontSize: 14,
-                resize: "vertical",
               }}
-            />
+            >
+              标准模式
+            </button>
+            <button
+              onClick={() => setGenerationMode("constrained")}
+              style={{
+                padding: "8px 16px",
+                borderRadius: 20,
+                border: generationMode === "constrained" ? "2px solid #A0522D" : "1px solid #4A3F35",
+                background: generationMode === "constrained" ? "#A0522D" : "#3A322C",
+                color: generationMode === "constrained" ? "#FFF" : "#D4C5B2",
+                fontWeight: generationMode === "constrained" ? 600 : 400,
+                cursor: "pointer",
+                fontSize: 14,
+              }}
+            >
+              强约束模式
+            </button>
           </div>
         </div>
 
+        {generationMode === "standard" ? (
+          /* 标准模式表单 */
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 32px" }}>
+            <OptionGroup
+              label="目标平台"
+              options={PLATFORM_OPTIONS}
+              value={platform}
+              onChange={setPlatform}
+            />
+            <OptionGroup
+              label="账号定位"
+              options={ACCOUNT_TYPE_OPTIONS}
+              value={accountType}
+              onChange={setAccountType}
+            />
+            <OptionGroup
+              label="面向人群"
+              options={AUDIENCE_OPTIONS}
+              value={audience}
+              onChange={setAudience}
+            />
+            <OptionGroup
+              label="内容主题"
+              options={TOPIC_OPTIONS}
+              value={topic}
+              onChange={setTopic}
+            />
+            <div style={{ gridColumn: "1 / -1" }}>
+              <OptionGroup
+                label="内容目标"
+                options={GOAL_OPTIONS}
+                value={goal}
+                onChange={setGoal}
+              />
+            </div>
+
+            {/* 口吻选择 */}
+            <div style={{ gridColumn: "1 / -1", marginBottom: "1rem" }}>
+              <label style={{ color: "#BFA98E", fontSize: "0.9rem", marginBottom: "0.5rem", display: "block" }}>
+                说话口吻
+              </label>
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                {TONE_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setTone(opt.value)}
+                    style={{
+                      padding: "0.5rem 1rem",
+                      borderRadius: "20px",
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: "0.85rem",
+                      background: tone === opt.value ? "#A0522D" : "#3A322C",
+                      color: tone === opt.value ? "#FFF" : "#D4C5B2",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ gridColumn: "1 / -1" }}>
+              <OptionGroup
+                label="AI模型"
+                options={MODEL_OPTIONS}
+                value={model}
+                onChange={setModel}
+              />
+            </div>
+            <div style={{ gridColumn: "1 / -1", marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 13, color: "var(--muted)", marginBottom: 8, fontWeight: 500 }}>
+                自定义补充要求（可选）
+              </label>
+              <textarea
+                value={extraRequirements}
+                onChange={(e) => setExtraRequirements(e.target.value)}
+                placeholder="输入额外的内容要求，如风格偏好、特定关键词、禁忌词等..."
+                style={{
+                  width: "100%",
+                  minHeight: 80,
+                  padding: 12,
+                  borderRadius: 8,
+                  border: "1px solid var(--line)",
+                  background: "var(--panel)",
+                  color: "var(--text)",
+                  fontSize: 14,
+                  resize: "vertical",
+                }}
+              />
+            </div>
+          </div>
+        ) : (
+          /* 强约束模式表单 */
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 32px" }}>
+            {/* 必填字段 */}
+            <OptionGroup
+              label="目标平台"
+              options={PLATFORM_OPTIONS}
+              value={platform}
+              onChange={setPlatform}
+            />
+            <OptionGroup
+              label="目标人群"
+              options={AUDIENCE_OPTIONS_NEW}
+              value={audienceNew}
+              onChange={setAudienceNew}
+            />
+            <OptionGroup
+              label="产品类型"
+              options={PRODUCT_TYPE_OPTIONS}
+              value={productType}
+              onChange={setProductType}
+            />
+            <OptionGroup
+              label="生成版本数"
+              options={VERSION_COUNT_OPTIONS}
+              value={versionCount}
+              onChange={setVersionCount}
+            />
+
+            {/* 高级选项折叠面板 */}
+            <div style={{ gridColumn: "1 / -1", marginTop: 16, marginBottom: 16 }}>
+              <button
+                onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                style={{
+                  width: "100%",
+                  padding: "12px 16px",
+                  background: "#3A322C",
+                  border: "1px solid #4A3F35",
+                  borderRadius: 8,
+                  color: "#D4C5B2",
+                  cursor: "pointer",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  fontSize: 14,
+                }}
+              >
+                <span>🔧 高级选项</span>
+                <span>{showAdvancedOptions ? "▲" : "▼"}</span>
+              </button>
+              
+              {showAdvancedOptions && (
+                <div style={{ 
+                  marginTop: 16, 
+                  padding: 20, 
+                  background: "#2A2520", 
+                  borderRadius: 8,
+                  border: "1px solid #4A3F35",
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "16px 32px",
+                }}>
+                  {/* 业务场景 */}
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ display: "block", fontSize: 13, color: "#BFA98E", marginBottom: 8 }}>
+                      业务场景（可选）
+                    </label>
+                    <input
+                      type="text"
+                      value={businessScenario}
+                      onChange={(e) => setBusinessScenario(e.target.value)}
+                      placeholder="如：征信花如何贷款"
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        borderRadius: 6,
+                        border: "1px solid #4A3F35",
+                        background: "#1E1A16",
+                        color: "#E8DDD3",
+                        fontSize: 14,
+                      }}
+                    />
+                  </div>
+
+                  <OptionGroup
+                    label="目标动作"
+                    options={TARGET_ACTION_OPTIONS}
+                    value={targetAction}
+                    onChange={setTargetAction}
+                  />
+                  <OptionGroup
+                    label="风险等级"
+                    options={RISK_LEVEL_OPTIONS}
+                    value={riskLevel}
+                    onChange={setRiskLevel}
+                  />
+                  <OptionGroup
+                    label="内容意图"
+                    options={CONTENT_INTENT_OPTIONS}
+                    value={contentIntent}
+                    onChange={setContentIntent}
+                  />
+                  <OptionGroup
+                    label="内容形式"
+                    options={STYLE_OPTIONS_NEW}
+                    value={styleNew}
+                    onChange={setStyleNew}
+                  />
+                  <OptionGroup
+                    label="引导方式"
+                    options={GUIDANCE_METHOD_OPTIONS}
+                    value={guidanceMethod}
+                    onChange={setGuidanceMethod}
+                  />
+                  <OptionGroup
+                    label="AI模型"
+                    options={MODEL_OPTIONS}
+                    value={model}
+                    onChange={setModel}
+                  />
+
+                  {/* 禁用表达 */}
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ display: "block", fontSize: 13, color: "#BFA98E", marginBottom: 8 }}>
+                      禁用表达（可选，逗号分隔）
+                    </label>
+                    <input
+                      type="text"
+                      value={forbiddenExpressions}
+                      onChange={(e) => setForbiddenExpressions(e.target.value)}
+                      placeholder="如：包过，秒批，无视征信"
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        borderRadius: 6,
+                        border: "1px solid #4A3F35",
+                        background: "#1E1A16",
+                        color: "#E8DDD3",
+                        fontSize: 14,
+                      }}
+                    />
+                  </div>
+
+                  {/* 合规说明 */}
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ display: "block", fontSize: 13, color: "#BFA98E", marginBottom: 8 }}>
+                      合规说明（可选）
+                    </label>
+                    <textarea
+                      value={complianceNotes}
+                      onChange={(e) => setComplianceNotes(e.target.value)}
+                      placeholder="必须保留的合规说明..."
+                      style={{
+                        width: "100%",
+                        minHeight: 60,
+                        padding: 10,
+                        borderRadius: 6,
+                        border: "1px solid #4A3F35",
+                        background: "#1E1A16",
+                        color: "#E8DDD3",
+                        fontSize: 14,
+                        resize: "vertical",
+                      }}
+                    />
+                  </div>
+
+                  {/* 额外要求 */}
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ display: "block", fontSize: 13, color: "#BFA98E", marginBottom: 8 }}>
+                      额外要求（可选）
+                    </label>
+                    <textarea
+                      value={extraRequirements}
+                      onChange={(e) => setExtraRequirements(e.target.value)}
+                      placeholder="其他额外的内容要求..."
+                      style={{
+                        width: "100%",
+                        minHeight: 60,
+                        padding: 10,
+                        borderRadius: 6,
+                        border: "1px solid #4A3F35",
+                        background: "#1E1A16",
+                        color: "#E8DDD3",
+                        fontSize: 14,
+                        resize: "vertical",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <button
           className="primary"
-          onClick={handleGenerate}
+          onClick={generationMode === "standard" ? handleGenerate : handleConstrainedGenerate}
           disabled={generating}
           style={{
             width: "100%",
@@ -586,7 +944,7 @@ export default function MvpWorkbenchPage() {
       </div>
 
       {/* 生成结果区 */}
-      {(generating || result) && (
+      {(generating || result || constrainedResult) && (
         <div className="card" style={{ marginBottom: 24 }}>
           <h3 style={{ marginBottom: 16 }}>✨ 生成结果</h3>
 
@@ -598,6 +956,213 @@ export default function MvpWorkbenchPage() {
             </div>
           )}
 
+          {/* 强约束模式结果展示 */}
+          {!generating && constrainedResult?.versions && (
+            <>
+              {/* 版本 Tab 切换 */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap", borderBottom: "2px solid #e5e7eb", paddingBottom: 12 }}>
+                {constrainedResult.versions.map((ver, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setActiveVersionTab(idx)}
+                    style={{
+                      padding: "10px 20px",
+                      borderRadius: 8,
+                      border: activeVersionTab === idx ? "2px solid #A0522D" : "1px solid #d1d5db",
+                      background: activeVersionTab === idx ? "#A0522D" : "#fff",
+                      color: activeVersionTab === idx ? "#fff" : "#374151",
+                      fontWeight: activeVersionTab === idx ? 600 : 400,
+                      cursor: "pointer",
+                      fontSize: 14,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    版本 {idx + 1}
+                    {idx === constrainedResult.recommended_version && (
+                      <span style={{
+                        background: "#22c55e",
+                        color: "#fff",
+                        padding: "2px 8px",
+                        borderRadius: 10,
+                        fontSize: 11,
+                        fontWeight: 600,
+                      }}>
+                        推荐
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {/* 当前版本内容展示 */}
+              {constrainedResult.versions[activeVersionTab] && (
+                <div style={{ 
+                  background: "#fafafa", 
+                  borderRadius: 12, 
+                  padding: 24,
+                  border: "1px solid #e5e7eb",
+                }}>
+                  {/* 标题 */}
+                  <h4 style={{ 
+                    fontSize: 20, 
+                    fontWeight: 700, 
+                    marginBottom: 20,
+                    color: "#1f2937",
+                    lineHeight: 1.4,
+                  }}>
+                    {constrainedResult.versions[activeVersionTab].title}
+                  </h4>
+
+                  {/* 合规等级标识 */}
+                  <div style={{ marginBottom: 20 }}>
+                    {(() => {
+                      const level = constrainedResult.versions[activeVersionTab].compliance_level;
+                      const display = COMPLIANCE_DISPLAY[level] || COMPLIANCE_DISPLAY.green;
+                      return (
+                        <span style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "8px 16px",
+                          borderRadius: 20,
+                          background: display.bgColor,
+                          color: display.textColor,
+                          fontWeight: 600,
+                          fontSize: 14,
+                        }}>
+                          {display.icon} {display.label}
+                        </span>
+                      );
+                    })()}
+                  </div>
+
+                  {/* 开头钩子 */}
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ 
+                      display: "block", 
+                      fontSize: 13, 
+                      color: "#6b7280", 
+                      marginBottom: 8,
+                      fontWeight: 600,
+                    }}>
+                      🎯 开头钩子
+                    </label>
+                    <div style={{
+                      padding: 16,
+                      background: "#fff",
+                      borderRadius: 8,
+                      borderLeft: "4px solid #A0522D",
+                      fontSize: 15,
+                      lineHeight: 1.7,
+                      color: "#374151",
+                      fontStyle: "italic",
+                    }}>
+                      "{constrainedResult.versions[activeVersionTab].hook}"
+                    </div>
+                  </div>
+
+                  {/* 正文 */}
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ 
+                      display: "block", 
+                      fontSize: 13, 
+                      color: "#6b7280", 
+                      marginBottom: 8,
+                      fontWeight: 600,
+                    }}>
+                      📝 正文
+                    </label>
+                    <div style={{
+                      padding: 16,
+                      background: "#fff",
+                      borderRadius: 8,
+                      fontSize: 14,
+                      lineHeight: 1.8,
+                      color: "#374151",
+                      whiteSpace: "pre-wrap",
+                    }}>
+                      {constrainedResult.versions[activeVersionTab].body}
+                    </div>
+                  </div>
+
+                  {/* 行动引导 */}
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ 
+                      display: "block", 
+                      fontSize: 13, 
+                      color: "#6b7280", 
+                      marginBottom: 8,
+                      fontWeight: 600,
+                    }}>
+                      🚀 行动引导
+                    </label>
+                    <div style={{
+                      padding: 16,
+                      background: "#fef3c7",
+                      borderRadius: 8,
+                      fontSize: 14,
+                      lineHeight: 1.7,
+                      color: "#92400e",
+                      fontWeight: 500,
+                    }}>
+                      {constrainedResult.versions[activeVersionTab].call_to_action}
+                    </div>
+                  </div>
+
+                  {/* 风险点说明 */}
+                  {constrainedResult.versions[activeVersionTab].risk_notes && (
+                    <div style={{ marginBottom: 20 }}>
+                      <label style={{ 
+                        display: "block", 
+                        fontSize: 13, 
+                        color: "#6b7280", 
+                        marginBottom: 8,
+                        fontWeight: 600,
+                      }}>
+                        ⚠️ 风险点说明
+                      </label>
+                      <div style={{
+                        padding: 16,
+                        background: "#fee2e2",
+                        borderRadius: 8,
+                        fontSize: 13,
+                        lineHeight: 1.7,
+                        color: "#991b1b",
+                      }}>
+                        {constrainedResult.versions[activeVersionTab].risk_notes}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 复制按钮 */}
+                  <button
+                    onClick={() => {
+                      const ver = constrainedResult.versions[activeVersionTab];
+                      const fullText = `${ver.title}\n\n${ver.hook}\n\n${ver.body}\n\n${ver.call_to_action}`;
+                      handleCopyVersion(fullText, `constrained_${activeVersionTab}`);
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "12px 24px",
+                      background: "#A0522D",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 8,
+                      fontSize: 15,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {copiedVersions[`constrained_${activeVersionTab}`] ? "✓ 已复制" : "📋 复制完整文案"}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* 标准模式结果展示 */}
           {!generating && result?.versions && (
             <>
               {/* 改写基础版 */}
@@ -1156,7 +1721,7 @@ export default function MvpWorkbenchPage() {
       </div>
 
       {/* 空状态 */}
-      {!generating && !result && (
+      {!generating && !result && !constrainedResult && (
         <div
           className="card"
           style={{
@@ -1167,7 +1732,12 @@ export default function MvpWorkbenchPage() {
         >
           <div style={{ fontSize: 64, marginBottom: 16, opacity: 0.3 }}>✨</div>
           <p style={{ fontSize: 16 }}>选择上方配置条件后，点击"开始生成"</p>
-          <p style={{ fontSize: 13, marginTop: 8 }}>AI将为您生成多版本专业文案，并自动进行合规审核</p>
+          <p style={{ fontSize: 13, marginTop: 8 }}>
+            {generationMode === "standard" 
+              ? "AI将为您生成多版本专业文案，并自动进行合规审核"
+              : "强约束模式提供更细粒度的生成控制，支持结构化输出和合规标识"
+            }
+          </p>
         </div>
       )}
     </div>

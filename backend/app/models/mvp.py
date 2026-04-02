@@ -19,7 +19,19 @@ MVP核心模型模块
 from datetime import datetime
 
 from app.core.database import Base
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -60,6 +72,7 @@ class MvpInboxItem(Base):
     quality_status = Column(String(20), default="pending")  # pending/good/normal/low
     risk_status = Column(String(20), default="normal")  # normal/low_risk/high_risk
     material_status = Column(String(20), default="not_in")  # not_in/in_material/ignored
+    rewrite_ready = Column(Boolean, default=False)  # 质量达标+风险可控，可进入仿写池
     cleaned_at = Column(DateTime, nullable=True)
     screened_at = Column(DateTime, nullable=True)
     like_count = Column(Integer, default=0)
@@ -93,6 +106,7 @@ class MvpMaterialItem(Base):
     inbox_item_id = Column(Integer, ForeignKey("mvp_inbox_items.id"), nullable=True)  # 关联收件箱条目
     quality_score = Column(Float, nullable=True)  # 质量评分
     risk_score = Column(Float, nullable=True)  # 风险评分
+    rewrite_ready = Column(Boolean, default=False)  # 质量达标+风险可控，可进入仿写池
     tags_json = Column(Text, nullable=True)  # JSON格式标签
     topic = Column(String(100), nullable=True)  # 主题
     persona = Column(String(100), nullable=True)  # 人设/受众画像
@@ -106,13 +120,30 @@ class MvpMaterialItem(Base):
 
 
 class MvpTag(Base):
-    """MVP标签 - 用于素材分类"""
+    """MVP标签 - 用于素材分类
+
+    标签维度类型 (type 字段):
+    - platform: 平台来源 (xiaohongshu/douyin/zhihu/weixin)
+    - audience: 目标受众 (负债人群/上班族/个体户/大学生/宝妈群体/中年人群)
+    - style: 内容风格 (避坑型/种草型/专业型/口语型)
+    - topic: 主题分类 (车贷/房贷/网贷/信用卡/征信)
+    - scenario: 使用场景 (急需用钱/以贷养贷/首次贷款/经营周转/消费分期)
+    - content_type: 内容类型 (干货型/故事型/测评型/问答型/清单型)
+
+    助贷业务专用维度:
+    - product_type: 产品类型 (信贷/抵押贷/企业贷/经营贷/消费贷)
+    - user_qualification: 用户资质 (公积金/社保/个体户/企业主/征信花/负债高)
+    - content_intent: 内容意图 (科普/避坑/案例/引流/转化)
+    - platform_style: 平台风格 (口播/图文/问答/经验帖)
+    - risk_level: 风险等级 (低风险/中风险/高风险)
+    - conversion_tendency: 转化倾向 (强转化/弱转化/品牌向)
+    """
 
     __tablename__ = "mvp_tags"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
-    type = Column(String(50), nullable=False)  # platform / audience / style / topic / scenario / content_type
+    type = Column(String(50), nullable=False)  # 标签维度，见类文档说明
     created_at = Column(DateTime, server_default=func.now())
 
     # unique constraint on (name, type)
@@ -234,6 +265,13 @@ class MvpGenerationResult(Base):
     audience = Column(String(100), nullable=True)
     style = Column(String(100), nullable=True)
     is_final = Column(Boolean, nullable=False, default=False)
+    # 结构化输出字段
+    opening_hook = Column(Text, nullable=True, comment="开头钩子")
+    cta_section = Column(Text, nullable=True, comment="行动引导段")
+    risk_disclaimer = Column(Text, nullable=True, comment="风险点说明")
+    alternative_v1 = Column(Text, nullable=True, comment="低风险替代版本")
+    alternative_v2 = Column(Text, nullable=True, comment="高转化替代版本")
+    output_structure = Column(JSON, nullable=True, comment="完整结构化输出JSON")
     compliance_status = Column(String(30), nullable=True)  # passed / warning / blocked
     created_at = Column(DateTime, server_default=func.now())
 
@@ -313,6 +351,49 @@ class MvpKnowledgeRelation(Base):
     )
 
 
+class PlatformComplianceRule(Base):
+    """平台合规规则 - 针对特定平台的合规规则"""
+
+    __tablename__ = "platform_compliance_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    platform = Column(String(50), nullable=False)  # xiaohongshu/douyin/zhihu/weixin 等
+    rule_category = Column(String(100), nullable=True)  # 规则分类：引流禁止/利率承诺/资质承诺等
+    keyword_or_pattern = Column(String(500), nullable=False)  # 关键词或正则表达式
+    risk_level = Column(String(20), nullable=False, default="medium")  # low/medium/high
+    description = Column(Text, nullable=True)  # 规则描述
+    suggestion = Column(Text, nullable=True)  # 修改建议
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_platform_compliance_platform", "platform"),
+        Index("idx_platform_compliance_active", "is_active"),
+    )
+
+
+class AutoRewriteTemplate(Base):
+    """自动改写模板 - 合规改写建议模板"""
+
+    __tablename__ = "auto_rewrite_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trigger_pattern = Column(String(500), nullable=False)  # 触发模式（关键词）
+    risk_level = Column(String(20), nullable=False, default="medium")  # low/medium/high
+    safe_alternative = Column(Text, nullable=False)  # 安全替代文案
+    platform_scope = Column(String(200), nullable=True)  # 适用平台（逗号分隔，空表示全平台）
+    category = Column(String(100), nullable=True)  # 分类：承诺类/利率类/资质类等
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_auto_rewrite_active", "is_active"),
+        Index("idx_auto_rewrite_category", "category"),
+    )
+
+
 __all__ = [
     "MvpInboxItem",
     "MvpMaterialItem",
@@ -326,4 +407,38 @@ __all__ = [
     "MvpGenerationFeedback",
     "MvpKnowledgeQualityScore",
     "MvpKnowledgeRelation",
+    "PlatformComplianceRule",
+    "AutoRewriteTemplate",
+    # Tag Type 常量
+    "TAG_TYPE_DIMENSIONS",
+    "TAG_TYPE_BASE_DIMENSIONS",
+    "TAG_TYPE_LOAN_DIMENSIONS",
 ]
+
+
+# ============================================================
+# 标签维度常量定义
+# ============================================================
+
+# 基础标签维度
+TAG_TYPE_BASE_DIMENSIONS = [
+    "platform",  # 平台来源
+    "audience",  # 目标受众
+    "style",  # 内容风格
+    "topic",  # 主题分类
+    "scenario",  # 使用场景
+    "content_type",  # 内容类型
+]
+
+# 助贷业务专用标签维度
+TAG_TYPE_LOAN_DIMENSIONS = [
+    "product_type",  # 产品类型
+    "user_qualification",  # 用户资质
+    "content_intent",  # 内容意图
+    "platform_style",  # 平台风格
+    "risk_level",  # 风险等级
+    "conversion_tendency",  # 转化倾向
+]
+
+# 所有标签维度
+TAG_TYPE_DIMENSIONS = TAG_TYPE_BASE_DIMENSIONS + TAG_TYPE_LOAN_DIMENSIONS

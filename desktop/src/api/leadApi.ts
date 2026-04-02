@@ -20,6 +20,22 @@ export interface Lead {
   intention_level: 'low' | 'medium' | 'high';
   note?: string;
   customer_id?: number;
+  // ABCD 分级
+  grade?: 'A' | 'B' | 'C' | 'D';
+  grade_score?: number;
+  // 归因字段
+  campaign_id?: number;
+  publish_account_id?: number;
+  published_content_id?: number;
+  generation_task_id?: number;
+  attribution_chain?: {
+    platform?: string;
+    account_id?: number;
+    content_id?: number;
+    campaign_id?: number;
+    channel?: string;
+    audience_tags?: string[];
+  };
   created_at: string;
   updated_at: string;
 }
@@ -104,11 +120,90 @@ export interface ConvertLeadToCustomerRequest {
   inquiry_content?: string;
 }
 
+export interface ConvertLeadToCustomerResponse {
+  id: number;
+  lead_id: number;
+  [key: string]: unknown;
+}
+
 export interface ListLeadsParams {
   status?: string;
   owner_id?: number;
   skip?: number;
   limit?: number;
+  grade?: 'A' | 'B' | 'C' | 'D';
+}
+
+// 从发布内容创建线索的请求
+export interface LeadFromPublishRequest {
+  published_content_id: number;
+  platform: string;
+  contact_info: {
+    phone?: string;
+    wechat?: string;
+  };
+  channel: string;
+  audience_tags?: string[];
+  notes?: string;
+}
+
+// 从发布内容创建线索的响应
+export interface LeadFromPublishResponse {
+  lead: Lead;
+  attribution: {
+    attribution_id: number | null;
+    chain: LeadAttributionChain;
+  };
+  scoring: {
+    score: number;
+    grade: string;
+    factors: Record<string, number>;
+  };
+}
+
+// 归因链响应
+export interface LeadAttributionChain {
+  lead_id: number;
+  platform?: string;
+  account_name?: string;
+  content_title?: string;
+  campaign_name?: string;
+  audience_tags: string[];
+  topic_tags: string[];
+  channel?: string;
+  first_contact_time?: string;
+  current_stage: string;
+  conversion_result?: string;
+  touchpoint_url?: string;
+}
+
+// 批量导入线索请求
+export interface BatchImportLeadItem {
+  platform: string;
+  title: string;
+  source?: string;
+  post_url?: string;
+  wechat_adds?: number;
+  leads?: number;
+  valid_leads?: number;
+  conversions?: number;
+  status?: string;
+  intention_level?: string;
+  note?: string;
+}
+
+// 批量导入线索响应
+export interface BatchImportResponse {
+  total: number;
+  success: number;
+  failed: number;
+  duplicates: number;
+  created_ids: number[];
+  failed_details: Array<{
+    index: number;
+    error: string;
+  data: BatchImportLeadItem;
+  }>;
 }
 
 export const leadApi = {
@@ -169,8 +264,8 @@ export const leadApi = {
   /**
    * 将线索转化为客户
    */
-  async convertToCustomer(leadId: number, request?: ConvertLeadToCustomerRequest): Promise<unknown> {
-    const data = await apiFetch<unknown>(`/api/lead/${leadId}/convert-customer`, {
+  async convertToCustomer(leadId: number, request?: ConvertLeadToCustomerRequest): Promise<ConvertLeadToCustomerResponse> {
+    const data = await apiFetch<ConvertLeadToCustomerResponse>(`/api/lead/${leadId}/convert-customer`, {
       method: 'POST',
       body: JSON.stringify(request || {}),
     });
@@ -193,6 +288,47 @@ export const leadApi = {
     const query = days !== undefined ? `?days=${days}` : '';
     const data = await apiFetch<LeadFunnelStats>(`/api/lead/stats/funnel${query}`);
     return requireApiResult(data, '获取转化漏斗统计失败');
+  },
+
+  /**
+   * 从发布内容创建线索
+   */
+  async createLeadFromPublish(request: LeadFromPublishRequest): Promise<LeadFromPublishResponse> {
+    const data = await apiFetch<LeadFromPublishResponse>('/api/lead/from-publish', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+    return requireApiResult(data, '从发布内容创建线索失败');
+  },
+
+  /**
+   * 批量导入线索
+   */
+  async batchImportLeads(leads: BatchImportLeadItem[]): Promise<BatchImportResponse> {
+    const data = await apiFetch<BatchImportResponse>('/api/lead/batch-import-v2', {
+      method: 'POST',
+      body: JSON.stringify({ leads }),
+    });
+    return requireApiResult(data, '批量导入线索失败');
+  },
+
+  /**
+   * 获取线索归因链
+   */
+  async getLeadAttribution(leadId: number): Promise<LeadAttributionChain> {
+    const data = await apiFetch<LeadAttributionChain>(`/api/lead/${leadId}/attribution`);
+    return requireApiResult(data, '获取线索归因链失败');
+  },
+
+  /**
+   * 按分级查询线索
+   */
+  async getLeadsByGrade(grade: 'A' | 'B' | 'C' | 'D', skip?: number, limit?: number): Promise<Lead[]> {
+    const query = new URLSearchParams();
+    if (skip !== undefined) query.set('skip', String(skip));
+    if (limit !== undefined) query.set('limit', String(limit));
+    const data = await apiFetch<Lead[]>(`/api/lead/stats/by-grade/${grade}?${query}`);
+    return requireApiResult(data, '按分级查询线索失败');
   },
 };
 

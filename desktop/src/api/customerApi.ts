@@ -4,6 +4,16 @@ import { apiFetch, requireApiResult, getAuthHeaders, getApiBase } from '../lib/h
 import { apiRoutes } from './routes';
 
 // 类型定义
+export interface FollowRecord {
+  id: number;
+  customer_id: number;
+  content: string;
+  follow_method?: string;
+  next_follow_date?: string;
+  created_by?: number;
+  created_at: string;
+}
+
 export interface Customer {
   id: number;
   owner_id: number;
@@ -25,16 +35,9 @@ export interface Customer {
   customer_status: 'new' | 'following' | 'negotiating' | 'converted' | 'lost';
   last_follow_at?: string;
   follow_count: number;
+  follow_records?: FollowRecord[];
   created_at: string;
   updated_at: string;
-}
-
-export interface FollowRecord {
-  id: number;
-  customer_id: number;
-  content: string;
-  created_by: number;
-  created_at: string;
 }
 
 export interface CreateCustomerRequest {
@@ -73,10 +76,14 @@ export interface UpdateCustomerRequest {
 
 export interface AddFollowRecordRequest {
   content: string;
+  follow_method?: string;
+  next_follow_date?: string;
 }
 
 export interface ListCustomersParams {
   status?: string;
+  intention_level?: string;
+  search?: string;
   skip?: number;
   limit?: number;
 }
@@ -99,6 +106,8 @@ export const customerApi = {
   async list(params?: ListCustomersParams): Promise<Customer[]> {
     const query = new URLSearchParams();
     if (params?.status && params.status !== 'all') query.set('status', params.status);
+    if (params?.intention_level && params.intention_level !== 'all') query.set('intention_level', params.intention_level);
+    if (params?.search) query.set('search', params.search);
     if (params?.skip !== undefined) query.set('skip', String(params.skip));
     if (params?.limit !== undefined) query.set('limit', String(params.limit));
     const data = await apiFetch<Customer[]>(`${apiRoutes.customer.list}?${query}`);
@@ -127,10 +136,10 @@ export const customerApi = {
   /**
    * 添加跟进记录
    */
-  async addFollowRecord(customerId: number, content: string): Promise<Customer> {
+  async addFollowRecord(customerId: number, request: AddFollowRecordRequest): Promise<Customer> {
     const data = await apiFetch<Customer>(apiRoutes.customer.follow(customerId), {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(request),
     });
     return requireApiResult(data, '添加跟进记录失败');
   },

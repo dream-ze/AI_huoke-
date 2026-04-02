@@ -7,7 +7,7 @@
 保留此类以兼容现有导入。
 """
 
-from app.schemas.generate_schema import FullPipelineRequest
+from app.schemas.generate_schema import ConstrainedGenerateRequest, ConstrainedGenerateResponse, FullPipelineRequest
 from app.services.mvp_generate_core_service import MvpGenerateCoreService
 from app.services.mvp_rewrite_service import MvpRewriteService
 
@@ -68,6 +68,10 @@ class MvpGenerateService:
     async def generate_full_pipeline(self, request: FullPipelineRequest) -> dict:
         """完整生成6步链路"""
         return await self._core.generate_full_pipeline(request)
+
+    async def constrained_generate(self, request: ConstrainedGenerateRequest) -> ConstrainedGenerateResponse:
+        """强约束生成 - 基于细粒度约束条件生成结构化内容"""
+        return await self._core.constrained_generate(request)
 
     def get_generation_history(self, material_id: int = None, page=1, size=20):
         """获取生成历史"""

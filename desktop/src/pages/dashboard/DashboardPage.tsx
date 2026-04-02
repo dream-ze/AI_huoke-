@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { getDashboardSummary, getTrend, getPublishTaskStats } from "../../lib/api";
 import { dashboardApi } from "../../api/dashboardApi";
-import { DashboardSummary, TrendItem, PublishTaskStats, BusinessMetrics, ConversionFunnel } from "../../types";
+import { DashboardSummary, TrendItem, PublishTaskStats, BusinessMetrics, ConversionFunnel, ContentLayerMetrics, AcquisitionLayerMetrics, ConversionLayerMetrics } from "../../types";
 
 const emptySummary: DashboardSummary = {
   today_new_customers: 0,
@@ -44,6 +44,33 @@ const emptyFunnel: ConversionFunnel = {
   },
 };
 
+const emptyContentLayer: ContentLayerMetrics = {
+  today_generation_count: 0,
+  compliance_pass_rate: 0,
+  adoption_rate: 0,
+  publish_rate: 0,
+  total_materials: 0,
+  knowledge_items: 0,
+};
+
+const emptyAcquisitionLayer: AcquisitionLayerMetrics = {
+  total_leads: 0,
+  leads_by_platform: [],
+  leads_by_account: [],
+  leads_by_topic: [],
+  wechat_add_rate: 0,
+  contact_rate: 0,
+};
+
+const emptyConversionLayer: ConversionLayerMetrics = {
+  grade_distribution: {},
+  avg_first_response_hours: 0,
+  followup_completion_rate: 0,
+  conversion_rate: 0,
+  total_converted: 0,
+  total_revenue: 0,
+};
+
 const metricConfigs = [
   { key: "leads_today", label: "今日线索", color: "#3b82f6" },
   { key: "high_intent_leads", label: "高意向线索", color: "#10b981" },
@@ -80,6 +107,8 @@ const quickEntries = [
   { icon: "📊", label: "爆款洞察", desc: "分析热门内容", to: "/insight" },
 ];
 
+type LayerTab = 'content' | 'acquisition' | 'conversion';
+
 export function DashboardPage() {
   const navigate = useNavigate();
   const [summary, setSummary] = useState<DashboardSummary>(emptySummary);
@@ -91,6 +120,13 @@ export function DashboardPage() {
   const [metricsLoading, setMetricsLoading] = useState(true);
   const [metricsError, setMetricsError] = useState("");
   const [error, setError] = useState("");
+  
+  // 三层看板状态
+  const [activeLayerTab, setActiveLayerTab] = useState<LayerTab>('content');
+  const [contentLayer, setContentLayer] = useState<ContentLayerMetrics>(emptyContentLayer);
+  const [acquisitionLayer, setAcquisitionLayer] = useState<AcquisitionLayerMetrics>(emptyAcquisitionLayer);
+  const [conversionLayer, setConversionLayer] = useState<ConversionLayerMetrics>(emptyConversionLayer);
+  const [layerLoading, setLayerLoading] = useState(false);
 
   useEffect(() => {
     async function run() {
@@ -132,12 +168,136 @@ export function DashboardPage() {
   
     fetchMetricsAndFunnel();
   }, []);
+  
+  // 获取三层看板数据
+  useEffect(() => {
+    async function fetchLayerData() {
+      try {
+        setLayerLoading(true);
+        const [content, acquisition, conversion] = await Promise.all([
+          dashboardApi.getContentLayerMetrics('today').catch(() => null),
+          dashboardApi.getAcquisitionLayerMetrics('week').catch(() => null),
+          dashboardApi.getConversionLayerMetrics('month').catch(() => null),
+        ]);
+        if (content) setContentLayer(content);
+        if (acquisition) setAcquisitionLayer(acquisition);
+        if (conversion) setConversionLayer(conversion);
+      } catch (err) {
+        console.error('三层看板数据加载失败', err);
+      } finally {
+        setLayerLoading(false);
+      }
+    }
+    
+    fetchLayerData();
+  }, []);
 
   // 计算漏斗最大数量用于宽度计算
   const maxFunnelCount = Math.max(...(funnel.funnel?.map((s) => s.count) || [1]), 1);
 
   return (
     <div className="page grid" style={{ gap: 20 }}>
+      {/* 三层看板 Tab */}
+      <section className="card" style={{ padding: "20px 24px" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          {[
+            { key: 'content', label: '内容层', icon: '📝' },
+            { key: 'acquisition', label: '获客层', icon: '🎯' },
+            { key: 'conversion', label: '转化层', icon: '💰' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveLayerTab(tab.key as LayerTab)}
+              style={{
+                padding: "10px 20px",
+                border: "none",
+                borderRadius: 8,
+                background: activeLayerTab === tab.key ? "#3b82f6" : "#f1f5f9",
+                color: activeLayerTab === tab.key ? "#fff" : "#64748b",
+                cursor: "pointer",
+                fontWeight: 500,
+                fontSize: 14,
+                transition: "all 0.2s ease",
+              }}
+            >
+              {tab.icon} {tab.label}
+            </button>
+          ))}
+        </div>
+        
+        {layerLoading ? (
+          <div style={{ color: "#999", textAlign: "center", padding: 20 }}>加载中...</div>
+        ) : (
+          <>
+            {/* 内容层 */}
+            {activeLayerTab === 'content' && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+                <MetricCard label="今日生成数" value={contentLayer.today_generation_count} color="#3b82f6" />
+                <MetricCard label="合规通过率" value={contentLayer.compliance_pass_rate} color="#10b981" isPercent />
+                <MetricCard label="人工采纳率" value={contentLayer.adoption_rate} color="#8b5cf6" isPercent />
+                <MetricCard label="发布率" value={contentLayer.publish_rate} color="#f59e0b" isPercent />
+                <MetricCard label="素材总数" value={contentLayer.total_materials} color="#06b6d4" />
+                <MetricCard label="知识库条目" value={contentLayer.knowledge_items} color="#ec4899" />
+              </div>
+            )}
+            
+            {/* 获客层 */}
+            {activeLayerTab === 'acquisition' && (
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
+                  <MetricCard label="总线索数" value={acquisitionLayer.total_leads} color="#3b82f6" />
+                  <MetricCard label="加微率" value={acquisitionLayer.wechat_add_rate} color="#10b981" isPercent />
+                  <MetricCard label="留资率" value={acquisitionLayer.contact_rate} color="#f59e0b" isPercent />
+                </div>
+                {acquisitionLayer.leads_by_platform.length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <h4 style={{ fontSize: 13, color: "#666", marginBottom: 8 }}>平台线索分布</h4>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {acquisitionLayer.leads_by_platform.map((p) => (
+                        <span key={p.platform} style={{ background: "#f1f5f9", padding: "4px 12px", borderRadius: 4, fontSize: 12 }}>
+                          {p.platform}: {p.count}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* 转化层 */}
+            {activeLayerTab === 'conversion' && (
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
+                  <MetricCard label="平均首次响应(h)" value={conversionLayer.avg_first_response_hours} color="#3b82f6" isDecimal />
+                  <MetricCard label="跟进完成率" value={conversionLayer.followup_completion_rate} color="#10b981" isPercent />
+                  <MetricCard label="转化率" value={conversionLayer.conversion_rate} color="#8b5cf6" isPercent />
+                  <MetricCard label="总转化数" value={conversionLayer.total_converted} color="#f59e0b" />
+                  <MetricCard label="预估收入" value={conversionLayer.total_revenue} color="#06b6d4" isDecimal prefix="¥" />
+                </div>
+                {Object.keys(conversionLayer.grade_distribution).length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <h4 style={{ fontSize: 13, color: "#666", marginBottom: 8 }}>线索分级分布</h4>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {Object.entries(conversionLayer.grade_distribution).map(([grade, percent]) => (
+                        <span key={grade} style={{ 
+                          background: grade === 'A' ? '#10b981' : grade === 'B' ? '#3b82f6' : grade === 'C' ? '#f59e0b' : '#6b7280',
+                          color: '#fff',
+                          padding: "4px 12px", 
+                          borderRadius: 4, 
+                          fontSize: 12 
+                        }}>
+                          {grade}级: {percent.toFixed(1)}%
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+      
       {/* 驾驶舱指标卡片区 */}
       <section className="card" style={{ padding: "20px 24px" }}>
         <h3 style={{ marginBottom: 16, fontSize: 16, color: "#333" }}>📊 驾驶舱核心指标</h3>
@@ -366,6 +526,46 @@ export function DashboardPage() {
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+// 辅助组件：指标卡片
+function MetricCard({ 
+  label, 
+  value, 
+  color, 
+  isPercent = false, 
+  isDecimal = false,
+  prefix = ''
+}: { 
+  label: string; 
+  value: number; 
+  color: string; 
+  isPercent?: boolean; 
+  isDecimal?: boolean;
+  prefix?: string;
+}) {
+  return (
+    <div
+      style={{
+        textAlign: "center",
+        padding: "16px 12px",
+        background: "#f8fafc",
+        borderRadius: 8,
+        borderLeft: `3px solid ${color}`,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 24,
+          fontWeight: "bold",
+          color: color,
+        }}
+      >
+        {prefix}{isPercent ? `${(value * 100).toFixed(1)}%` : isDecimal ? value.toFixed(1) : value}
+      </div>
+      <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{label}</div>
     </div>
   );
 }
